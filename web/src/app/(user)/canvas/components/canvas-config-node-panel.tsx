@@ -2,7 +2,7 @@
 
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, LoaderCircle, MessageSquare, Play, Video } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, MessageSquare, Play, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -17,7 +17,6 @@ import type { CanvasGenerationMode, CanvasNodeData, CanvasNodeMetadata } from ".
 
 type CanvasConfigNodePanelProps = {
     node: CanvasNodeData;
-    isRunning: boolean;
     inputSummary: { textCount: number; imageCount: number };
     inputs: NodeGenerationInput[];
     onConfigChange: (nodeId: string, patch: Partial<CanvasNodeMetadata>) => void;
@@ -25,7 +24,7 @@ type CanvasConfigNodePanelProps = {
     onGenerate: (nodeId: string) => void;
 };
 
-export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate }: CanvasConfigNodePanelProps) {
+export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate }: CanvasConfigNodePanelProps) {
     const { message } = App.useApp();
     const previewContentRef = useRef<HTMLDivElement>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
@@ -154,7 +153,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
             <Button
                 type="primary"
                 className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg"
-                disabled={isRunning || (!inputSummary.textCount && !inputSummary.imageCount)}
+                disabled={!inputSummary.textCount && !inputSummary.imageCount}
                 onMouseDown={(event) => event.stopPropagation()}
                 onClick={() => onGenerate(node.id)}
             >
@@ -163,7 +162,7 @@ export function CanvasConfigNodePanel({ node, isRunning, inputSummary, inputs, o
                         <CreditSymbol />
                         {credits.toLocaleString()}
                     </span>
-                    {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <Play className="size-4" />}
+                    <Play className="size-4" />
                     <span>开始生成</span>
                 </span>
             </Button>

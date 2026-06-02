@@ -9,6 +9,13 @@ import type { ReferenceImage } from "@/types/image";
 type VideoResponse = { id: string; status?: string; error?: { message?: string } };
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
 
+function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
+    if (process.env.NODE_ENV !== "development") return;
+    console.groupCollapsed(`[canvas-api] ${label}`);
+    console.log(payload);
+    console.groupEnd();
+}
+
 function aiApiUrl(config: AiConfig, path: string) {
     return config.channelMode === "remote" ? `/api/v1${path}` : buildApiUrl(config.baseUrl, path);
 }
@@ -24,15 +31,31 @@ function refreshRemoteUser(config: AiConfig) {
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
     const model = config.model || config.videoModel;
+    const seconds = normalizeVideoSeconds(config.videoSeconds);
+    const size = normalizeVideoSize(config.size);
+    const resolutionName = normalizeVideoResolution(config.vquality);
     const body = new FormData();
     body.append("model", model);
     body.append("prompt", prompt);
-    body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
-    body.append("resolution_name", normalizeVideoResolution(config.vquality));
+    body.append("seconds", seconds);
+    if (size) body.append("size", size);
+    body.append("resolution_name", resolutionName);
     body.append("preset", "normal");
     const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("input_reference[]", file));
+    debugCanvasRequest("video generation", {
+        url: aiApiUrl(config, "/videos"),
+        channelMode: config.channelMode,
+        body: {
+            model,
+            prompt,
+            seconds,
+            ...(size ? { size } : {}),
+            resolution_name: resolutionName,
+            preset: "normal",
+        },
+        references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+    });
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config) })).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");

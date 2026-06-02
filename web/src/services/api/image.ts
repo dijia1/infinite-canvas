@@ -19,6 +19,13 @@ type ImageApiResponse = {
     msg?: string;
 };
 
+function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
+    if (process.env.NODE_ENV !== "development") return;
+    console.groupCollapsed(`[canvas-api] ${label}`);
+    console.log(payload);
+    console.groupEnd();
+}
+
 const QUALITY_BASE: Record<string, number> = {
     low: 1024,
     medium: 2048,
@@ -154,17 +161,23 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const body = {
+        model: config.model,
+        prompt: withSystemPrompt(config, prompt),
+        n,
+        ...(quality ? { quality } : {}),
+        ...(requestSize ? { size: requestSize } : {}),
+        response_format: "b64_json",
+    };
+    debugCanvasRequest("image generation", {
+        url: aiApiUrl(config, "/images/generations"),
+        channelMode: config.channelMode,
+        body,
+    });
     try {
         const response = await axios.post<ImageApiResponse>(
             aiApiUrl(config, "/images/generations"),
-            {
-                model: config.model,
-                prompt: withSystemPrompt(config, prompt),
-                n,
-                ...(quality ? { quality } : {}),
-                ...(requestSize ? { size: requestSize } : {}),
-                response_format: "b64_json",
-            },
+            body,
             {
                 headers: aiHeaders(config, "application/json"),
             },
@@ -181,9 +194,10 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
     const requestSize = resolveRequestSize(quality, config.size);
+    const promptWithSystem = withSystemPrompt(config, prompt);
     const formData = new FormData();
     formData.set("model", config.model);
-    formData.set("prompt", withSystemPrompt(config, prompt));
+    formData.set("prompt", promptWithSystem);
     formData.set("n", String(n));
     formData.set("response_format", "b64_json");
     if (quality) {
@@ -194,6 +208,19 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append("image", file));
+    debugCanvasRequest("image edit", {
+        url: aiApiUrl(config, "/images/edits"),
+        channelMode: config.channelMode,
+        body: {
+            model: config.model,
+            prompt: promptWithSystem,
+            n,
+            ...(quality ? { quality } : {}),
+            ...(requestSize ? { size: requestSize } : {}),
+            response_format: "b64_json",
+        },
+        references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+    });
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) });
@@ -209,15 +236,21 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
     let buffer = "";
     let answer = "";
     let processedLength = 0;
+    const body = {
+        model: config.model,
+        messages: withSystemMessage(config, messages),
+        stream: true,
+    };
+    debugCanvasRequest("chat completions", {
+        url: aiApiUrl(config, "/chat/completions"),
+        channelMode: config.channelMode,
+        body,
+    });
 
     try {
         const response = await axios.post(
             aiApiUrl(config, "/chat/completions"),
-            {
-                model: config.model,
-                messages: withSystemMessage(config, messages),
-                stream: true,
-            },
+            body,
             {
                 headers: {
                     ...aiHeaders(config, "application/json"),

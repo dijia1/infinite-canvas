@@ -2,15 +2,27 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "../types";
 
-export function ConnectionPath({ connection, from, to, active, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; onSelect: () => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+export function getConnectionCurve(from: CanvasNodeData, to: CanvasNodeData) {
     const startX = from.position.x + from.width;
     const startY = from.position.y + from.height / 2;
     const endX = to.position.x;
     const endY = to.position.y + to.height / 2;
     const dx = Math.abs(endX - startX);
     const curvature = Math.max(dx * 0.5, 50);
-    const pathD = `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`;
+
+    return {
+        start: { x: startX, y: startY },
+        control1: { x: startX + curvature, y: startY },
+        control2: { x: endX - curvature, y: endY },
+        end: { x: endX, y: endY },
+        pathD: `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`,
+    };
+}
+
+export function ConnectionPath({ connection, from, to, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; pendingCut?: boolean; onSelect: () => void }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const { pathD } = getConnectionCurve(from, to);
+    const highlight = pendingCut || active;
 
     return (
         <g>
@@ -28,11 +40,12 @@ export function ConnectionPath({ connection, from, to, active, onSelect }: { con
             />
             <path
                 d={pathD}
-                stroke={active ? theme.node.activeStroke : theme.node.muted}
-                strokeWidth={active ? 3 : 2}
-                strokeOpacity={active ? 1 : 0.82}
+                stroke={highlight ? theme.node.activeStroke : theme.node.muted}
+                strokeWidth={pendingCut ? 4 : active ? 3 : 2}
+                strokeOpacity={highlight ? 1 : 0.82}
                 fill="none"
-                style={{ filter: active ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
+                strokeDasharray={pendingCut ? "9 6" : undefined}
+                style={{ filter: highlight ? `drop-shadow(0 0 8px ${theme.node.activeStroke}66)` : undefined, pointerEvents: "none" }}
             />
         </g>
     );

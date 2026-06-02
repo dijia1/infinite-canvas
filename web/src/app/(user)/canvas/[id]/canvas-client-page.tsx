@@ -21,7 +21,7 @@ import { cropDataUrl } from "../utils/canvas-image-data";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
-import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
+import { ActiveConnectionPath, ConnectionPath, getConnectionCurve } from "../components/canvas-connections";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasAssistantPanel } from "../components/canvas-assistant-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
@@ -68,6 +68,11 @@ type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     activeChatId: string | null;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
+};
+
+type CutConnectionState = {
+    points: Position[];
+    connectionIds: Set<string>;
 };
 
 const VIDEO_NODE_MAX_WIDTH = 420;
@@ -245,6 +250,7 @@ function InfiniteCanvasPage() {
     const [mouseWorld, setMouseWorld] = useState<Position>({ x: 0, y: 0 });
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+    const [cutConnectionState, setCutConnectionState] = useState<CutConnectionState | null>(null);
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
@@ -279,6 +285,7 @@ function InfiniteCanvasPage() {
     const connectionTargetNodeIdRef = useRef(connectionTargetNodeId);
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
+    const cutConnectionStateRef = useRef<CutConnectionState | null>(cutConnectionState);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -392,11 +399,17 @@ function InfiniteCanvasPage() {
         connectingParamsRef.current = connectingParams;
         connectionTargetNodeIdRef.current = connectionTargetNodeId;
         pendingConnectionCreateRef.current = pendingConnectionCreate;
-    }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate]);
+        cutConnectionStateRef.current = cutConnectionState;
+    }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate, cutConnectionState]);
 
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
+
+    const clearCutConnectionState = useCallback(() => {
+        cutConnectionStateRef.current = null;
+        setCutConnectionState(null);
+    }, []);
 
     useEffect(() => {
         const el = containerRef.current;
@@ -540,8 +553,16 @@ function InfiniteCanvasPage() {
 
         return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
-
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+    const visibleConnections = useMemo(
+        () =>
+            connections.filter((connection) => {
+                const from = nodeById.get(connection.fromNodeId);
+                const to = nodeById.get(connection.toNodeId);
+                return Boolean(from && to && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
+            }),
+        [connections, nodeById, nodes],
+    );
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
@@ -853,6 +874,15 @@ function InfiniteCanvasPage() {
             if (event.button !== 0) return;
 
             const world = screenToCanvas(event.clientX, event.clientY);
+            if (event.ctrlKey) {
+                const nextCutState = { points: [world], connectionIds: new Set<string>() };
+                cutConnectionStateRef.current = nextCutState;
+                setCutConnectionState(nextCutState);
+                setSelectedNodeIds(new Set());
+                setSelectedConnectionId(null);
+                setDialogNodeId(null);
+                return;
+            }
             const nextSelectionBox = {
                 startWorldX: world.x,
                 startWorldY: world.y,
@@ -989,6 +1019,35 @@ function InfiniteCanvasPage() {
 
     const handleGlobalPointerMove = useCallback(
         (event: PointerEvent) => {
+            const currentCutState = cutConnectionStateRef.current;
+            if (currentCutState) {
+                if (event.buttons === 0) return;
+
+                const world = screenToCanvas(event.clientX, event.clientY);
+                const lastPoint = currentCutState.points[currentCutState.points.length - 1];
+                const minDistance = Math.max(4, 12 / viewportRef.current.k);
+                if (lastPoint && distanceBetweenPoints(lastPoint, world) < minDistance) return;
+
+                const nextPoints = [...currentCutState.points, world];
+                const nextConnectionIds = new Set(currentCutState.connectionIds);
+                const previousPoint = nextPoints[nextPoints.length - 2];
+                if (previousPoint) {
+                    const threshold = Math.max(6, Math.min(20, 12 / viewportRef.current.k));
+                    connectionsRef.current.forEach((connection) => {
+                        if (nextConnectionIds.has(connection.id)) return;
+                        const from = nodesRef.current.find((node) => node.id === connection.fromNodeId);
+                        const to = nodesRef.current.find((node) => node.id === connection.toNodeId);
+                        if (!from || !to || isHiddenBatchConnectionEndpoint(from, nodesRef.current) || isHiddenBatchConnectionEndpoint(to, nodesRef.current)) return;
+                        if (segmentHitsConnection(previousPoint, world, from, to, threshold)) nextConnectionIds.add(connection.id);
+                    });
+                }
+
+                const nextCutState = { points: nextPoints, connectionIds: nextConnectionIds };
+                cutConnectionStateRef.current = nextCutState;
+                setCutConnectionState(nextCutState);
+                return;
+            }
+
             const currentSelection = selectionBoxRef.current;
             if (!currentSelection) return;
 
@@ -1018,11 +1077,24 @@ function InfiniteCanvasPage() {
             setSelectionBox(nextSelectionBox);
             setSelectedNodeIds(nextSelected);
         },
-        [screenToCanvas],
+        [clearCutConnectionState, screenToCanvas],
     );
+
+    const finishCutConnection = useCallback(() => {
+        const currentCutState = cutConnectionStateRef.current;
+        if (!currentCutState) return false;
+        if (currentCutState.connectionIds.size) {
+            setConnections((prev) => prev.filter((connection) => !currentCutState.connectionIds.has(connection.id)));
+            setSelectedConnectionId((current) => (current && currentCutState.connectionIds.has(current) ? null : current));
+        }
+        clearCutConnectionState();
+        return true;
+    }, [clearCutConnectionState]);
 
     const handleGlobalMouseUp = useCallback(
         (event: MouseEvent) => {
+            if (finishCutConnection()) return;
+
             finishNodeDrag(event.clientX, event.clientY);
 
             selectionBoxRef.current = null;
@@ -1042,11 +1114,14 @@ function InfiniteCanvasPage() {
                 }
             }
         },
-        [connectNodes, finishNodeDrag, getConnectableNodeAtPoint, screenToCanvas, setConnecting],
+        [connectNodes, finishCutConnection, finishNodeDrag, getConnectableNodeAtPoint, screenToCanvas, setConnecting],
     );
 
     useEffect(() => {
-        const handlePointerUp = (event: PointerEvent) => finishNodeDrag(event.clientX, event.clientY);
+        const handlePointerUp = (event: PointerEvent) => {
+            if (finishCutConnection()) return;
+            finishNodeDrag(event.clientX, event.clientY);
+        };
         const cancelNodeDrag = () => finishNodeDrag();
         window.addEventListener("mousemove", handleGlobalMouseMove);
         window.addEventListener("mouseup", handleGlobalMouseUp);
@@ -1062,7 +1137,7 @@ function InfiniteCanvasPage() {
             window.removeEventListener("blur", cancelNodeDrag);
             window.removeEventListener("pointermove", handleGlobalPointerMove);
         };
-    }, [finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
+    }, [finishCutConnection, finishNodeDrag, handleGlobalMouseMove, handleGlobalMouseUp, handleGlobalPointerMove]);
 
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
         const image = await uploadImage(file);
@@ -1195,6 +1270,7 @@ function InfiniteCanvasPage() {
             }
 
             if (event.key === "Escape") {
+                clearCutConnectionState();
                 setSelectedNodeIds(new Set());
                 setSelectedConnectionId(null);
                 setContextMenu(null);
@@ -1212,7 +1288,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
+    }, [clearCutConnectionState, copySelectedNodes, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redoCanvas, selectedConnectionId, setConnecting, undoCanvas]);
 
     const handleConnectStart = useCallback(
         (event: ReactMouseEvent, nodeId: string, handleType: "source" | "target") => {
@@ -2032,6 +2108,7 @@ function InfiniteCanvasPage() {
                 <InfiniteCanvas
                     containerRef={containerRef}
                     viewport={viewport}
+                    cursor={cutConnectionState ? "crosshair" : undefined}
                     backgroundMode={backgroundMode}
                     onViewportChange={(next) => {
                         setViewport(next);
@@ -2043,13 +2120,7 @@ function InfiniteCanvasPage() {
                     onDrop={handleDrop}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
-                        {connections
-                            .filter((connection) => {
-                                const from = nodeById.get(connection.fromNodeId);
-                                const to = nodeById.get(connection.toNodeId);
-                                return Boolean(from && to && !isHiddenBatchConnectionEndpoint(from, nodes) && !isHiddenBatchConnectionEndpoint(to, nodes));
-                            })
-                            .map((connection) => {
+                        {visibleConnections.map((connection) => {
                                 const from = nodeById.get(connection.fromNodeId);
                                 const to = nodeById.get(connection.toNodeId);
                                 if (!from || !to) return null;
@@ -2061,6 +2132,7 @@ function InfiniteCanvasPage() {
                                         from={from}
                                         to={to}
                                         active={selectedConnectionId === connection.id || relatedHighlight.connectionIds.has(connection.id)}
+                                        pendingCut={cutConnectionState?.connectionIds.has(connection.id)}
                                         onSelect={() => {
                                             setSelectedConnectionId(connection.id);
                                             setSelectedNodeIds(new Set());
@@ -2069,6 +2141,18 @@ function InfiniteCanvasPage() {
                                     />
                                 );
                             })}
+                        {cutConnectionState && cutConnectionState.points.length > 1 ? (
+                            <polyline
+                                points={cutConnectionState.points.map((point) => `${point.x},${point.y}`).join(" ")}
+                                fill="none"
+                                stroke={theme.node.activeStroke}
+                                strokeWidth={2.5}
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeDasharray="10 8"
+                                opacity={0.9}
+                            />
+                        ) : null}
                         {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} /> : null}
                     </svg>
 
@@ -2107,7 +2191,6 @@ function InfiniteCanvasPage() {
                             renderNodeContent={(contentNode) => (
                                 <CanvasConfigNodePanel
                                     node={contentNode}
-                                    isRunning={runningNodeId === contentNode.id}
                                     inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
                                     inputs={configInputsById.get(contentNode.id) || []}
                                     onConfigChange={handleConfigNodeChange}
@@ -2583,6 +2666,70 @@ function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: C
     if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
     if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
     return { fromNodeId: first.id, toNodeId: second.id };
+}
+
+function distanceBetweenPoints(a: Position, b: Position) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function cubicBezierPoint(start: Position, control1: Position, control2: Position, end: Position, t: number): Position {
+    const mt = 1 - t;
+    const mt2 = mt * mt;
+    const t2 = t * t;
+
+    return {
+        x: mt2 * mt * start.x + 3 * mt2 * t * control1.x + 3 * mt * t2 * control2.x + t2 * t * end.x,
+        y: mt2 * mt * start.y + 3 * mt2 * t * control1.y + 3 * mt * t2 * control2.y + t2 * t * end.y,
+    };
+}
+
+function sampleConnectionPoints(from: CanvasNodeData, to: CanvasNodeData, steps = 24) {
+    const curve = getConnectionCurve(from, to);
+    return Array.from({ length: steps + 1 }, (_, index) => cubicBezierPoint(curve.start, curve.control1, curve.control2, curve.end, index / steps));
+}
+
+function pointToSegmentDistance(point: Position, segmentStart: Position, segmentEnd: Position) {
+    const dx = segmentEnd.x - segmentStart.x;
+    const dy = segmentEnd.y - segmentStart.y;
+    if (dx === 0 && dy === 0) return distanceBetweenPoints(point, segmentStart);
+    const t = Math.max(0, Math.min(1, ((point.x - segmentStart.x) * dx + (point.y - segmentStart.y) * dy) / (dx * dx + dy * dy)));
+    return distanceBetweenPoints(point, { x: segmentStart.x + dx * t, y: segmentStart.y + dy * t });
+}
+
+function orientation(a: Position, b: Position, c: Position) {
+    const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
+    if (Math.abs(value) < 0.0001) return 0;
+    return value > 0 ? 1 : 2;
+}
+
+function onSegment(a: Position, b: Position, c: Position) {
+    return b.x <= Math.max(a.x, c.x) && b.x >= Math.min(a.x, c.x) && b.y <= Math.max(a.y, c.y) && b.y >= Math.min(a.y, c.y);
+}
+
+function segmentsIntersect(startA: Position, endA: Position, startB: Position, endB: Position) {
+    const o1 = orientation(startA, endA, startB);
+    const o2 = orientation(startA, endA, endB);
+    const o3 = orientation(startB, endB, startA);
+    const o4 = orientation(startB, endB, endA);
+    if (o1 !== o2 && o3 !== o4) return true;
+    if (o1 === 0 && onSegment(startA, startB, endA)) return true;
+    if (o2 === 0 && onSegment(startA, endB, endA)) return true;
+    if (o3 === 0 && onSegment(startB, startA, endB)) return true;
+    if (o4 === 0 && onSegment(startB, endA, endB)) return true;
+    return false;
+}
+
+function segmentDistance(startA: Position, endA: Position, startB: Position, endB: Position) {
+    if (segmentsIntersect(startA, endA, startB, endB)) return 0;
+    return Math.min(pointToSegmentDistance(startA, startB, endB), pointToSegmentDistance(endA, startB, endB), pointToSegmentDistance(startB, startA, endA), pointToSegmentDistance(endB, startA, endA));
+}
+
+function segmentHitsConnection(cutStart: Position, cutEnd: Position, from: CanvasNodeData, to: CanvasNodeData, threshold: number) {
+    const points = sampleConnectionPoints(from, to);
+    for (let index = 1; index < points.length; index += 1) {
+        if (segmentDistance(cutStart, cutEnd, points[index - 1], points[index]) <= threshold) return true;
+    }
+    return false;
 }
 
 function getInputSummary(inputs: NodeGenerationInput[]) {
