@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Home, ImageIcon, Images, List, Menu, MessageSquare, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
@@ -304,6 +304,7 @@ function InfiniteCanvasPage() {
     const selectionBoxRef = useRef(selectionBox);
     const pendingConnectionCreateRef = useRef(pendingConnectionCreate);
     const cutConnectionStateRef = useRef<CutConnectionState | null>(cutConnectionState);
+    const deferredMiniMapNodes = useDeferredValue(nodes);
 
     const createHistoryEntry = useCallback(
         (): CanvasHistoryEntry => ({
@@ -633,6 +634,16 @@ function InfiniteCanvasPage() {
         return null;
     }, [activeNodeId, dialogNodeId, nodeById]);
 
+    const generationInputNodeSignature = useMemo(
+        () =>
+            nodes
+                .map((node) => {
+                    const contentKey = node.type === CanvasNodeType.Image ? node.metadata?.storageKey || `inline:${node.metadata?.content?.length || 0}` : node.metadata?.content || node.metadata?.prompt || "";
+                    return [node.id, node.type, node.title, contentKey, node.metadata?.mimeType || "", (node.metadata?.inputOrder || []).join(",")].join("::");
+                })
+                .join("|"),
+        [nodes],
+    );
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
         nodes.forEach((node) => {
@@ -640,7 +651,7 @@ function InfiniteCanvasPage() {
             map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
         });
         return map;
-    }, [connections, nodes]);
+    }, [connections, generationInputNodeSignature, nodes]);
     const focusedConfigInputBadges = useMemo(() => {
         const map = new Map<string, ConfigInputBadge>();
         if (!focusedConfigNodeId) return map;
@@ -660,6 +671,21 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [configInputsById, focusedConfigNodeId]);
+    const configInputPanelMetaById = useMemo(() => {
+        const map = new Map<string, { summary: { textCount: number; imageCount: number }; version: string }>();
+        configInputsById.forEach((inputs, nodeId) => {
+            const summary = getInputSummary(inputs);
+            const version = inputs
+                .map((input) =>
+                    input.type === "image"
+                        ? `image:${input.nodeId}:${input.title}:${input.image?.storageKey || `inline:${input.image?.dataUrl?.length || 0}`}`
+                        : `text:${input.nodeId}:${input.title}:${input.text || ""}`,
+                )
+                .join("|");
+            map.set(nodeId, { summary, version });
+        });
+        return map;
+    }, [configInputsById]);
 
     useEffect(() => {
         logCanvasPerf("graph snapshot", {
@@ -2136,6 +2162,75 @@ function InfiniteCanvasPage() {
         [effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.size, message],
     );
 
+    const renderNodePromptPanel = useCallback(
+        (panelNode: CanvasNodeData) => (
+            <CanvasNodePromptPanel
+                node={panelNode}
+                isRunning={runningNodeId === panelNode.id}
+                onPromptChange={handleNodePromptChange}
+                onConfigChange={handleConfigNodeChange}
+                onGenerate={handleGenerateNode}
+                onImageSettingsOpenChange={(open) => {
+                    setNodeImageSettingsOpen(open);
+                    if (open) setToolbarNodeId(null);
+                }}
+            />
+        ),
+        [handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId],
+    );
+
+    const renderConfigNodeContent = useCallback(
+        (contentNode: CanvasNodeData) => {
+            const inputs = configInputsById.get(contentNode.id) || [];
+            const panelMeta = configInputPanelMetaById.get(contentNode.id);
+            return (
+                <CanvasConfigNodePanel
+                    node={contentNode}
+                    inputSummary={panelMeta?.summary || getInputSummary(inputs)}
+                    inputs={inputs}
+                    onConfigChange={handleConfigNodeChange}
+                    onTextInputChange={handleNodeContentChange}
+                    onGenerate={(nodeId) => {
+                        const target = nodesRef.current.find((item) => item.id === nodeId);
+                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.prompt || "");
+                    }}
+                />
+            );
+        },
+        [configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange],
+    );
+
+    const handleCanvasNodeHoverStart = useCallback(
+        (nodeId: string) => {
+            if (nodeDraggingRef.current) return;
+            setHoveredNodeId(nodeId);
+            keepNodeToolbar(nodeId);
+        },
+        [keepNodeToolbar],
+    );
+
+    const handleCanvasNodeHoverEnd = useCallback(
+        (nodeId: string) => {
+            setHoveredNodeId((current) => (current === nodeId ? null : current));
+            hideNodeToolbar();
+        },
+        [hideNodeToolbar],
+    );
+
+    const handleCanvasNodeRetry = useCallback((node: CanvasNodeData) => {
+        void handleRetryNode(node);
+    }, [handleRetryNode]);
+
+    const handleCanvasNodeGenerateImage = useCallback((node: CanvasNodeData) => {
+        generateImageFromTextNode(node);
+    }, [generateImageFromTextNode]);
+
+    const handleCanvasNodeContextMenu = useCallback((event: ReactMouseEvent, id: string) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
+    }, []);
+
     const insertAssistantImage = useCallback(
         async (image: CanvasAssistantImage) => {
             const storedImage = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(image.dataUrl);
@@ -2281,6 +2376,8 @@ function InfiniteCanvasPage() {
                             data={node}
                             scale={viewport.k}
                             inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
+                            panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}` : undefined}
+                            contentVersion={node.type === CanvasNodeType.Config ? configInputPanelMetaById.get(node.id)?.version || "" : undefined}
                             isSelected={selectedNodeIds.has(node.id)}
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
                             isFocusRelated={activeNodeId === node.id}
@@ -2295,54 +2392,19 @@ function InfiniteCanvasPage() {
                             batchRecovering={collapsingBatchIds.has(node.id)}
                             batchMotion={batchMotionById.get(node.id)}
                             showImageInfo={showImageInfo}
-                            renderPanel={(panelNode) => (
-                                <CanvasNodePromptPanel
-                                    node={panelNode}
-                                    isRunning={runningNodeId === panelNode.id}
-                                    onPromptChange={handleNodePromptChange}
-                                    onConfigChange={handleConfigNodeChange}
-                                    onGenerate={handleGenerateNode}
-                                    onImageSettingsOpenChange={(open) => {
-                                        setNodeImageSettingsOpen(open);
-                                        if (open) setToolbarNodeId(null);
-                                    }}
-                                />
-                            )}
-                            renderNodeContent={(contentNode) => (
-                                <CanvasConfigNodePanel
-                                    node={contentNode}
-                                    inputSummary={getInputSummary(configInputsById.get(contentNode.id) || [])}
-                                    inputs={configInputsById.get(contentNode.id) || []}
-                                    onConfigChange={handleConfigNodeChange}
-                                    onTextInputChange={handleNodeContentChange}
-                                    onGenerate={(nodeId) => {
-                                        const target = nodesRef.current.find((item) => item.id === nodeId);
-                                        void handleGenerateNode(nodeId, target?.metadata?.generationMode || "image", target?.metadata?.prompt || "");
-                                    }}
-                                />
-                            )}
+                            renderPanel={renderNodePromptPanel}
+                            renderNodeContent={renderConfigNodeContent}
                             onMouseDown={handleNodeMouseDown}
-                            onHoverStart={(nodeId) => {
-                                if (nodeDraggingRef.current) return;
-                                setHoveredNodeId(nodeId);
-                                keepNodeToolbar(nodeId);
-                            }}
-                            onHoverEnd={(nodeId) => {
-                                setHoveredNodeId((current) => (current === nodeId ? null : current));
-                                hideNodeToolbar();
-                            }}
+                            onHoverStart={handleCanvasNodeHoverStart}
+                            onHoverEnd={handleCanvasNodeHoverEnd}
                             onConnectStart={handleConnectStart}
                             onResize={handleNodeResize}
                             onContentChange={handleNodeContentChange}
                             onToggleBatch={toggleBatchExpanded}
                             onSetBatchPrimary={setBatchPrimary}
-                            onRetry={(node) => void handleRetryNode(node)}
-                            onGenerateImage={generateImageFromTextNode}
-                            onContextMenu={(event, id) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                                setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
-                            }}
+                            onRetry={handleCanvasNodeRetry}
+                            onGenerateImage={handleCanvasNodeGenerateImage}
+                            onContextMenu={handleCanvasNodeContextMenu}
                         />
                     ))}
 
@@ -2412,7 +2474,7 @@ function InfiniteCanvasPage() {
                     }}
                 />
 
-                {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
+                {isMiniMapOpen ? <Minimap nodes={deferredMiniMapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 

@@ -17,6 +17,8 @@ type CanvasNodeProps = {
     data: CanvasNodeData;
     scale: number;
     inputBadgeLabel?: string;
+    panelVersion?: string;
+    contentVersion?: string;
     isSelected: boolean;
     isRelated: boolean;
     isFocusRelated: boolean;
@@ -327,7 +329,33 @@ export const CanvasNode = React.memo(function CanvasNode({
             {showPanel && renderPanel && data.type !== CanvasNodeType.Config ? <div className="absolute left-1/2 top-full z-[70] w-[500px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
     );
-});
+}, areCanvasNodePropsEqual);
+
+function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
+    return (
+        prev.data === next.data &&
+        prev.scale === next.scale &&
+        prev.inputBadgeLabel === next.inputBadgeLabel &&
+        prev.panelVersion === next.panelVersion &&
+        prev.contentVersion === next.contentVersion &&
+        prev.isSelected === next.isSelected &&
+        prev.isRelated === next.isRelated &&
+        prev.isFocusRelated === next.isFocusRelated &&
+        prev.isConnectionTarget === next.isConnectionTarget &&
+        prev.isConnecting === next.isConnecting &&
+        prev.editRequestNonce === next.editRequestNonce &&
+        prev.showPanel === next.showPanel &&
+        prev.showImageInfo === next.showImageInfo &&
+        prev.batchCount === next.batchCount &&
+        prev.batchExpanded === next.batchExpanded &&
+        prev.batchClosing === next.batchClosing &&
+        prev.batchOpening === next.batchOpening &&
+        prev.batchRecovering === next.batchRecovering &&
+        prev.batchMotion?.x === next.batchMotion?.x &&
+        prev.batchMotion?.y === next.batchMotion?.y &&
+        prev.batchMotion?.index === next.batchMotion?.index
+    );
+}
 
 function InputBadge({ label, node }: { label: string; node: CanvasNodeData }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
