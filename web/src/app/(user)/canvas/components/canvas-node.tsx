@@ -15,6 +15,7 @@ const selectionBlue = "#2f80ff";
 type CanvasNodeProps = {
     data: CanvasNodeData;
     scale: number;
+    inputBadgeLabel?: string;
     isSelected: boolean;
     isRelated: boolean;
     isFocusRelated: boolean;
@@ -66,6 +67,7 @@ type NodeContentRendererProps = {
 export const CanvasNode = React.memo(function CanvasNode({
     data,
     scale,
+    inputBadgeLabel,
     isSelected,
     isRelated,
     isFocusRelated,
@@ -299,6 +301,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                     />
                 </div>
 
+                {inputBadgeLabel ? <InputBadge label={inputBadgeLabel} node={data} /> : null}
+
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
                 {!hasImageContent && !hasVideoContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
@@ -316,6 +320,22 @@ export const CanvasNode = React.memo(function CanvasNode({
         </div>
     );
 });
+
+function InputBadge({ label, node }: { label: string; node: CanvasNodeData }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    const isText = node.type === CanvasNodeType.Text;
+
+    return (
+        <div className={`pointer-events-none absolute z-40 ${isText ? "left-3 top-3" : "left-1/2 top-full -translate-x-1/2 pt-2"}`}>
+            <span
+                className="inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] font-semibold shadow-[0_8px_18px_rgba(15,23,42,.12)] backdrop-blur-md"
+                style={{ background: `${theme.toolbar.panel}dd`, borderColor: theme.node.stroke, color: theme.node.text }}
+            >
+                {label}
+            </span>
+        </div>
+    );
+}
 
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);

@@ -141,6 +141,12 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 </button>
             </div>
 
+            {imageInputs.length > 1 ? (
+                <div className="mb-2 rounded-md border px-2.5 py-2 text-[11px] leading-5 opacity-75" style={{ background: `${theme.node.fill}88`, borderColor: theme.node.stroke }}>
+                    提示词里的图 1 / 图 2 对应画布节点编号，也与下方预览顺序和发送给 API 的参考图顺序一致。
+                </div>
+            ) : null}
+
             <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "text" ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_148px]"}`}>
                 <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} onMissingConfig={() => openConfigDialog(true)} fullWidth />
                 {mode === "video" ? (
@@ -259,6 +265,7 @@ function TextSortCard({
         <div className="grid grid-cols-[minmax(0,1fr)_72px] items-center gap-1.5 rounded-md border px-2 py-1" style={{ background: `${theme.node.fill}99`, borderColor: theme.node.stroke }}>
             <div className="min-w-0">
                 <div className="truncate text-[10px] font-medium opacity-50">文本 {textIndex + 1}</div>
+                <div className="truncate text-[10px] opacity-45">{input.title || `文本 ${textIndex + 1}`}</div>
                 <div className="line-clamp-1 whitespace-pre-wrap break-words text-[11px] leading-4 opacity-80">{input.text}</div>
             </div>
             <div className="flex justify-end gap-1">
@@ -289,9 +296,10 @@ function ImageSortCard({
         <div className="w-24 shrink-0 overflow-hidden rounded-lg border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
             <div className="relative">
                 <img src={input.image.dataUrl} alt={input.title} className="aspect-square w-full object-cover" />
-                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{imageIndex + 1}</span>
+                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{`图 ${imageIndex + 1}`}</span>
                 <HorizontalOrderButtons index={imageIndex} total={imageTotal} onMove={(offset) => onMove(input, offset)} />
             </div>
+            <div className="truncate px-1.5 py-1 text-[10px] opacity-60">{input.title || `图 ${imageIndex + 1}`}</div>
         </div>
     );
 }

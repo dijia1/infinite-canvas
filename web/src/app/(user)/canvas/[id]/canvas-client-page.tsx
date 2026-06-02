@@ -75,6 +75,13 @@ type CutConnectionState = {
     connectionIds: Set<string>;
 };
 
+type ConfigInputBadge = {
+    kind: "image" | "text";
+    index: number;
+    configNodeId: string;
+    label: string;
+};
+
 const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 const NODE_STATUS_LOADING = "loading" as const;
@@ -606,6 +613,13 @@ function InfiniteCanvasPage() {
 
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
+    const focusedConfigNodeId = useMemo(() => {
+        const dialogNode = dialogNodeId ? nodeById.get(dialogNodeId) : null;
+        if (dialogNode?.type === CanvasNodeType.Config) return dialogNode.id;
+        const activeNode = activeNodeId ? nodeById.get(activeNodeId) : null;
+        if (activeNode?.type === CanvasNodeType.Config) return activeNode.id;
+        return null;
+    }, [activeNodeId, dialogNodeId, nodeById]);
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
@@ -615,6 +629,25 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [connections, nodes]);
+    const focusedConfigInputBadges = useMemo(() => {
+        const map = new Map<string, ConfigInputBadge>();
+        if (!focusedConfigNodeId) return map;
+        const inputs = configInputsById.get(focusedConfigNodeId) || [];
+        let imageIndex = 0;
+        let textIndex = 0;
+        inputs.forEach((input) => {
+            if (input.type === "image") {
+                imageIndex += 1;
+                map.set(input.nodeId, { kind: "image", index: imageIndex, configNodeId: focusedConfigNodeId, label: `图 ${imageIndex}` });
+                return;
+            }
+            if (input.type === "text") {
+                textIndex += 1;
+                map.set(input.nodeId, { kind: "text", index: textIndex, configNodeId: focusedConfigNodeId, label: `文本 ${textIndex}` });
+            }
+        });
+        return map;
+    }, [configInputsById, focusedConfigNodeId]);
 
     const createNode = useCallback(
         (type: CanvasNodeType, position?: Position) => {
@@ -2161,6 +2194,7 @@ function InfiniteCanvasPage() {
                             key={node.id}
                             data={node}
                             scale={viewport.k}
+                            inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                             isSelected={selectedNodeIds.has(node.id)}
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
                             isFocusRelated={activeNodeId === node.id}
