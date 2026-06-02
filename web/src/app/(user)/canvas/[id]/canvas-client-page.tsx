@@ -37,6 +37,7 @@ import { CanvasToolbar } from "../components/canvas-toolbar";
 import { AssetPickerModal, type AssetPickerTab, type InsertAssetPayload } from "../components/asset-picker-modal";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { useCanvasStore } from "../stores/use-canvas-store";
+import { isCanvasPerfDebugEnabled, logCanvasPerf, useCanvasPerfDebugRegistration, useCanvasPerfRender } from "../utils/canvas-performance-debug";
 import {
     CanvasNodeType,
     type CanvasAssistantImage,
@@ -214,6 +215,8 @@ function InfiniteCanvasPage() {
     const rafRef = useRef<number | null>(null);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const nodeDraggingRef = useRef(false);
+    const dragPerfRef = useRef<{ startedAt: number; frameCount: number; movedNodeCount: number }>({ startedAt: 0, frameCount: 0, movedNodeCount: 0 });
+    const cutPerfRef = useRef<{ startedAt: number; moveCount: number; scannedConnections: number }>({ startedAt: 0, moveCount: 0, scannedConnections: 0 });
     const dragRef = useRef<{
         isDraggingNode: boolean;
         hasMoved: boolean;
@@ -258,6 +261,14 @@ function InfiniteCanvasPage() {
     const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null);
     const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
     const [cutConnectionState, setCutConnectionState] = useState<CutConnectionState | null>(null);
+    useCanvasPerfDebugRegistration();
+    useCanvasPerfRender("InfiniteCanvasPage", () => ({
+        nodes: nodes.length,
+        connections: connections.length,
+        selectedNodes: selectedNodeIds.size,
+        hasSelectionBox: Boolean(selectionBox),
+        isCutting: Boolean(cutConnectionState),
+    }));
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
     const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
     const [backgroundMode, setBackgroundMode] = useState<CanvasBackgroundMode>("lines");
@@ -570,6 +581,7 @@ function InfiniteCanvasPage() {
             }),
         [connections, nodeById, nodes],
     );
+    const loadingNodeCount = useMemo(() => nodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING).length, [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
     const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
@@ -648,6 +660,24 @@ function InfiniteCanvasPage() {
         });
         return map;
     }, [configInputsById, focusedConfigNodeId]);
+
+    useEffect(() => {
+        logCanvasPerf("graph snapshot", {
+            totalNodes: nodes.length,
+            visibleNodes: visibleNodes.length,
+            totalConnections: connections.length,
+            visibleConnections: visibleConnections.length,
+            loadingNodes: loadingNodeCount,
+            miniMapOpen: isMiniMapOpen,
+        });
+    }, [connections.length, isMiniMapOpen, loadingNodeCount, nodes.length, visibleConnections.length, visibleNodes.length]);
+
+    useEffect(() => {
+        logCanvasPerf("generation status", {
+            runningNodeId,
+            loadingNodes: loadingNodeCount,
+        });
+    }, [loadingNodeCount, runningNodeId]);
 
     const createNode = useCallback(
         (type: CanvasNodeType, position?: Position) => {
@@ -909,6 +939,10 @@ function InfiniteCanvasPage() {
             const world = screenToCanvas(event.clientX, event.clientY);
             if (event.ctrlKey) {
                 const nextCutState = { points: [world], connectionIds: new Set<string>() };
+                if (isCanvasPerfDebugEnabled()) {
+                    cutPerfRef.current = { startedAt: performance.now(), moveCount: 0, scannedConnections: 0 };
+                    logCanvasPerf("cut start", { nodes: nodesRef.current.length, connections: connectionsRef.current.length });
+                }
                 cutConnectionStateRef.current = nextCutState;
                 setCutConnectionState(nextCutState);
                 setSelectedNodeIds(new Set());
@@ -970,6 +1004,14 @@ function InfiniteCanvasPage() {
             startY: event.clientY,
             initialSelectedNodes: currentNodes.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y })),
         };
+        if (isCanvasPerfDebugEnabled()) {
+            dragPerfRef.current = {
+                startedAt: performance.now(),
+                frameCount: 0,
+                movedNodeCount: dragRef.current.initialSelectedNodes.length,
+            };
+            logCanvasPerf("drag start", { selectedNodes: nextSelected.size, movedNodes: dragPerfRef.current.movedNodeCount });
+        }
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
@@ -1005,6 +1047,15 @@ function InfiniteCanvasPage() {
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.initialSelectedNodes = [];
+        if (dragPerfRef.current.startedAt) {
+            logCanvasPerf("drag end", {
+                durationMs: Math.round(performance.now() - dragPerfRef.current.startedAt),
+                frameCount: dragPerfRef.current.frameCount,
+                movedNodeCount: dragPerfRef.current.movedNodeCount,
+                committed: !wasClick,
+            });
+            dragPerfRef.current = { startedAt: 0, frameCount: 0, movedNodeCount: 0 };
+        }
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
             if (clickedNode?.type === CanvasNodeType.Text) {
@@ -1025,6 +1076,17 @@ function InfiniteCanvasPage() {
                 const initialPositions = dragRef.current.initialSelectedNodes;
                 if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) {
                     dragRef.current.hasMoved = true;
+                }
+                if (dragPerfRef.current.startedAt) {
+                    dragPerfRef.current.frameCount += 1;
+                    if (dragPerfRef.current.frameCount <= 3 || dragPerfRef.current.frameCount % 30 === 0) {
+                        logCanvasPerf("drag move", {
+                            frameCount: dragPerfRef.current.frameCount,
+                            movedNodeCount: dragPerfRef.current.movedNodeCount,
+                            dx: Math.round(dx),
+                            dy: Math.round(dy),
+                        });
+                    }
                 }
 
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -1064,15 +1126,30 @@ function InfiniteCanvasPage() {
                 const nextPoints = [...currentCutState.points, world];
                 const nextConnectionIds = new Set(currentCutState.connectionIds);
                 const previousPoint = nextPoints[nextPoints.length - 2];
+                let scannedConnections = 0;
                 if (previousPoint) {
                     const threshold = Math.max(6, Math.min(20, 12 / viewportRef.current.k));
                     connectionsRef.current.forEach((connection) => {
+                        scannedConnections += 1;
                         if (nextConnectionIds.has(connection.id)) return;
                         const from = nodesRef.current.find((node) => node.id === connection.fromNodeId);
                         const to = nodesRef.current.find((node) => node.id === connection.toNodeId);
                         if (!from || !to || isHiddenBatchConnectionEndpoint(from, nodesRef.current) || isHiddenBatchConnectionEndpoint(to, nodesRef.current)) return;
                         if (segmentHitsConnection(previousPoint, world, from, to, threshold)) nextConnectionIds.add(connection.id);
                     });
+                }
+                if (cutPerfRef.current.startedAt) {
+                    cutPerfRef.current.moveCount += 1;
+                    cutPerfRef.current.scannedConnections += scannedConnections;
+                    if (cutPerfRef.current.moveCount <= 3 || cutPerfRef.current.moveCount % 12 === 0) {
+                        logCanvasPerf("cut move", {
+                            moveCount: cutPerfRef.current.moveCount,
+                            points: nextPoints.length,
+                            hitConnections: nextConnectionIds.size,
+                            scannedConnections,
+                            totalScannedConnections: cutPerfRef.current.scannedConnections,
+                        });
+                    }
                 }
 
                 const nextCutState = { points: nextPoints, connectionIds: nextConnectionIds };
@@ -1116,6 +1193,15 @@ function InfiniteCanvasPage() {
     const finishCutConnection = useCallback(() => {
         const currentCutState = cutConnectionStateRef.current;
         if (!currentCutState) return false;
+        if (cutPerfRef.current.startedAt) {
+            logCanvasPerf("cut end", {
+                durationMs: Math.round(performance.now() - cutPerfRef.current.startedAt),
+                moveCount: cutPerfRef.current.moveCount,
+                hitConnections: currentCutState.connectionIds.size,
+                scannedConnections: cutPerfRef.current.scannedConnections,
+            });
+            cutPerfRef.current = { startedAt: 0, moveCount: 0, scannedConnections: 0 };
+        }
         if (currentCutState.connectionIds.size) {
             setConnections((prev) => prev.filter((connection) => !currentCutState.connectionIds.has(connection.id)));
             setSelectedConnectionId((current) => (current && currentCutState.connectionIds.has(current) ? null : current));

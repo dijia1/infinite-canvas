@@ -5,9 +5,16 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
+import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
 
 export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { nodes: CanvasNodeData[]; viewport: ViewportTransform; viewportSize: { width: number; height: number }; onViewportChange: (viewport: ViewportTransform) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    useCanvasPerfRender("Minimap", () => ({
+        nodes: nodes.length,
+        scale: Number(viewport.k.toFixed(3)),
+        viewportWidth: viewportSize.width,
+        viewportHeight: viewportSize.height,
+    }));
     const containerRef = useRef<HTMLDivElement>(null);
     const [isDragging, setIsDragging] = useState(false);
     const width = 240;
