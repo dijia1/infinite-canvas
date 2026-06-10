@@ -98,6 +98,9 @@ export const useConfigStore = create<ConfigStore>()(
                 set({ isPublicSettingsLoading: true });
                 try {
                     set({ publicSettings: await apiGet<AdminPublicSettings>("/api/settings") });
+                } catch (error) {
+                    console.error("Failed to load public settings", error);
+                    set({ publicSettings: null });
                 } finally {
                     set({ isPublicSettingsLoading: false });
                 }
