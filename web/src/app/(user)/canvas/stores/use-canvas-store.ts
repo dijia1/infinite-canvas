@@ -23,6 +23,7 @@ export type CanvasProject = {
 type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
+    switchUserScope: (userId: string | null) => Promise<void>;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
@@ -33,9 +34,14 @@ type CanvasStore = {
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
+const CANVAS_GUEST_SCOPE = "guest";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
+let currentCanvasScope = "";
+let switchingCanvasScope = false;
+
+const canvasStoreName = (userId: string | null) => `${CANVAS_STORE_KEY}:${userId?.trim() || CANVAS_GUEST_SCOPE}`;
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
@@ -46,6 +52,7 @@ const canvasStorage: PersistStorage<CanvasStore> = {
         return parsed;
     },
     setItem: (name, value) => {
+        if (switchingCanvasScope) return;
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
@@ -63,6 +70,21 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             projects: [],
+            switchUserScope: async (userId) => {
+                const nextScope = userId?.trim() || CANVAS_GUEST_SCOPE;
+                if (currentCanvasScope === nextScope && get().hydrated) return;
+                currentCanvasScope = nextScope;
+                queuedPersistState = null;
+                switchingCanvasScope = true;
+                useCanvasStore.persist.setOptions({ name: canvasStoreName(nextScope) });
+                set({ hydrated: false, projects: [] });
+                try {
+                    await useCanvasStore.persist.rehydrate();
+                } finally {
+                    switchingCanvasScope = false;
+                    set({ hydrated: true });
+                }
+            },
             createProject: (title = "未命名画布") => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -118,15 +140,13 @@ export const useCanvasStore = create<CanvasStore>()(
                 })),
         }),
         {
-            name: CANVAS_STORE_KEY,
+            name: canvasStoreName(null),
             storage: canvasStorage,
+            skipHydration: true,
             partialize: (state) =>
                 ({
                     projects: state.projects,
                 }) as StorageValue<CanvasStore>["state"],
-            onRehydrateStorage: () => () => {
-                useCanvasStore.setState({ hydrated: true });
-            },
         },
     ),
 );

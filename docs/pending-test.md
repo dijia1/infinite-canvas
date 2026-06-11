@@ -1,4 +1,6 @@
 # 待测试
+- 生产 Docker Compose 支持 PostgreSQL 空库重开：`docker-compose.yml` 新增内部 `postgres` 服务并等待健康后启动 `app`，`.env.example` 默认给出 `STORAGE_DRIVER=postgres` 与 compose 内部服务名 `postgres` 的连接示例。
+- 画布本地项目按登录用户隔离存储：同一浏览器中切换 A/B 账号后，画布库只显示当前账号自己的项目；退出登录后切换到未登录访客画布，不继续显示上一位登录用户的画布。
 - 画布拖拽性能第一轮优化：收紧 `CanvasNode` 重渲染条件、稳定节点列表里的函数 props，并让 minimap 使用低优先级节点快照；拖拽单个节点时未受影响的节点不应再大面积重复 render，主画布交互应明显更流畅。
 - 画布开发环境新增 `canvas-perf` 性能调试开关：开启后会在控制台输出画布 render 次数、可见节点/连线规模、节点拖拽耗时、剪线扫描量和 Minimap 渲染信息，便于用 React Profiler 和 Chrome Performance 对照定位卡顿热点。
 - 选中或打开某个“生成配置”节点时，对应上游输入节点会在画布上显示 `图 1`、`图 2`、`文本 1` 这类编号标记；编号顺序与预览面板顺序、发送给 API 的参考图顺序一致，断线重连或调整顺序后会实时更新。
