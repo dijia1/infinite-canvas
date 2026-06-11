@@ -141,11 +141,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 </button>
             </div>
 
-            {imageInputs.length > 1 ? (
-                <div className="mb-2 rounded-md border px-2.5 py-2 text-[11px] leading-5 opacity-75" style={{ background: `${theme.node.fill}88`, borderColor: theme.node.stroke }}>
-                    提示词里的图 1 / 图 2 对应画布节点编号，也与下方预览顺序和发送给 API 的参考图顺序一致。
-                </div>
-            ) : null}
+
 
             <div className={`mb-2 grid min-w-0 cursor-default items-center gap-2 ${mode === "text" ? "grid-cols-1" : "grid-cols-[minmax(0,1fr)_148px]"}`}>
                 <ModelPicker className="canvas-compact-control h-10" config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} onMissingConfig={() => openConfigDialog(true)} fullWidth />
