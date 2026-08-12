@@ -1,19 +1,16 @@
 "use client";
 
-import { FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, TransactionOutlined, UserOutlined } from "@ant-design/icons";
+import { FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Typography, theme } from "antd";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
-import { UserStatusActions } from "@/components/layout/user-status-actions";
 import { adminLayoutStyle } from "@/lib/app-theme";
-import { useUserStore } from "@/stores/use-user-store";
+import { useAdminStore } from "@/stores/use-admin-store";
 
 const adminMenus = [
-    { key: "/admin/users", icon: <UserOutlined />, label: "用户管理" },
-    { key: "/admin/credit-logs", icon: <TransactionOutlined />, label: "算力点日志" },
     { key: "/admin/prompts", icon: <FileTextOutlined />, label: "提示词管理" },
     { key: "/admin/assets", icon: <PictureOutlined />, label: "素材库" },
     { key: "/admin/settings", icon: <SettingOutlined />, label: "系统设置" },
@@ -23,33 +20,31 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const { token: antToken } = theme.useToken();
     const router = useRouter();
     const pathname = usePathname();
-    const token = useUserStore((state) => state.token);
-    const user = useUserStore((state) => state.user);
-    const isReady = useUserStore((state) => state.isReady);
-    const logout = useUserStore((state) => state.clearSession);
+    const token = useAdminStore((state) => state.token);
+    const user = useAdminStore((state) => state.user);
+    const isReady = useAdminStore((state) => state.isReady);
+    const hydrateAdmin = useAdminStore((state) => state.hydrateAdmin);
+    const logout = useAdminStore((state) => state.clearSession);
     const activeKey = pathname.startsWith("/admin/settings")
         ? "/admin/settings"
         : pathname.startsWith("/admin/assets")
           ? "/admin/assets"
           : pathname.startsWith("/admin/prompts")
             ? "/admin/prompts"
-            : pathname.startsWith("/admin/credit-logs")
-              ? "/admin/credit-logs"
-              : pathname.startsWith("/admin/users")
-                ? "/admin/users"
-                : "";
-    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/assets") ? "素材库管理" : pathname.startsWith("/admin/prompts") ? "提示词管理" : pathname.startsWith("/admin/credit-logs") ? "算力点日志" : "用户管理";
+            : "";
+    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/assets") ? "素材库管理" : "提示词管理";
+
+    useEffect(() => {
+        void hydrateAdmin();
+    }, [hydrateAdmin]);
 
     useEffect(() => {
         if (!isReady) return;
         if (!token) {
-            router.replace("/login?redirect=/admin");
+            router.replace(`/admin/login?redirect=${encodeURIComponent(pathname)}`);
             return;
         }
-        if (user?.role !== "admin") {
-            router.replace("/");
-        }
-    }, [isReady, router, token, user?.role]);
+    }, [isReady, pathname, router, token]);
 
     if (!isReady || !token || user?.role !== "admin") {
         return (
@@ -98,9 +93,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
                     <Typography.Title level={5} style={{ margin: 0 }}>
                         {pageTitle}
                     </Typography.Title>
-                    <Flex align="center" gap={4}>
-                        <UserStatusActions showConfig={false} />
-                    </Flex>
+                    <Typography.Text type="secondary">{user.username}</Typography.Text>
                 </Layout.Header>
                 <Layout.Content style={{ minHeight: 0, overflow: "auto" }}>{children}</Layout.Content>
             </Layout>

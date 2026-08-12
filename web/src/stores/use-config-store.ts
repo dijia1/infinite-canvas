@@ -8,10 +8,7 @@ import { apiGet } from "@/services/api/request";
 import type { AdminPublicSettings } from "@/services/api/admin";
 
 export type AiConfig = {
-    channelMode: "remote" | "local";
-    baseUrl: string;
-    apiKey: string;
-    model: string;
+	model: string;
     imageModel: string;
     videoModel: string;
     textModel: string;
@@ -27,10 +24,7 @@ export type AiConfig = {
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 
 export const defaultConfig: AiConfig = {
-    channelMode: "local",
-    baseUrl: "https://api.openai.com",
-    apiKey: "",
-    model: "gpt-image-2",
+	model: "gpt-image-2",
     imageModel: "gpt-image-2",
     videoModel: "grok-imagine-video",
     textModel: "gpt-5.5",
@@ -58,14 +52,12 @@ type ConfigStore = {
 };
 
 function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSettings["modelChannel"] | null) {
-    const channelMode = modelChannel?.allowCustomChannel ? config.channelMode : "remote";
-    if (channelMode === "local" || !modelChannel) return { ...config, channelMode };
-    const models = modelChannel.availableModels;
+	if (!modelChannel) return config;
+	const models = modelChannel.availableModels;
     const fallbackModel = modelChannel.defaultModel || models[0] || "";
     return {
         ...config,
-        channelMode,
-        models,
+		models,
         model: models.includes(config.model) ? config.model : fallbackModel,
         imageModel: models.includes(config.imageModel) ? config.imageModel : modelChannel.defaultImageModel || fallbackModel,
         videoModel: models.includes(config.videoModel) ? config.videoModel : modelChannel.defaultVideoModel || fallbackModel,
@@ -75,7 +67,7 @@ function resolveEffectiveConfig(config: AiConfig, modelChannel: AdminPublicSetti
 }
 
 function isAiConfigReady(config: AiConfig, model: string) {
-    return Boolean(model.trim()) && (config.channelMode === "remote" || Boolean(config.baseUrl.trim() && config.apiKey.trim()));
+	return Boolean(model.trim() && config.models.length);
 }
 
 export const useConfigStore = create<ConfigStore>()(
@@ -114,8 +106,24 @@ export const useConfigStore = create<ConfigStore>()(
             name: CONFIG_STORE_KEY,
             partialize: (state) => ({ config: state.config }),
             merge: (persisted, current) => {
-                const config = { ...defaultConfig, ...((persisted as Partial<ConfigStore>).config || {}) };
-                return { ...current, config: { ...config, channelMode: config.channelMode || "remote", imageModel: config.imageModel || config.model, videoModel: config.videoModel || "grok-imagine-video", textModel: config.textModel || config.model, videoSeconds: config.videoSeconds || "6", vquality: config.vquality || "720" } };
+                const saved = (persisted as Partial<ConfigStore>).config;
+                const model = saved?.model || defaultConfig.model;
+                return {
+                    ...current,
+                    config: {
+                        model,
+                        imageModel: saved?.imageModel || model,
+                        videoModel: saved?.videoModel || defaultConfig.videoModel,
+                        textModel: saved?.textModel || model,
+                        videoSeconds: saved?.videoSeconds || defaultConfig.videoSeconds,
+                        vquality: saved?.vquality || defaultConfig.vquality,
+                        systemPrompt: "",
+                        models: [],
+                        quality: saved?.quality || defaultConfig.quality,
+                        size: saved?.size || defaultConfig.size,
+                        count: saved?.count || defaultConfig.count,
+                    },
+                };
             },
         },
     ),
@@ -127,8 +135,3 @@ export function useEffectiveConfig() {
     return useMemo(() => resolveEffectiveConfig(config, modelChannel), [config, modelChannel]);
 }
 
-export function buildApiUrl(baseUrl: string, path: string) {
-    const normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
-    const apiBaseUrl = normalizedBaseUrl.endsWith("/v1") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
-    return `${apiBaseUrl}${path}`;
-}

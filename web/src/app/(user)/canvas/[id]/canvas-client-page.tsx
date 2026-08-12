@@ -3,7 +3,7 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Home, ImageIcon, Images, List, Menu, MessageSquare, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
+import { ImageIcon, Images, List, Menu, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { requestEdit, requestGeneration, requestImageQuestion } from "@/services/api/image";
@@ -14,7 +14,7 @@ import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { UserStatusActions } from "@/components/layout/user-status-actions";
+import { AppActions } from "@/components/layout/app-actions";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
@@ -23,7 +23,6 @@ import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath, getConnectionCurve } from "../components/canvas-connections";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
-import { CanvasAssistantPanel } from "../components/canvas-assistant-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
@@ -40,8 +39,6 @@ import { useCanvasStore } from "../stores/use-canvas-store";
 import { isCanvasPerfDebugEnabled, logCanvasPerf, useCanvasPerfDebugRegistration, useCanvasPerfRender } from "../utils/canvas-performance-debug";
 import {
     CanvasNodeType,
-    type CanvasAssistantImage,
-    type CanvasAssistantSession,
     type CanvasConnection,
     type CanvasImageGenerationType,
     type CanvasNodeData,
@@ -65,8 +62,6 @@ type PendingConnectionCreate = {
 };
 
 type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
-    chatSessions: CanvasAssistantSession[];
-    activeChatId: string | null;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
 };
@@ -247,8 +242,6 @@ function InfiniteCanvasPage() {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
-    const [chatSessions, setChatSessions] = useState<CanvasAssistantSession[]>([]);
-    const [activeChatId, setActiveChatId] = useState<string | null>(null);
     const [viewport, setViewport] = useState<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const [size, setSize] = useState({ width: 1200, height: 720 });
     const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
@@ -286,8 +279,6 @@ function InfiniteCanvasPage() {
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
-    const [assistantCollapsed, setAssistantCollapsed] = useState(true);
-    const [assistantMounted, setAssistantMounted] = useState(false);
     const [titleEditing, setTitleEditing] = useState(false);
     const [titleDraft, setTitleDraft] = useState("");
     const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -310,12 +301,10 @@ function InfiniteCanvasPage() {
         (): CanvasHistoryEntry => ({
             nodes: nodesRef.current,
             connections: connectionsRef.current,
-            chatSessions,
-            activeChatId,
             backgroundMode,
             showImageInfo,
         }),
-        [activeChatId, backgroundMode, chatSessions, showImageInfo],
+        [backgroundMode, showImageInfo],
     );
 
     const cleanupCanvasFiles = useCallback(
@@ -336,11 +325,8 @@ function InfiniteCanvasPage() {
 
         const restore = async () => {
             const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
-            const restoredSessions = await hydrateAssistantImages(project.chatSessions || []);
             setNodes(restoredNodes);
             setConnections(project.connections);
-            setChatSessions(restoredSessions);
-            setActiveChatId(project.activeChatId || null);
             setBackgroundMode(project.backgroundMode);
             setShowImageInfo(project.showImageInfo || false);
             setViewport(project.viewport);
@@ -352,8 +338,6 @@ function InfiniteCanvasPage() {
             lastHistoryRef.current = {
                 nodes: restoredNodes,
                 connections: project.connections,
-                chatSessions: restoredSessions,
-                activeChatId: project.activeChatId || null,
                 backgroundMode: project.backgroundMode,
                 showImageInfo: project.showImageInfo || false,
             };
@@ -367,7 +351,7 @@ function InfiniteCanvasPage() {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
         const next = createHistoryEntry();
         const previous = lastHistoryRef.current;
-        if (previous?.nodes === next.nodes && previous.connections === next.connections && previous.chatSessions === next.chatSessions && previous.activeChatId === next.activeChatId && previous.backgroundMode === next.backgroundMode && previous.showImageInfo === next.showImageInfo) return;
+        if (previous?.nodes === next.nodes && previous.connections === next.connections && previous.backgroundMode === next.backgroundMode && previous.showImageInfo === next.showImageInfo) return;
 
         if (historyCommitTimerRef.current) clearTimeout(historyCommitTimerRef.current);
         historyCommitTimerRef.current = setTimeout(() => {
@@ -387,12 +371,12 @@ function InfiniteCanvasPage() {
                 historyCommitTimerRef.current = null;
             }
         };
-    }, [activeChatId, backgroundMode, chatSessions, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
+    }, [backgroundMode, connections, createHistoryEntry, nodes, projectLoaded, showImageInfo]);
 
     useEffect(() => {
         if (!projectLoaded || historyPausedRef.current) return;
-        updateProject(projectId, { nodes, connections, chatSessions, activeChatId, backgroundMode, showImageInfo });
-    }, [activeChatId, backgroundMode, chatSessions, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+        updateProject(projectId, { nodes, connections, backgroundMode, showImageInfo });
+    }, [backgroundMode, connections, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
@@ -766,9 +750,9 @@ function InfiniteCanvasPage() {
             setPreviewNodeId((current) => (current && allIds.has(current) ? null : current));
             setRunningNodeId((current) => (current && allIds.has(current) ? null : current));
             setContextMenu((current) => (current && allIds.has(current.nodeId) ? null : current));
-            cleanupCanvasFiles({ projectId, nodes: nodesRef.current.filter((node) => !allIds.has(node.id)), chatSessions });
+            cleanupCanvasFiles({ projectId, nodes: nodesRef.current.filter((node) => !allIds.has(node.id)) });
         },
-        [chatSessions, cleanupCanvasFiles, projectId],
+        [cleanupCanvasFiles, projectId],
     );
 
     const deselectCanvas = useCallback(() => {
@@ -793,7 +777,7 @@ function InfiniteCanvasPage() {
         setRunningNodeId(null);
         deselectCanvas();
         setClearConfirmOpen(false);
-        cleanupCanvasFiles({ projectId, nodes: [], chatSessions: [] });
+        cleanupCanvasFiles({ projectId, nodes: [] });
     }, [cleanupCanvasFiles, deselectCanvas, projectId]);
 
     const duplicateNode = useCallback((nodeId: string) => {
@@ -915,8 +899,6 @@ function InfiniteCanvasPage() {
         applyingHistoryRef.current = true;
         setNodes(entry.nodes);
         setConnections(entry.connections);
-        setChatSessions(entry.chatSessions);
-        setActiveChatId(entry.activeChatId);
         setBackgroundMode(entry.backgroundMode);
         setShowImageInfo(entry.showImageInfo);
         setSelectedNodeIds(new Set());
@@ -1741,20 +1723,6 @@ function InfiniteCanvasPage() {
         [createImageFileNode, createVideoFileNode, screenToCanvas],
     );
 
-    const pasteAssistantImage = useCallback(
-        (file: File) => {
-            const position = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-            void createImageFileNode(file, position);
-            message.success("已从剪切板添加图片");
-        },
-        [createImageFileNode, message, screenToCanvas, size.height, size.width],
-    );
-
-    const handleAssistantSessionsChange = useCallback((sessions: CanvasAssistantSession[], activeId: string | null) => {
-        setChatSessions(sessions);
-        setActiveChatId(activeId);
-    }, []);
-
     const startTitleEditing = useCallback(() => {
         setTitleDraft(currentProject?.title || "未命名画布");
         setTitleEditing(true);
@@ -2231,8 +2199,8 @@ function InfiniteCanvasPage() {
         setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
     }, []);
 
-    const insertAssistantImage = useCallback(
-        async (image: CanvasAssistantImage) => {
+    const insertCanvasImage = useCallback(
+        async (image: { dataUrl: string; storageKey?: string; prompt: string }) => {
             const storedImage = image.storageKey ? { url: image.dataUrl, storageKey: image.storageKey, width: 1, height: 1, bytes: 0, mimeType: "image/png" } : await uploadImage(image.dataUrl);
             const meta = storedImage.width === 1 && storedImage.height === 1 ? await readImageMeta(storedImage.url) : storedImage;
             const config = fitNodeSize(meta.width, meta.height);
@@ -2256,12 +2224,12 @@ function InfiniteCanvasPage() {
         [screenToCanvas, size.height, size.width],
     );
 
-    const insertAssistantText = useCallback(
+    const insertCanvasText = useCallback(
         (text: string) => {
             const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
             const node = {
                 ...createCanvasNode(CanvasNodeType.Text, center, { content: text, status: NODE_STATUS_SUCCESS }),
-                title: text.slice(0, 32) || "Assistant Text",
+                title: text.slice(0, 32) || "插入文本",
             };
 
             setNodes((prev) => [...prev, node]);
@@ -2274,7 +2242,7 @@ function InfiniteCanvasPage() {
     const handleAssetInsert = useCallback(
         (payload: InsertAssetPayload) => {
             if (payload.kind === "text") {
-                insertAssistantText(payload.content);
+                insertCanvasText(payload.content);
             } else if (payload.kind === "video") {
                 const spec = NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const center = screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
@@ -2283,11 +2251,11 @@ function InfiniteCanvasPage() {
                 setNodes((prev) => [...prev, { id, type: CanvasNodeType.Video, title: payload.title, position: { x: center.x - nextSize.width / 2, y: center.y - nextSize.height / 2 }, width: nextSize.width, height: nextSize.height, metadata: { content: payload.url, storageKey: payload.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: payload.width, naturalHeight: payload.height } }]);
                 setSelectedNodeIds(new Set([id]));
             } else {
-                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
+                insertCanvasImage({ prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
             }
             setAssetPickerOpen(false);
         },
-        [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
+        [insertCanvasImage, insertCanvasText, screenToCanvas, size.height, size.width],
     );
 
     if (!projectLoaded) return <CanvasRefreshShell />;
@@ -2305,18 +2273,12 @@ function InfiniteCanvasPage() {
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={historyState.canUndo}
                     canRedo={historyState.canRedo}
-                    onHome={() => router.push("/")}
                     onProjects={() => router.push("/canvas")}
                     onCreateProject={createAndOpenProject}
                     onDeleteProject={deleteCurrentProject}
                     onImportImage={() => handleUploadRequest()}
                     onUndo={undoCanvas}
                     onRedo={redoCanvas}
-                    assistantCollapsed={assistantCollapsed}
-                    onExpandAssistant={() => {
-                        setAssistantMounted(true);
-                        setAssistantCollapsed(false);
-                    }}
                 />
 
                 <InfiniteCanvas
@@ -2538,21 +2500,6 @@ function InfiniteCanvasPage() {
 
                 <AssetPickerModal open={assetPickerOpen} defaultTab={assetPickerTab} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>
-            {assistantMounted ? (
-                <CanvasAssistantPanel
-                    nodes={nodes}
-                    selectedNodeIds={selectedNodeIds}
-                    sessions={chatSessions}
-                    activeSessionId={activeChatId}
-                    onSelectNodeIds={setSelectedNodeIds}
-                    onSessionsChange={handleAssistantSessionsChange}
-                    onInsertImage={insertAssistantImage}
-                    onInsertText={insertAssistantText}
-                    onPasteImage={pasteAssistantImage}
-                    onCollapseStart={() => setAssistantCollapsed(true)}
-                    onCollapse={() => setAssistantMounted(false)}
-                />
-            ) : null}
         </main>
     );
 }
@@ -2567,15 +2514,12 @@ function CanvasTopBar({
     onCancelTitleEditing,
     canUndo,
     canRedo,
-    onHome,
     onProjects,
     onCreateProject,
     onDeleteProject,
     onImportImage,
     onUndo,
     onRedo,
-    assistantCollapsed,
-    onExpandAssistant,
 }: {
     title: string;
     titleDraft: string;
@@ -2586,22 +2530,17 @@ function CanvasTopBar({
     onCancelTitleEditing: () => void;
     canUndo: boolean;
     canRedo: boolean;
-    onHome: () => void;
     onProjects: () => void;
     onCreateProject: () => void;
     onDeleteProject: () => void;
     onImportImage: () => void;
     onUndo: () => void;
     onRedo: () => void;
-    assistantCollapsed: boolean;
-    onExpandAssistant: () => void;
 }) {
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
     const titleRef = useRef<HTMLDivElement>(null);
-    const accountRef = useRef<HTMLDivElement>(null);
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
-    const [accountOpen, setAccountOpen] = useState(false);
 
     useEffect(() => {
         if (!isTitleEditing) return;
@@ -2612,15 +2551,6 @@ function CanvasTopBar({
         return () => document.removeEventListener("pointerdown", close, true);
     }, [isTitleEditing, onFinishTitleEditing]);
 
-    useEffect(() => {
-        if (!accountOpen) return;
-        const close = (event: PointerEvent) => {
-            if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false);
-        };
-        document.addEventListener("pointerdown", close, true);
-        return () => document.removeEventListener("pointerdown", close, true);
-    }, [accountOpen]);
-
     return (
         <>
             <div className="pointer-events-none absolute left-0 right-0 top-0 z-50 flex h-16 items-center justify-between px-4">
@@ -2629,7 +2559,6 @@ function CanvasTopBar({
                         trigger={["click"]}
                         menu={{
                             items: [
-                                { key: "home", icon: <Home className="size-4" />, label: "主页", onClick: onHome },
                                 { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
                                 { type: "divider" },
                                 { key: "new", icon: <Plus className="size-4" />, label: "新建画布", onClick: onCreateProject },
@@ -2675,31 +2604,12 @@ function CanvasTopBar({
                 </div>
 
                 <div className="pointer-events-auto flex items-center gap-1.5">
-                    <UserStatusActions
+                    <AppActions
                         variant="canvas"
-                        accountOpen={accountOpen}
-                        onAccountOpenChange={setAccountOpen}
-                        accountRef={accountRef}
-                        getPopupContainer={(node) => node.parentElement || document.body}
                         onOpenShortcuts={() => {
                             setShortcutsOpen(true);
-                            setAccountOpen(false);
                         }}
                     />
-                    {assistantCollapsed ? (
-                        <>
-                            <span className="h-6 w-px" style={{ background: theme.toolbar.border }} />
-                            <Button
-                                type="text"
-                                className="!h-10 !rounded-xl !px-3 !font-medium"
-                                style={{ background: theme.toolbar.panel, color: theme.node.text, boxShadow: "0 10px 30px rgba(28,25,23,.10)" }}
-                                icon={<MessageSquare className="size-4" />}
-                                onClick={onExpandAssistant}
-                            >
-                                助手
-                            </Button>
-                        </>
-                    ) : null}
                 </div>
             </div>
             <Modal title="快捷键" open={shortcutsOpen} onCancel={() => setShortcutsOpen(false)} footer={null} centered>
@@ -2802,29 +2712,6 @@ async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
             if (!content.startsWith("data:image/")) return node;
             return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadImage(content)) } };
         }),
-    );
-}
-
-async function hydrateAssistantImages(sessions: CanvasAssistantSession[]) {
-    const hydrateItem = async <T extends { dataUrl?: string; storageKey?: string }>(item: T) => {
-        if (item.storageKey) return { ...item, dataUrl: await resolveImageUrl(item.storageKey, item.dataUrl) };
-        if (item.dataUrl?.startsWith("data:image/")) {
-            const image = await uploadImage(item.dataUrl);
-            return { ...item, dataUrl: image.url, storageKey: image.storageKey };
-        }
-        return item;
-    };
-    return Promise.all(
-        sessions.map(async (session) => ({
-            ...session,
-            messages: await Promise.all(
-                session.messages.map(async (message) => ({
-                    ...message,
-                    references: await Promise.all((message.references || []).map(hydrateItem)),
-                    images: await Promise.all((message.images || []).map(hydrateItem)),
-                })),
-            ),
-        })),
     );
 }
 

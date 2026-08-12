@@ -4,7 +4,7 @@ import { createZip } from "@/lib/zip";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob } from "@/services/image-storage";
 import type { CanvasExportAsset, CanvasExportFile } from "../export-types";
-import type { CanvasProject } from "../stores/use-canvas-store";
+import { sanitizeCanvasProject, type CanvasProject } from "../stores/use-canvas-store";
 
 export async function exportCanvasProjects(projects: CanvasProject[], fileName = "无限画布") {
     const zipFiles: { name: string; data: BlobPart }[] = [];
@@ -20,13 +20,17 @@ export async function exportCanvasProjects(projects: CanvasProject[], fileName =
                     zipFiles.push({ name: path, data: blob });
                 }),
             );
-            return { project, files };
+            return { project: sanitizeCanvasProject(project), files };
         }),
     );
 
-    const data: CanvasExportFile = { app: "infinite-canvas", version: 3, exportedAt: new Date().toISOString(), projects: exportedProjects };
+    const data: CanvasExportFile = { app: "infinite-canvas", version: 4, exportedAt: new Date().toISOString(), projects: exportedProjects };
     const zip = await createZip([{ name: "projects.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     saveAs(zip, `${safeFileName(fileName)}.zip`);
+}
+
+export function collectCanvasProjectStorageKeys(project: Pick<CanvasProject, "nodes">) {
+    return new Set(collectStorageKeys(project.nodes));
 }
 
 function collectStorageKeys(value: unknown, keys = new Set<string>()) {

@@ -40,7 +40,6 @@ func SavePrompt(item model.Prompt) (model.Prompt, error) {
 		category = repository.PromptCategories()[0]
 		item.Category = category.Category
 	}
-	item.GithubURL = ""
 	return repository.SavePrompt(item)
 }
 

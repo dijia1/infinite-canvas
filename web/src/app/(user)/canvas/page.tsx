@@ -13,7 +13,7 @@ import { CanvasProjectCard } from "./components/canvas-project-card";
 import type { CanvasExportFile } from "./export-types";
 import { useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
-import { exportCanvasProjects } from "./utils/canvas-export";
+import { collectCanvasProjectStorageKeys, exportCanvasProjects } from "./utils/canvas-export";
 
 export default function CanvasPage() {
     const { message } = App.useApp();
@@ -38,14 +38,15 @@ export default function CanvasPage() {
             if (!projectFile) throw new Error("missing projects.json");
             const data = JSON.parse(await projectFile.text()) as CanvasExportFile;
             await Promise.all(
-                data.projects.flatMap((project) =>
-                    project.files.map(async (item) => {
+                data.projects.flatMap((project) => {
+                    const usedStorageKeys = collectCanvasProjectStorageKeys(project.project);
+                    return project.files.filter((item) => usedStorageKeys.has(item.storageKey)).map(async (item) => {
                         const blob = zip.get(item.path);
                         if (!blob) return;
                         const typedBlob = blob.type ? blob : blob.slice(0, blob.size, item.mimeType);
                         await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
-                    }),
-                ),
+                    });
+                }),
             );
             data.projects.forEach((item) => importProject(item.project));
             message.success(`已导入 ${data.projects.length} 个画布`);

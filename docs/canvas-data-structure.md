@@ -6,12 +6,12 @@
 
 当前画布项目主要保存在浏览器本地：
 
-- 画布项目 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:canvas_store`。
+- 画布项目 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:canvas_store:guest`。
 - 我的素材 JSON：`localForage`，数据库名 `infinite-canvas`，storeName `app_state`，key 为 `infinite-canvas:asset_store`。
 - 图片 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `image_files`。
 - 视频等媒体 Blob：单独存到 `localForage` 实例，数据库名 `infinite-canvas`，storeName `media_files`。
 
-画布 JSON 不直接长期保存大体积 base64 图片或视频。图片节点、视频节点、助手图片和素材媒体只保存展示 URL、`storageKey` 和元信息，真实 Blob 通过 `storageKey` 读取。
+画布 JSON 不直接长期保存大体积 base64 图片或视频。图片节点、视频节点和素材媒体只保存展示 URL、`storageKey` 和元信息，真实 Blob 通过 `storageKey` 读取。
 
 ## 画布项目结构
 
@@ -25,9 +25,8 @@ type CanvasProject = {
   updatedAt: string;
   nodes: CanvasNodeData[];
   connections: CanvasConnection[];
-  chatSessions: CanvasAssistantSession[];
-  activeChatId: string | null;
   backgroundMode: "lines" | "dots" | "blank";
+  showImageInfo: boolean;
   viewport: { x: number; y: number; k: number };
 };
 ```
@@ -39,9 +38,8 @@ type CanvasProject = {
 - `createdAt` / `updatedAt`：ISO 字符串。
 - `nodes`：画布节点列表。
 - `connections`：节点连线列表。
-- `chatSessions`：右侧画布助手会话。
-- `activeChatId`：当前选中的助手会话 ID。
 - `backgroundMode`：画布背景模式。
+- `showImageInfo`：是否在图片节点上显示图片信息。
 - `viewport`：视口变换，`x/y` 是屏幕平移，`k` 是缩放比例。
 
 ## 节点结构
@@ -121,40 +119,6 @@ type CanvasConnection = {
 
 删除节点时会同步删除以该节点为起点或终点的连线。删除图片组根节点时，会把对应子节点一起删除。
 
-## 助手会话结构
-
-助手会话保存在画布项目内：
-
-```ts
-type CanvasAssistantSession = {
-  id: string;
-  title: string;
-  messages: CanvasAssistantMessage[];
-  createdAt: string;
-  updatedAt: string;
-};
-```
-
-消息结构：
-
-```ts
-type CanvasAssistantMessage = {
-  id: string;
-  role: "user" | "assistant";
-  mode: "ask" | "image";
-  text: string;
-  isLoading?: boolean;
-  references?: CanvasAssistantReference[];
-  images?: CanvasAssistantImage[];
-};
-```
-
-图片引用和助手生成图片也遵循同一套图片存储规则：
-
-- `dataUrl` 字段当前可能是 `blob:` URL，也可能是旧数据中的 `data:image/...`。
-- `storageKey` 存在时，以 `storageKey` 为准读取图片 Blob。
-- 发送到 AI 接口前，如果接口需要 base64，会通过 `imageToDataUrl` 临时把 Blob URL 转成 data URL。
-
 ## 图片写入流程
 
 所有新增图片应通过 `uploadImage(input)` 写入：
@@ -199,7 +163,6 @@ type UploadedImage = {
 
 - 如果图片节点有 `storageKey`，通过 `resolveImageUrl(storageKey, fallback)` 读取 Blob 并生成新的 `blob:` URL。
 - 如果图片节点没有 `storageKey`，但 `content` 是旧的 `data:image/...`，会调用 `uploadImage(content)` 迁移到 `image_files`，并补上 `storageKey`。
-- 助手消息里的引用图和生成图也会执行同类逻辑。
 
 我的素材读取时也会做迁移：
 
@@ -210,13 +173,13 @@ type UploadedImage = {
 
 图片不是在删除节点时立即按节点逐张删除，而是做引用清理：
 
-1. 删除节点、清空画布、删除画布、删除素材、删除助手会话时，会触发 `cleanupImages`。
+1. 删除节点、清空画布、删除画布或删除素材时，会触发 `cleanupImages`。
 2. `cleanupImages` 会收集当前仍被画布项目、素材和额外传入数据引用的所有 `storageKey`。
 3. `cleanupUnusedImages` 遍历 `image_files` 中的全部图片。
 4. 不在引用集合里的图片会被删除。
 5. 删除时会同时 `URL.revokeObjectURL`，并从内存缓存 `objectUrls` 移除。
 
-这套方式可以避免同一张图片被画布、素材或助手同时引用时误删。
+这套方式可以避免同一张图片被画布节点和素材同时引用时误删。
 
 需要注意：
 
@@ -265,7 +228,7 @@ type ImageRef = {
 - 删除节点只删除画布 JSON 引用，不直接删除后端文件。
 - 后端文件删除应按引用计数或定期扫描未引用文件处理。
 - 保存到“我的素材”的图片，即使原画布节点删除，也应继续保留文件引用。
-- 删除画布、删除素材、删除助手会话后，再由后端清理任务判断文件是否无人引用。
+- 删除画布或删除素材后，再由后端清理任务判断文件是否无人引用。
 
 建议同步流程：
 
@@ -280,5 +243,5 @@ type ImageRef = {
 - 不要把新生成的大图直接长期写入画布 JSON。
 - 新增图片来源时统一走 `uploadImage` 或未来的文件上传服务。
 - 新增图片引用字段时，应保留 `storageKey` 兼容旧本地数据。
-- 新增清理入口时，要把仍需保留的画布、素材、助手数据传给 `cleanupUnusedImages`。
+- 新增清理入口时，要把仍需保留的画布和素材数据传给 `cleanupUnusedImages`。
 - 后端同步完成前，文档和 UI 不要写成已支持云同步。

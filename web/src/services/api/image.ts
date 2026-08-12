@@ -1,7 +1,6 @@
 import axios from "axios";
 
-import { buildApiUrl, type AiConfig } from "@/stores/use-config-store";
-import { useUserStore } from "@/stores/use-user-store";
+import type { AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
@@ -131,25 +130,12 @@ function withSystemPrompt(config: AiConfig, prompt: string) {
     return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
 }
 
-function aiApiUrl(config: AiConfig, path: string) {
-    return config.channelMode === "remote" ? `/api/v1${path}` : buildApiUrl(config.baseUrl, path);
+function aiApiUrl(path: string) {
+    return `/api/v1${path}`;
 }
 
-function aiHeaders(config: AiConfig, contentType?: string) {
-    const token = useUserStore.getState().token;
-    return config.channelMode === "remote"
-        ? {
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-              ...(contentType ? { "Content-Type": contentType } : {}),
-          }
-        : {
-              Authorization: `Bearer ${config.apiKey}`,
-              ...(contentType ? { "Content-Type": contentType } : {}),
-          };
-}
-
-function refreshRemoteUser(config: AiConfig) {
-    if (config.channelMode === "remote") void useUserStore.getState().hydrateUser();
+function aiHeaders(contentType?: string) {
+    return contentType ? { "Content-Type": contentType } : undefined;
 }
 
 function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) {
@@ -170,20 +156,18 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
         response_format: "b64_json",
     };
     debugCanvasRequest("image generation", {
-        url: aiApiUrl(config, "/images/generations"),
-        channelMode: config.channelMode,
+        url: aiApiUrl("/images/generations"),
         body,
     });
     try {
         const response = await axios.post<ImageApiResponse>(
-            aiApiUrl(config, "/images/generations"),
+            aiApiUrl("/images/generations"),
             body,
             {
-                headers: aiHeaders(config, "application/json"),
+                headers: aiHeaders("application/json"),
             },
         );
         const images = parseImagePayload(response.data);
-        refreshRemoteUser(config);
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
@@ -209,8 +193,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append("image", file));
     debugCanvasRequest("image edit", {
-        url: aiApiUrl(config, "/images/edits"),
-        channelMode: config.channelMode,
+        url: aiApiUrl("/images/edits"),
         body: {
             model: config.model,
             prompt: promptWithSystem,
@@ -223,9 +206,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     });
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl(config, "/images/edits"), formData, { headers: aiHeaders(config) });
+        const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/edits"), formData, { headers: aiHeaders() });
         const images = parseImagePayload(response.data);
-        refreshRemoteUser(config);
         return images;
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
@@ -242,18 +224,17 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
         stream: true,
     };
     debugCanvasRequest("chat completions", {
-        url: aiApiUrl(config, "/chat/completions"),
-        channelMode: config.channelMode,
+        url: aiApiUrl("/chat/completions"),
         body,
     });
 
     try {
         const response = await axios.post(
-            aiApiUrl(config, "/chat/completions"),
+            aiApiUrl("/chat/completions"),
             body,
             {
                 headers: {
-                    ...aiHeaders(config, "application/json"),
+                    ...aiHeaders("application/json"),
                 } as Record<string, string>,
                 responseType: "text",
                 onDownloadProgress: (event) => {
@@ -296,23 +277,5 @@ export async function requestImageQuestion(config: AiConfig, messages: ChatCompl
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }
-    refreshRemoteUser(config);
     return answer || "没有返回内容";
-}
-
-export async function fetchImageModels(config: AiConfig) {
-    if (config.channelMode === "remote") return config.models;
-    try {
-        const response = await axios.get<{ data?: Array<{ id?: string }>; error?: { message?: string } }>(buildApiUrl(config.baseUrl, "/models"), {
-            headers: {
-                Authorization: `Bearer ${config.apiKey}`,
-            },
-        });
-        return (response.data.data || [])
-            .map((model) => model.id)
-            .filter((id): id is string => Boolean(id))
-            .sort((a, b) => a.localeCompare(b));
-    } catch (error) {
-        throw new Error(readAxiosError(error, "读取模型失败"));
-    }
 }

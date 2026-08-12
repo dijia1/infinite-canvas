@@ -5,15 +5,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App } from "antd";
 
 import { deleteAdminAsset, fetchAdminAssets, saveAdminAsset, type AdminAsset } from "@/services/api/admin";
-import { useUserStore } from "@/stores/use-user-store";
+import { useAdminStore } from "@/stores/use-admin-store";
 
 const defaultPageSize = 10;
 
 export function useAdminAssets() {
     const { message } = App.useApp();
     const queryClient = useQueryClient();
-    const token = useUserStore((state) => state.token);
-    const clearSession = useUserStore((state) => state.clearSession);
+    const token = useAdminStore((state) => state.token);
+    const clearSession = useAdminStore((state) => state.clearSession);
     const [keyword, setKeyword] = useState("");
     const [type, setType] = useState("");
     const [tag, setTag] = useState<string[]>([]);

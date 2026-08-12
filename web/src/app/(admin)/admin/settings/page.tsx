@@ -2,13 +2,13 @@
 
 import { CheckCircleOutlined, DeleteOutlined, FormatPainterOutlined, LoadingOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
 import { json } from "@codemirror/lang-json";
-import { App, Button, Card, Checkbox, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
+import { App, Button, Card, Checkbox, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Table, Tabs, Tag, Typography } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { EditorView } from "@uiw/react-codemirror";
 
-import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminModelCost, type AdminSettings } from "@/services/api/admin";
-import { useUserStore } from "@/stores/use-user-store";
+import { fetchAdminSettings, fetchChannelModels, saveAdminSettings, testChannelModel, type AdminModelChannel, type AdminSettings } from "@/services/api/admin";
+import { useAdminStore } from "@/stores/use-admin-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
 const jsonEditorTheme = EditorView.theme({
@@ -28,17 +28,14 @@ const emptySettings: AdminSettings = {
     public: {
         modelChannel: {
             availableModels: [],
-            modelCosts: [],
             defaultModel: "",
             defaultImageModel: "",
             defaultVideoModel: "",
             defaultTextModel: "",
             systemPrompt: "",
-            allowCustomChannel: true,
         },
-        auth: { allowRegister: true, linuxDo: { enabled: false } },
     },
-    private: { channels: [], promptSync: { enabled: true, cron: "*/5 * * * *" }, auth: { linuxDo: { clientId: "", clientSecret: "" } } },
+    private: { channels: [] },
 };
 const emptyChannel: AdminModelChannel = { protocol: "openai", name: "", baseUrl: "", apiKey: "", models: [], weight: 1, enabled: true, remark: "" };
 
@@ -47,7 +44,7 @@ type EditorMode = "visual" | "json";
 type ModelSelectTabKey = "new" | "current";
 
 export default function AdminSettingsPage() {
-    const token = useUserStore((state) => state.token);
+    const token = useAdminStore((state) => state.token);
     const { message } = App.useApp();
     const [form] = Form.useForm<AdminSettings>();
     const [activeTab, setActiveTab] = useState<SettingsTabKey>("public");
@@ -72,7 +69,6 @@ export default function AdminSettingsPage() {
     const [isFetchingChannelModels, setIsFetchingChannelModels] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
-    const [modelCosts, setModelCosts] = useState<AdminModelCost[]>([]);
     const [knownModels, setKnownModels] = useState<string[]>([]);
     const publicModels = Form.useWatch(["public", "modelChannel", "availableModels"], form) || [];
     const channelModels = useMemo(() => collectChannelModels(channels), [channels]);
@@ -94,7 +90,6 @@ export default function AdminSettingsPage() {
             const data = normalizeSettings(await fetchAdminSettings(token));
             form.setFieldsValue(data);
             setChannels(data.private.channels);
-            setModelCosts(data.public.modelChannel.modelCosts);
             setKnownModels(collectKnownModels(data));
             setJsonText({
                 public: JSON.stringify(data.public, null, 2),
@@ -127,7 +122,6 @@ export default function AdminSettingsPage() {
             const merged = mergeChannelApiKeys(values.private.channels, saved);
             form.setFieldsValue(merged);
             setChannels(merged.private.channels);
-            setModelCosts(merged.public.modelChannel.modelCosts);
             rememberKnownModels(merged);
             setJsonText({
                 public: JSON.stringify(merged.public, null, 2),
@@ -157,7 +151,6 @@ export default function AdminSettingsPage() {
         }
         form.setFieldsValue({ [tab]: parsed } as Partial<AdminSettings>);
         if (tab === "private") setChannels((parsed as AdminSettings["private"]).channels);
-        if (tab === "public") setModelCosts((parsed as AdminSettings["public"]).modelChannel.modelCosts);
         rememberKnownModels({ ...normalizeSettings(form.getFieldsValue(true) as AdminSettings), [tab]: parsed });
         setEditorMode((current) => ({ ...current, [tab]: nextMode }));
     };
@@ -168,7 +161,6 @@ export default function AdminSettingsPage() {
             message.error("JSON 格式不正确");
             return;
         }
-        if (tab === "public") setModelCosts((parsed as AdminSettings["public"]).modelChannel.modelCosts);
         setJsonText((current) => ({
             ...current,
             [tab]: JSON.stringify(parsed, null, 2),
@@ -343,7 +335,6 @@ export default function AdminSettingsPage() {
         const saved = normalizeSettings(await saveAdminSettings(token, nextSettings));
         const merged = mergeChannelApiKeys(nextChannels, saved);
         setChannels(merged.private.channels);
-        setModelCosts(merged.public.modelChannel.modelCosts);
         rememberKnownModels(merged);
         form.setFieldsValue(merged);
         setJsonText({
@@ -439,44 +430,6 @@ export default function AdminSettingsPage() {
                                             <Input.TextArea rows={4} />
                                         </Form.Item>
                                     </Col>
-                                    <Col span={24}>
-                                        <Form.Item name={["public", "modelChannel", "allowCustomChannel"]} label="是否允许用户自定义渠道" extra="开启后，前端可提供走后端渠道和用户自定义 baseUrl 直连两种模式" valuePropName="checked">
-                                            <Switch />
-                                        </Form.Item>
-                                    </Col>
-                                    <Col span={24}>
-                                        <Form.Item name={["public", "auth", "allowRegister"]} label="是否允许用户注册" extra="关闭后隐藏注册入口，注册接口也会拒绝新用户创建" valuePropName="checked">
-                                            <Switch />
-                                        </Form.Item>
-                                    </Col>
-                                    <Col span={24}>
-                                        <Typography.Title level={5}>模型算力点</Typography.Title>
-                                        <Table
-                                            rowKey="model"
-                                            pagination={false}
-                                            size="small"
-                                            dataSource={publicModels.map((model) => ({ model, credits: modelCostCredits(modelCosts, model) }))}
-                                            columns={[
-                                                { title: "模型", dataIndex: "model" },
-                                                {
-                                                    title: "每次调用扣除",
-                                                    dataIndex: "credits",
-                                                    width: 220,
-                                                    render: (_, item) => (
-                                                        <InputNumber
-                                                            min={0}
-                                                            step={1}
-                                                            precision={0}
-                                                            className="!w-full"
-                                                            value={item.credits}
-                                                            addonAfter="点"
-                                                            onChange={(value) => setModelCost(form, setModelCosts, item.model, Number(value) || 0)}
-                                                        />
-                                                    ),
-                                                },
-                                            ]}
-                                        />
-                                    </Col>
                                 </Row>
                             </Form>
                         ) : (
@@ -495,55 +448,6 @@ export default function AdminSettingsPage() {
                     ) : activeMode === "visual" ? (
                         <Form form={form} layout="vertical" initialValues={emptySettings} requiredMark={false}>
                             <Flex vertical gap={12}>
-                                <Card
-                                    size="small"
-                                    title={
-                                        <Space>
-                                            <img src="/icons/linuxdo.svg" alt="" width={18} height={18} />
-                                            Linux.do 登录
-                                        </Space>
-                                    }
-                                >
-                                    <Flex vertical gap={14}>
-                                        <Typography.Text type="secondary">
-                                            本项目接口回调地址是 /api/auth/linux-do/callback，请在 Linux.do 应用后台自行拼接站点前缀。
-                                            <Typography.Link href="https://connect.linux.do" target="_blank" rel="noreferrer">
-                                                点击此处管理你的 LinuxDO OAuth App
-                                            </Typography.Link>
-                                        </Typography.Text>
-                                        <Row gutter={16}>
-                                            <Col xs={24} md={6}>
-                                                <Form.Item name={["public", "auth", "linuxDo", "enabled"]} label="开启 Linux.do 登录" valuePropName="checked">
-                                                    <Switch />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col xs={24} md={9}>
-                                                <Form.Item name={["private", "auth", "linuxDo", "clientId"]} label="Linux.do Client ID">
-                                                    <Input placeholder="输入 Linux.do OAuth App 的 ID" />
-                                                </Form.Item>
-                                            </Col>
-                                            <Col xs={24} md={9}>
-                                                <Form.Item name={["private", "auth", "linuxDo", "clientSecret"]} label="Linux.do Client Secret">
-                                                    <Input.Password placeholder="留空则沿用已保存的密钥" />
-                                                </Form.Item>
-                                            </Col>
-                                        </Row>
-                                    </Flex>
-                                </Card>
-                                <Card size="small" title="提示词定时同步">
-                                    <Row gutter={16} align="middle">
-                                        <Col xs={24} md={8}>
-                                            <Form.Item name={["private", "promptSync", "enabled"]} label="开启定时同步" valuePropName="checked">
-                                                <Switch />
-                                            </Form.Item>
-                                        </Col>
-                                        <Col xs={24} md={16}>
-                                            <Form.Item name={["private", "promptSync", "cron"]} label="Cron 表达式" extra="默认每 5 分钟同步内置 GitHub 远程提示词源">
-                                                <Input placeholder="*/5 * * * *" />
-                                            </Form.Item>
-                                        </Col>
-                                    </Row>
-                                </Card>
                                 <Button type="primary" icon={<PlusOutlined />} onClick={() => openChannelDrawer(null)}>
                                     新增渠道
                                 </Button>
@@ -833,34 +737,13 @@ function normalizePublicSetting(setting: Partial<AdminSettings["public"]> = {}):
             ...emptySettings.public.modelChannel,
             ...(setting.modelChannel || {}),
             availableModels: setting.modelChannel?.availableModels || [],
-            modelCosts: normalizeModelCosts(setting.modelChannel?.modelCosts || []),
-        },
-        auth: {
-            allowRegister: setting.auth?.allowRegister !== false,
-            linuxDo: {
-                enabled: setting.auth?.linuxDo?.enabled === true,
-            },
         },
     };
-}
-
-function normalizeModelCosts(items: Partial<AdminSettings["public"]["modelChannel"]["modelCosts"][number]>[]) {
-    return items.filter((item) => item.model).map((item) => ({ model: item.model || "", credits: Math.max(0, Number(item.credits) || 0) }));
 }
 
 function normalizePrivateSetting(setting: Partial<AdminSettings["private"]> = {}): AdminSettings["private"] {
     return {
         channels: (setting.channels || []).map(normalizeChannel),
-        promptSync: {
-            enabled: setting.promptSync?.enabled !== false,
-            cron: setting.promptSync?.cron || "*/5 * * * *",
-        },
-        auth: {
-            linuxDo: {
-                clientId: setting.auth?.linuxDo?.clientId || "",
-                clientSecret: setting.auth?.linuxDo?.clientSecret || "",
-            },
-        },
     };
 }
 
@@ -875,18 +758,6 @@ function normalizeChannel(item: Partial<AdminModelChannel> = {}): AdminModelChan
         enabled: item.enabled !== false,
         remark: item.remark || "",
     };
-}
-
-function modelCostCredits(items: AdminSettings["public"]["modelChannel"]["modelCosts"], model: string) {
-    return items.find((item) => item.model === model)?.credits || 0;
-}
-
-function setModelCost(form: any, setModelCosts: (items: AdminModelCost[]) => void, model: string, credits: number) {
-    const current = (form.getFieldValue(["public", "modelChannel", "modelCosts"]) || []) as AdminSettings["public"]["modelChannel"]["modelCosts"];
-    const next = current.filter((item) => item.model !== model);
-    next.push({ model, credits: Math.max(0, credits) });
-    form.setFieldValue(["public", "modelChannel", "modelCosts"], next);
-    setModelCosts(next);
 }
 
 function mergeChannelApiKeys(currentChannels: AdminModelChannel[], saved: AdminSettings): AdminSettings {
@@ -907,7 +778,6 @@ function collectChannelModels(channels: AdminModelChannel[]) {
 function collectKnownModels(settings: AdminSettings) {
     return uniqueModels([
         ...(settings.public.modelChannel.availableModels || []),
-        ...(settings.public.modelChannel.modelCosts || []).map((item) => item.model),
         ...settings.private.channels.flatMap((channel) => channel.models || []),
     ]);
 }

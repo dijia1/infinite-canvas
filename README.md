@@ -1,65 +1,14 @@
 
-无限画布是一款面向图片创作的开源工作台。它把画布编排、AI 图片生成、参考图编辑、对话助手、提示词库和素材沉淀放在同一个界面里，适合用来探索视觉方案并连续迭代图片结果。
-
-> [!CAUTION]
-> 项目目前处于开发阶段，不保证历史数据兼容。各种数据库结构和存储格式都可能直接调整，欢迎关注后续更新，当前更适合个人/本地部署，不建议直接公网多人共用。
->
-
-## 核心功能
-
-- 无限画布：多画布项目、节点拖拽缩放、连线、小地图、撤销重做、导入导出。
-- AI 创作：支持 OpenAI 兼容接口的文生图、图生图、参考图编辑和文本问答。
-- 画布助手：围绕选中节点和上游节点对话、生图，并把结果插回画布。
-- 提示词库：抓取多个 GitHub 开源项目，按案例整理数百个图片提示词。
-
-完整功能说明见 [docs/features.md](docs/features.md)。
-
-
 ## 技术栈
 
 - 前端：Next.js、React、TypeScript、Tailwind CSS、Ant Design、Zustand、TanStack Query。
 - 后端：Go、Gin、GORM。
 - 部署：Docker。
 
-## 快速开始
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/basketikun/infinite-canvas)
-
-```bash
-git clone git@github.com:basketikun/infinite-canvas.git
-cd infinite-canvas
-cp .env.example .env
-# 修改默认账号密码等信息
-docker-compose up -d
-```
-
-本地源码构建运行：
-
-```bash
-cp .env.example .env
-docker compose -f docker-compose.local.yml up -d --build
-```
 
 运行后默认端口3000，可访问 `http://localhost:3000`。
 
-如需要拉取提示词，可前往:`http://localhost:3000/admin/prompts`
-
-## 效果展示
-
-<table width="100%">
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/TDFvGWDT/image.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/zVwJq3YS/image.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/PvY3qhhK/image.png" alt="image" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/7D04LwN/image.png" alt="image" border="0"></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src="https://i.ibb.co/bj30FtS5/5.png" alt="5" border="0"></td>
-    <td width="50%"><img src="https://i.ibb.co/hxRvjw51/image.png" alt="image" border="0"></td>
-  </tr>
-</table>
 
 ## 文档
 
@@ -73,9 +22,6 @@ docker compose -f docker-compose.local.yml up -d --build
 - [接口响应约定](docs/api-response.md)
 
 ## 开源协议
-
-本项目使用 GNU Affero General Public License v3.0，见 [LICENSE](LICENSE)。
-
 
 ## Star History
 

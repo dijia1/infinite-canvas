@@ -3,30 +3,27 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { AUTH_TOKEN_KEY, fetchCurrentUser, login, register, type AuthPayload, type AuthUser } from "@/services/api/auth";
+import { ADMIN_AUTH_TOKEN_KEY, fetchCurrentAdmin, loginAdmin, type AdminUser } from "@/services/api/admin";
 
-type UserStore = {
+type AdminStore = {
     token: string;
-    user: AuthUser | null;
+    user: AdminUser | null;
     isReady: boolean;
     isLoading: boolean;
-    setSession: (token: string, user: AuthUser) => void;
     clearSession: () => void;
-    hydrateUser: () => Promise<void>;
-    login: (payload: AuthPayload) => Promise<AuthUser>;
-    register: (payload: AuthPayload) => Promise<AuthUser>;
+    hydrateAdmin: () => Promise<void>;
+    login: (payload: { username: string; password: string }) => Promise<AdminUser>;
 };
 
-export const useUserStore = create<UserStore>()(
+export const useAdminStore = create<AdminStore>()(
     persist(
         (set, get) => ({
             token: "",
             user: null,
             isReady: false,
             isLoading: false,
-            setSession: (token, user) => set({ token, user, isReady: true }),
             clearSession: () => set({ token: "", user: null, isReady: true }),
-            hydrateUser: async () => {
+            hydrateAdmin: async () => {
                 const token = get().token;
                 if (!token) {
                     set({ user: null, isReady: true });
@@ -34,11 +31,7 @@ export const useUserStore = create<UserStore>()(
                 }
                 set({ isLoading: true });
                 try {
-                    const user = await fetchCurrentUser(token);
-                    if (user.role === "guest") {
-                        set({ token: "", user: null, isReady: true, isLoading: false });
-                        return;
-                    }
+                    const user = await fetchCurrentAdmin(token);
                     set({ user, isReady: true, isLoading: false });
                 } catch {
                     set({ token: "", user: null, isReady: true, isLoading: false });
@@ -47,18 +40,7 @@ export const useUserStore = create<UserStore>()(
             login: async (payload) => {
                 set({ isLoading: true });
                 try {
-                    const session = await login(payload);
-                    set({ token: session.token, user: session.user, isReady: true, isLoading: false });
-                    return session.user;
-                } catch (error) {
-                    set({ isLoading: false });
-                    throw error;
-                }
-            },
-            register: async (payload) => {
-                set({ isLoading: true });
-                try {
-                    const session = await register(payload);
+                    const session = await loginAdmin(payload);
                     set({ token: session.token, user: session.user, isReady: true, isLoading: false });
                     return session.user;
                 } catch (error) {
@@ -68,7 +50,7 @@ export const useUserStore = create<UserStore>()(
             },
         }),
         {
-            name: AUTH_TOKEN_KEY,
+            name: ADMIN_AUTH_TOKEN_KEY,
             partialize: (state) => ({ token: state.token }),
             onRehydrateStorage: () => (state) => {
                 if (state) state.isReady = false;

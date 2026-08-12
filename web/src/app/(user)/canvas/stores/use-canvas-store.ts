@@ -4,7 +4,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { CanvasAssistantSession, CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
+import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
 export type CanvasProject = {
     id: string;
@@ -13,8 +13,6 @@ export type CanvasProject = {
     updatedAt: string;
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
-    chatSessions: CanvasAssistantSession[];
-    activeChatId: string | null;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
     viewport: ViewportTransform;
@@ -23,13 +21,13 @@ export type CanvasProject = {
 type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
-    switchUserScope: (userId: string | null) => Promise<void>;
+    hydrate: () => Promise<void>;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "chatSessions" | "activeChatId" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
+    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -38,21 +36,32 @@ const CANVAS_GUEST_SCOPE = "guest";
 type PersistedCanvasState = Pick<CanvasStore, "projects">;
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let queuedPersistState: PersistedCanvasState | null = null;
-let currentCanvasScope = "";
-let switchingCanvasScope = false;
+const canvasStoreName = `${CANVAS_STORE_KEY}:${CANVAS_GUEST_SCOPE}`;
 
-const canvasStoreName = (userId: string | null) => `${CANVAS_STORE_KEY}:${userId?.trim() || CANVAS_GUEST_SCOPE}`;
+export function sanitizeCanvasProject(project: CanvasProject): CanvasProject {
+    return {
+        id: project.id,
+        title: project.title,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        nodes: project.nodes,
+        connections: project.connections,
+        backgroundMode: project.backgroundMode,
+        showImageInfo: project.showImageInfo,
+        viewport: project.viewport,
+    };
+}
 
 const canvasStorage: PersistStorage<CanvasStore> = {
     getItem: async (name) => {
         const value = await localForageStorage.getItem(name);
         if (!value) return null;
         const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+        parsed.state.projects = parsed.state.projects.map(sanitizeCanvasProject);
         queuedPersistState = parsed.state as PersistedCanvasState;
         return parsed;
     },
     setItem: (name, value) => {
-        if (switchingCanvasScope) return;
         const nextState = value.state as PersistedCanvasState;
         if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
         queuedPersistState = nextState;
@@ -70,18 +79,12 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             projects: [],
-            switchUserScope: async (userId) => {
-                const nextScope = userId?.trim() || CANVAS_GUEST_SCOPE;
-                if (currentCanvasScope === nextScope && get().hydrated) return;
-                currentCanvasScope = nextScope;
+            hydrate: async () => {
+                if (get().hydrated) return;
                 queuedPersistState = null;
-                switchingCanvasScope = true;
-                useCanvasStore.persist.setOptions({ name: canvasStoreName(nextScope) });
-                set({ hydrated: false, projects: [] });
                 try {
                     await useCanvasStore.persist.rehydrate();
                 } finally {
-                    switchingCanvasScope = false;
                     set({ hydrated: true });
                 }
             },
@@ -95,8 +98,6 @@ export const useCanvasStore = create<CanvasStore>()(
                     updatedAt: now,
                     nodes: [],
                     connections: [],
-                    chatSessions: [],
-                    activeChatId: null,
                     backgroundMode: "lines",
                     showImageInfo: false,
                     viewport: initialViewport,
@@ -113,8 +114,6 @@ export const useCanvasStore = create<CanvasStore>()(
                     updatedAt: now,
                     nodes: source.nodes || [],
                     connections: source.connections || [],
-                    chatSessions: source.chatSessions || [],
-                    activeChatId: source.activeChatId || null,
                     backgroundMode: source.backgroundMode || "lines",
                     showImageInfo: source.showImageInfo || false,
                     viewport: source.viewport || initialViewport,
@@ -140,7 +139,7 @@ export const useCanvasStore = create<CanvasStore>()(
                 })),
         }),
         {
-            name: canvasStoreName(null),
+            name: canvasStoreName,
             storage: canvasStorage,
             skipHydration: true,
             partialize: (state) =>

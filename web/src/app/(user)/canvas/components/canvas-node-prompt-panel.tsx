@@ -6,7 +6,6 @@ import { Button } from "antd";
 
 import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
-import { CreditSymbol, requestCreditCost } from "@/constant/credits";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -27,7 +26,6 @@ type CanvasNodePromptPanelProps = {
 
 export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfigChange, onGenerate, onImageSettingsOpenChange }: CanvasNodePromptPanelProps) {
     const globalConfig = useEffectiveConfig();
-    const modelCosts = useConfigStore((state) => state.publicSettings?.modelChannel.modelCosts);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = defaultMode(node.type);
@@ -36,7 +34,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
-    const credits = requestCreditCost({ channelMode: config.channelMode, modelCosts, model: config.model, count: mode === "image" ? config.count : 1 });
 
     useEffect(() => {
         setPrompt(isEditingExistingContent ? "" : node.metadata?.prompt || "");
@@ -106,13 +103,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                     onClick={submit}
                     aria-label="生成"
                 >
-                    <span className="flex items-center gap-1.5">
-                        <span className="inline-flex items-center gap-1 text-xs font-medium tabular-nums">
-                            <CreditSymbol />
-                            {credits.toLocaleString()}
-                        </span>
-                        {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
-                    </span>
+                    {isRunning ? <LoaderCircle className="size-4 animate-spin" /> : <ArrowUp className="size-4" />}
                 </Button>
             </div>
         </div>
