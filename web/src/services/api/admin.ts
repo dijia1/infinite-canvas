@@ -8,15 +8,6 @@ export type AdminUser = {
     role: "admin";
 };
 
-export type AdminSession = {
-    token: string;
-    user: AdminUser;
-};
-
-export async function loginAdmin(payload: { username: string; password: string }) {
-    return apiPost<AdminSession>("/api/admin/login", payload);
-}
-
 export async function fetchCurrentAdmin(token: string) {
     return apiGet<AdminUser>("/api/admin/me", undefined, token);
 }

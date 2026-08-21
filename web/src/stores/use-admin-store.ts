@@ -12,7 +12,6 @@ type AdminStore = {
     isLoading: boolean;
     clearSession: () => void;
     hydrateAdmin: () => Promise<void>;
-    login: (payload: { username: string; password: string }) => Promise<AdminUser>;
 };
 
 export const useAdminStore = create<AdminStore>()(
@@ -34,10 +33,6 @@ export const useAdminStore = create<AdminStore>()(
                 } catch {
                     set({ token: "", user: null, isReady: true, isLoading: false });
                 }
-            },
-            login: async (payload) => {
-				void payload;
-				throw new Error("请通过 Portal 工作台进入应用");
             },
         }),
         {
