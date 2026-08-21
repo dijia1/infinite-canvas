@@ -6,6 +6,7 @@ import { App, Button, Empty, Input, Pagination, Popconfirm, Spin } from "antd";
 import { useCallback, useDeferredValue, useEffect, useRef, useState } from "react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
+import { isEditableTarget } from "@/lib/editable-target";
 import { deleteAdminPublicImage, fetchPublicImageAccess, fetchPublicImages, uploadAdminPublicImage, type PublicImage } from "@/services/api/public-images";
 
 const PAGE_SIZE = 12;
@@ -135,8 +136,4 @@ function AdminPublicImageCard({ image, onDelete, deleting }: { image: PublicImag
             </div>
         </div>
     );
-}
-
-function isEditableTarget(target: EventTarget | null) {
-    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
 }

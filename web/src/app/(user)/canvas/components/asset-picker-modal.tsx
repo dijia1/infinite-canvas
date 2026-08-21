@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { App, Empty, Pagination } from "antd";
-import { RefreshCw, X } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
+import { isEditableTarget } from "@/lib/editable-target";
 import { uploadUserImage } from "@/services/api/image";
 import { getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, promoteImageStorageKey, resolveImageUrl, uploadImage, uploadImagePreview, type UploadedImage } from "@/services/image-storage";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { PRIVATE_IMAGE_DRAG_TYPE, type PrivateImageDropPayload } from "./material-image-drag";
+import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar } from "./material-drawer-toolbar";
 
 export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -112,9 +114,10 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
 
     if (!open) return null;
     return (
-        <aside
-            className="fixed bottom-0 left-0 top-16 z-[90] flex w-[min(26rem,calc(100vw-2rem))] flex-col border-r border-stone-200 bg-background/95 shadow-2xl backdrop-blur-xl dark:border-stone-800"
-            data-canvas-no-zoom
+        <MaterialDrawer
+            title="我的素材"
+            closeLabel="关闭我的素材"
+            onClose={onClose}
             onPointerEnter={() => {
                 drawerPointerInsideRef.current = true;
             }}
@@ -122,31 +125,16 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 drawerPointerInsideRef.current = false;
             }}
         >
-            <div className="flex h-16 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
-                <h2 className="text-base font-medium">我的素材</h2>
-                <button
-                    type="button"
-                    className="inline-flex size-8 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
-                    onClick={onClose}
-                    aria-label="关闭我的素材"
-                >
-                    <X className="size-4" />
-                </button>
-            </div>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
                 <MyAssetsTab isUploading={isUploading} onAddImage={() => fileInputRef.current?.click()} onRetryImage={retryImage} />
             </div>
             <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => selectImage(event.target.files?.[0])} />
-        </aside>
+        </MaterialDrawer>
     );
 }
 
 function imageTitle(filename: string) {
     return filename.replace(/\.[^.]+$/, "") || "剪贴板图片";
-}
-
-function isEditableTarget(target: EventTarget | null) {
-    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
 }
 
 function uploadErrorMessage(error: unknown) {

@@ -3,14 +3,15 @@
 import { useDeferredValue, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Empty, Pagination, Spin } from "antd";
-import { X } from "lucide-react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
+import { isEditableTarget } from "@/lib/editable-target";
 import { fetchPublicImageAccess, fetchPublicImages, uploadAdminPublicImage, type PublicImage } from "@/services/api/public-images";
 import { fetchPortalSession } from "@/services/api/session";
 import { imagePreviewStorageKey, resolveImageUrl, uploadImagePreview } from "@/services/image-storage";
 import { loadPublicImage } from "@/services/public-image-cache";
 import { PUBLIC_IMAGE_DRAG_TYPE, type PublicImageDropPayload } from "./material-image-drag";
+import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar } from "./material-drawer-toolbar";
 
 const PAGE_SIZE = 24;
@@ -72,9 +73,10 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
     if (!open) return null;
 
     return (
-        <aside
-            className="fixed bottom-0 left-0 top-16 z-[90] flex w-[min(26rem,calc(100vw-2rem))] flex-col border-r border-stone-200 bg-background/95 shadow-2xl backdrop-blur-xl dark:border-stone-800"
-            data-canvas-no-zoom
+        <MaterialDrawer
+            title="公共素材"
+            closeLabel="关闭公共素材"
+            onClose={onClose}
             onPointerEnter={() => {
                 drawerPointerInsideRef.current = true;
             }}
@@ -82,17 +84,6 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
                 drawerPointerInsideRef.current = false;
             }}
         >
-            <div className="flex h-16 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
-                <h2 className="text-base font-medium">公共素材</h2>
-                <button
-                    type="button"
-                    className="inline-flex size-8 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
-                    onClick={onClose}
-                    aria-label="关闭公共素材"
-                >
-                    <X className="size-4" />
-                </button>
-            </div>
             <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
                 <div className="space-y-4">
                     <MaterialDrawerToolbar
@@ -135,12 +126,8 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
                     }}
                 />
             ) : null}
-        </aside>
+        </MaterialDrawer>
     );
-}
-
-function isEditableTarget(target: EventTarget | null) {
-    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
 }
 
 function PublicImageCard({ image }: { image: PublicImage }) {

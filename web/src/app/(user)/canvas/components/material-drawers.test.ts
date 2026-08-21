@@ -62,3 +62,17 @@ test("public assets keep pagination inside the shared content flow", async () =>
     assert.doesNotMatch(source, /shrink-0 border-t/);
     assert.match(source, /\{total > PAGE_SIZE \? \(/);
 });
+
+test("material drawers reuse the shared shell and editable target helper", async () => {
+    const [privateDrawer, publicDrawer, adminManager] = await Promise.all([
+        readFile(componentURL("asset-picker-modal.tsx"), "utf8"),
+        readFile(componentURL("public-image-drawer.tsx"), "utf8"),
+        readFile(componentURL("../../../../app/(admin)/admin/assets/public-image-manager.tsx"), "utf8"),
+    ]);
+
+    assert.match(privateDrawer, /from "\.\/material-drawer"/);
+    assert.match(publicDrawer, /from "\.\/material-drawer"/);
+    assert.match(privateDrawer, /from "@\/lib\/editable-target"/);
+    assert.match(publicDrawer, /from "@\/lib\/editable-target"/);
+    assert.match(adminManager, /from "@\/lib\/editable-target"/);
+});
