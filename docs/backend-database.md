@@ -40,23 +40,11 @@
 | `created_at` | string | 创建时间 |
 | `updated_at` | string | 更新时间 |
 
-## assets
+## media 与 public_images
 
-保存服务器公开素材库中的文本、图片或视频信息。
+图片媒体记录保存 OSS 或本地存储对象 Key、MIME、尺寸、字节数、所属 Portal 用户 UUID 与来源。`public_images` 关联媒体记录，并保存上传者和公共素材标题。
 
-| 字段 | 类型 | 说明 |
-| --- | --- | --- |
-| `id` | string | 主键 |
-| `title` | string | 标题 |
-| `type` | string | `text`、`image` 或 `video` |
-| `cover_url` | string | 封面地址 |
-| `tags` | json | 标签列表 |
-| `category` | string | 分类 |
-| `description` | text | 描述 |
-| `content` | text | 文本内容 |
-| `url` | string | 资源地址 |
-| `created_at` | string | 创建时间 |
-| `updated_at` | string | 更新时间 |
+私人媒体按 Portal 用户 UUID 隔离；公共图片仅允许 `portal-admin` 写入，所有已登录 Portal 用户可读取。旧 `assets` 表不会被迁移程序删除，但应用不再读取或写入它。
 
 ## settings
 

@@ -36,7 +36,6 @@ func DB() (*gorm.DB, error) {
 			return
 		}
 		dbErr = db.AutoMigrate(
-			&model.Asset{},
 			&model.Media{},
 			&model.PublicImage{},
 			&model.Setting{},

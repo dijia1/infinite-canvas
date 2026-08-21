@@ -36,18 +36,11 @@ func New() *gin.Engine {
 	v1.GET("/videos/:id/content", func(c *gin.Context) {
 		handler.AIVideoContent(c.Writer, c.Request, c.Param("id"))
 	})
-	protected.GET("/assets", gin.WrapF(handler.Assets))
-
 	admin := protected.Group("/admin", middleware.RequirePortalAdmin)
 	admin.GET("/me", gin.WrapF(handler.AdminCurrent))
 	admin.GET("/settings", gin.WrapF(handler.AdminSettings))
 	admin.POST("/settings", gin.WrapF(handler.AdminSaveSettings))
 	admin.GET("/ai/provider-types", gin.WrapF(handler.AdminAIProviderTypes))
-	admin.GET("/assets", gin.WrapF(handler.AdminAssets))
-	admin.POST("/assets", gin.WrapF(handler.AdminSaveAsset))
-	admin.DELETE("/assets/:id", func(c *gin.Context) {
-		handler.AdminDeleteAsset(c.Writer, c.Request, c.Param("id"))
-	})
 	admin.POST("/public-images", gin.WrapF(handler.AdminUploadPublicImage))
 	admin.DELETE("/public-images/:id", func(c *gin.Context) {
 		handler.AdminDeletePublicImage(c.Writer, c.Request, c.Param("id"))
