@@ -51,7 +51,7 @@ export const useConfigStore = create<ConfigStore>()(
             isStatusLoading: false,
             isConfigOpen: false,
             shouldPromptContinue: false,
-            updateConfig: (key, value) => set((state) => ({ config: { ...state.config, [key]: key === "resolution" ? normalizeImageResolution(value) : value } })),
+            updateConfig: (key, value) => set((state) => ({ config: { ...state.config, [key]: key === "resolution" ? normalizeImageResolution(value as string) : value } })),
             loadPublicSettings: async () => {
                 if (get().isStatusLoading) return;
                 set({ isStatusLoading: true });

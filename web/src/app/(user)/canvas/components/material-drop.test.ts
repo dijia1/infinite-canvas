@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { test } from "bun:test";
+import test from "node:test";
 
 test("canvas accepts private and public material drag payloads", async () => {
     const source = await readFile(new URL("../[id]/canvas-client-page.tsx", import.meta.url), "utf8");
