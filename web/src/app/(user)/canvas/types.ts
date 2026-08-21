@@ -30,6 +30,7 @@ export type CanvasNodeMetadata = {
     generationType?: CanvasImageGenerationType;
     model?: string;
     size?: string;
+    resolution?: string;
     quality?: string;
     count?: number;
     seconds?: string;
@@ -46,6 +47,9 @@ export type CanvasNodeMetadata = {
     imageBatchExpanded?: boolean;
     inputOrder?: string[];
     storageKey?: string;
+	mediaId?: string;
+	publicImageId?: string;
+    assetId?: string;
     mimeType?: string;
     bytes?: number;
 };

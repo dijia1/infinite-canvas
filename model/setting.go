@@ -5,40 +5,21 @@ import "encoding/json"
 type SettingKey string
 
 const (
-	SettingKeyPublic  SettingKey = "public"
-	SettingKeyPrivate SettingKey = "private"
+	SettingKeyAI SettingKey = "ai"
 )
 
-// ModelChannel 模型渠道配置。
-type ModelChannel struct {
-	Protocol string   `json:"protocol"`
-	Name     string   `json:"name"`
-	BaseURL  string   `json:"baseUrl"`
-	APIKey   string   `json:"apiKey"`
-	Models   []string `json:"models"`
-	Weight   int      `json:"weight"`
-	Enabled  bool     `json:"enabled"`
-	Remark   string   `json:"remark"`
+type AIProvider struct {
+	ID      string          `json:"id"`
+	Name    string          `json:"name"`
+	Type    string          `json:"type"`
+	Enabled bool            `json:"enabled"`
+	Config  json.RawMessage `json:"config"`
 }
 
-// PublicModelChannelSetting 公开模型渠道配置。
-type PublicModelChannelSetting struct {
-	AvailableModels   []string `json:"availableModels"`
-	DefaultModel      string   `json:"defaultModel"`
-	DefaultImageModel string   `json:"defaultImageModel"`
-	DefaultVideoModel string   `json:"defaultVideoModel"`
-	DefaultTextModel  string   `json:"defaultTextModel"`
-	SystemPrompt      string   `json:"systemPrompt"`
-}
-
-// PublicSetting 公开配置。
-type PublicSetting struct {
-	ModelChannel PublicModelChannelSetting `json:"modelChannel"`
-}
-
-// PrivateSetting 私有配置。
-type PrivateSetting struct {
-	Channels []ModelChannel `json:"channels"`
+type AISettings struct {
+	Providers       []AIProvider `json:"providers"`
+	ImageProviderID string       `json:"imageProviderId"`
+	VideoProviderID string       `json:"videoProviderId"`
 }
 
 // Setting 系统配置。
@@ -49,8 +30,7 @@ type Setting struct {
 	UpdatedAt string          `json:"updatedAt"`
 }
 
-// Settings 系统公开和私有配置。
+// Settings AI 配置。
 type Settings struct {
-	Public  PublicSetting  `json:"public"`
-	Private PrivateSetting `json:"private"`
+	AI AISettings `json:"ai"`
 }

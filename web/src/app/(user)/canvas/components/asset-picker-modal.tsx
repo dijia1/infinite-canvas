@@ -1,200 +1,233 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { App, Empty, Input, Modal, Pagination, Spin, Tabs, Tag } from "antd";
-import { Search } from "lucide-react";
-import axios from "axios";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { App, Empty, Pagination } from "antd";
+import { RefreshCw, X } from "lucide-react";
 
-import { cn } from "@/lib/utils";
-import { useAssetStore, type Asset } from "@/stores/use-asset-store";
-import { fetchAssetLibrary, type AssetLibraryItem } from "@/services/api/assets";
+import { clipboardImageFile } from "@/lib/clipboard-image";
+import { uploadUserImage } from "@/services/api/image";
+import { getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, promoteImageStorageKey, resolveImageUrl, uploadImage, uploadImagePreview, type UploadedImage } from "@/services/image-storage";
+import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
+import { PRIVATE_IMAGE_DRAG_TYPE, type PrivateImageDropPayload } from "./material-image-drag";
+import { MaterialDrawerToolbar } from "./material-drawer-toolbar";
 
-export type AssetPickerTab = "my-assets" | "library";
+export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+    const { message } = App.useApp();
+    const addAsset = useAssetStore((state) => state.addAsset);
+    const updateAsset = useAssetStore((state) => state.updateAsset);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const drawerPointerInsideRef = useRef(false);
+    const [isUploading, setIsUploading] = useState(false);
+    const uploadStoredImage = useCallback(
+        async (assetId: string, image: UploadedImage, file: File) => {
+            const remote = await uploadUserImage(file);
+            const persisted = await promoteImageStorageKey(image, remote.mediaId);
+            updateAsset(assetId, {
+                coverUrl: persisted.url,
+                data: { dataUrl: persisted.url, storageKey: persisted.storageKey, width: persisted.width, height: persisted.height, bytes: persisted.bytes, mimeType: persisted.mimeType },
+                metadata: { mediaId: remote.mediaId, uploadState: "uploaded" },
+            });
+        },
+        [updateAsset],
+    );
+    const saveImage = useCallback(
+        async (file: File, source: string) => {
+            if (isUploading) return;
+            setIsUploading(true);
+            let assetId: string | undefined;
+            try {
+                const image = await uploadImage(file);
+                assetId = addAsset({
+                    kind: "image",
+                    title: imageTitle(file.name),
+                    coverUrl: image.url,
+                    tags: [],
+                    source,
+                    data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
+                    metadata: { uploadState: "pending" },
+                });
+                await uploadStoredImage(assetId, image, file);
+                message.success("图片已加入我的素材");
+            } catch (error) {
+                if (assetId) updateAsset(assetId, { metadata: { uploadState: "failed", uploadError: uploadErrorMessage(error) } });
+                message.error(error instanceof Error ? error.message : `${source === "剪贴板" ? "粘贴" : "上传"}图片失败`);
+            } finally {
+                setIsUploading(false);
+            }
+        },
+        [addAsset, isUploading, message, updateAsset, uploadStoredImage],
+    );
 
-export type InsertAssetPayload = { kind: "text"; content: string; title: string } | { kind: "image"; dataUrl: string; title: string; storageKey?: string } | { kind: "video"; url: string; title: string; storageKey?: string; width?: number; height?: number };
-
-type Props = {
-    open: boolean;
-    defaultTab?: AssetPickerTab;
-    onInsert: (payload: InsertAssetPayload) => void;
-    onClose: () => void;
-};
-
-export function AssetPickerModal({ open, defaultTab = "my-assets", onInsert, onClose }: Props) {
-    const [activeTab, setActiveTab] = useState<AssetPickerTab>(defaultTab);
+    const retryImage = useCallback(
+        async (asset: ImageAsset) => {
+            if (isUploading || !asset.data.storageKey) return;
+            const blob = await getImageBlob(asset.data.storageKey);
+            if (!blob) {
+                message.error("本地图片缓存不存在，无法重试上传");
+                return;
+            }
+            const file = new File([blob], asset.title || "image.png", { type: asset.data.mimeType || blob.type || "image/png" });
+            setIsUploading(true);
+            updateAsset(asset.id, { metadata: { uploadState: "pending" } });
+            try {
+                await uploadStoredImage(asset.id, { url: asset.coverUrl || asset.data.dataUrl, storageKey: asset.data.storageKey, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType }, file);
+                message.success("图片上传成功");
+            } catch (error) {
+                updateAsset(asset.id, { metadata: { uploadState: "failed", uploadError: uploadErrorMessage(error) } });
+                message.error(error instanceof Error ? error.message : "图片上传失败");
+            } finally {
+                setIsUploading(false);
+            }
+        },
+        [isUploading, message, updateAsset, uploadStoredImage],
+    );
 
     useEffect(() => {
-        if (open) setActiveTab(defaultTab);
-    }, [open, defaultTab]);
+        if (!open) return;
+        const handlePasteKeyDown = (event: KeyboardEvent) => {
+            if (!drawerPointerInsideRef.current || isEditableTarget(event.target)) return;
+            if ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "v") event.stopImmediatePropagation();
+        };
+        const handlePaste = (event: ClipboardEvent) => {
+            if (!drawerPointerInsideRef.current || isEditableTarget(event.target)) return;
+            const file = clipboardImageFile(event.clipboardData?.items || []);
+            if (!file) return;
+            event.preventDefault();
+            void saveImage(file, "剪贴板");
+        };
+        window.addEventListener("keydown", handlePasteKeyDown, true);
+        window.addEventListener("paste", handlePaste, true);
+        return () => {
+            window.removeEventListener("keydown", handlePasteKeyDown, true);
+            window.removeEventListener("paste", handlePaste, true);
+        };
+    }, [open, saveImage]);
 
+    const selectImage = (file?: File) => {
+        if (!file) return;
+        void saveImage(file, "本地上传").finally(() => {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+        });
+    };
+
+    if (!open) return null;
     return (
-        <Modal title="选择素材" open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
-            <Tabs
-                activeKey={activeTab}
-                onChange={(key) => setActiveTab(key as AssetPickerTab)}
-                items={[
-                    { key: "my-assets", label: "我的素材", children: <MyAssetsTab onInsert={onInsert} /> },
-                    { key: "library", label: "素材库", children: <LibraryTab onInsert={onInsert} /> },
-                ]}
-            />
-        </Modal>
+        <aside
+            className="fixed bottom-0 left-0 top-16 z-[90] flex w-[min(26rem,calc(100vw-2rem))] flex-col border-r border-stone-200 bg-background/95 shadow-2xl backdrop-blur-xl dark:border-stone-800"
+            data-canvas-no-zoom
+            onPointerEnter={() => {
+                drawerPointerInsideRef.current = true;
+            }}
+            onPointerLeave={() => {
+                drawerPointerInsideRef.current = false;
+            }}
+        >
+            <div className="flex h-16 shrink-0 items-center justify-between border-b border-stone-200 px-4 dark:border-stone-800">
+                <h2 className="text-base font-medium">我的素材</h2>
+                <button
+                    type="button"
+                    className="inline-flex size-8 items-center justify-center rounded-md text-stone-500 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                    onClick={onClose}
+                    aria-label="关闭我的素材"
+                >
+                    <X className="size-4" />
+                </button>
+            </div>
+            <div className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4">
+                <MyAssetsTab isUploading={isUploading} onAddImage={() => fileInputRef.current?.click()} onRetryImage={retryImage} />
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={(event) => selectImage(event.target.files?.[0])} />
+        </aside>
     );
+}
+
+function imageTitle(filename: string) {
+    return filename.replace(/\.[^.]+$/, "") || "剪贴板图片";
+}
+
+function isEditableTarget(target: EventTarget | null) {
+    return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
+}
+
+function uploadErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : "上传图片失败";
 }
 
 const PAGE_SIZE = 8;
 
-const kindOptions = [
-    { label: "全部", value: "all" },
-    { label: "文本", value: "text" },
-    { label: "图片", value: "image" },
-    { label: "视频", value: "video" },
-];
+function PickerCard({ asset, onRetry }: { asset: ImageAsset; onRetry: (asset: ImageAsset) => void }) {
+    const cover = asset.coverUrl || asset.data.dataUrl;
+    const uploadState = asset.metadata?.uploadState;
+    const failed = uploadState === "failed";
+    const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+    const [previewURL, setPreviewURL] = useState(cover);
 
-function LibraryTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
-    const { message } = App.useApp();
-    const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState("");
-    const [page, setPage] = useState(1);
-    const [inserting, setInserting] = useState<string | null>(null);
-
-    const query = useQuery({
-        queryKey: ["asset-picker-library", keyword, kindFilter, page],
-        queryFn: () => fetchAssetLibrary({ keyword, type: kindFilter, page, pageSize: PAGE_SIZE }),
-        retry: false,
-    });
-
-    const items = query.data?.items || [];
-    const total = query.data?.total || 0;
-
-    const handleInsert = async (asset: AssetLibraryItem) => {
-        try {
-            setInserting(asset.id);
-            if (asset.type === "text") {
-                onInsert({ kind: "text", content: asset.content, title: asset.title });
-            } else {
-                const dataUrl = await remoteImageToDataUrl(asset.url);
-                onInsert({ kind: "image", dataUrl, title: asset.title });
-            }
-        } catch {
-            message.error("插入失败");
-        } finally {
-            setInserting(null);
+    useEffect(() => {
+        let cancelled = false;
+        if (!mediaId || uploadState === "pending" || failed) {
+            setPreviewURL(cover);
+            return () => {
+                cancelled = true;
+            };
         }
-    };
+        void (async () => {
+            const cached = await resolveImageUrl(imagePreviewStorageKey(mediaId), "");
+            if (cached) return cached;
+            const access = await getRemoteImageAccess(mediaId);
+            return (await uploadImagePreview(access.previewUrl || access.url, mediaId)).url;
+        })()
+            .then((url) => {
+                if (!cancelled) setPreviewURL(url || cover);
+            })
+            .catch(() => {
+                if (!cancelled) setPreviewURL(cover);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [cover, failed, mediaId, uploadState]);
 
     return (
-        <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-                <Input
-                    className="w-56"
-                    size="small"
-                    prefix={<Search className="size-3.5 text-stone-400" />}
-                    placeholder="搜索素材"
-                    value={keyword}
-                    allowClear
-                    onChange={(e) => {
-                        setPage(1);
-                        setKeyword(e.target.value);
+        <div
+            draggable={Boolean(previewURL || cover)}
+            className="group relative cursor-grab overflow-hidden rounded-lg border border-stone-200 bg-white active:cursor-grabbing dark:border-stone-700 dark:bg-stone-900"
+            onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "copy";
+                event.dataTransfer.setData(PRIVATE_IMAGE_DRAG_TYPE, JSON.stringify({ assetId: asset.id } satisfies PrivateImageDropPayload));
+            }}
+            title="拖入画布使用"
+        >
+            {previewURL || cover ? <img src={previewURL || cover} alt="" className="aspect-[4/3] w-full object-cover" /> : <div className="aspect-[4/3] bg-stone-100 dark:bg-stone-800" />}
+            {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
+            {failed ? (
+                <button
+                    type="button"
+                    className="absolute right-1 top-1 inline-flex size-7 items-center justify-center rounded-full bg-red-600 text-white shadow transition hover:bg-red-700"
+                    onClick={(event) => {
+                        event.stopPropagation();
+                        onRetry(asset);
                     }}
-                />
-                <div className="flex gap-1.5">
-                    {[
-                        { label: "全部", value: "" },
-                        { label: "文本", value: "text" },
-                        { label: "图片", value: "image" },
-                    ].map((opt) => (
-                        <Tag.CheckableTag
-                            key={opt.value || "all"}
-                            checked={kindFilter === opt.value}
-                            className={cn("prompt-filter-tag", kindFilter === opt.value && "is-active")}
-                            onChange={() => {
-                                setPage(1);
-                                setKindFilter(opt.value);
-                            }}
-                        >
-                            {opt.label}
-                        </Tag.CheckableTag>
-                    ))}
-                </div>
-            </div>
-
-            {query.isLoading ? (
-                <div className="flex justify-center py-16">
-                    <Spin />
-                </div>
-            ) : items.length ? (
-                <div className="grid grid-cols-4 gap-3">
-                    {items.map((asset) => (
-                        <PickerCard key={asset.id} title={asset.title} kind={asset.type} cover={asset.coverUrl} loading={inserting === asset.id} onClick={() => void handleInsert(asset)} />
-                    ))}
-                </div>
-            ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有素材" className="py-12" />
-            )}
-
-            {total > PAGE_SIZE && (
-                <div className="flex justify-center">
-                    <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={total} onChange={setPage} showSizeChanger={false} />
-                </div>
-            )}
+                    title={typeof asset.metadata?.uploadError === "string" ? asset.metadata.uploadError : "上传失败，点击重试"}
+                    aria-label="重新上传图片"
+                >
+                    <RefreshCw className="size-3.5" />
+                </button>
+            ) : null}
         </div>
     );
 }
 
-function PickerCard({ title, kind, cover, loading, onClick }: { title: string; kind: string; cover: string; loading?: boolean; onClick: () => void }) {
-    return (
-        <button
-            type="button"
-            className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500"
-            onClick={onClick}
-            disabled={loading}
-        >
-            {cover ? (
-                <img src={cover} alt={title} className="aspect-[4/3] w-full object-cover" />
-            ) : (
-                <div className="flex aspect-[4/3] items-center justify-center bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">{title}</div>
-            )}
-            <div className="p-2.5">
-                <div className="flex items-center justify-between gap-2">
-                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
-                    <Tag className="m-0 shrink-0 text-[10px]">{kind === "image" ? "图片" : kind === "video" ? "视频" : "文本"}</Tag>
-                </div>
-            </div>
-            {loading && (
-                <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-stone-900/60">
-                    <Spin size="small" />
-                </div>
-            )}
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">插入</div>
-        </button>
-    );
-}
-
-async function remoteImageToDataUrl(url: string) {
-    const response = await axios.get(url, { responseType: "blob" });
-    const blob = response.data as Blob;
-    return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ""));
-        reader.onerror = () => reject(new Error("读取图片失败"));
-        reader.readAsDataURL(blob);
-    });
-}
-
-function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => void }) {
+function MyAssetsTab({ isUploading, onAddImage, onRetryImage }: { isUploading: boolean; onAddImage: () => void; onRetryImage: (asset: ImageAsset) => void }) {
     const assets = useAssetStore((state) => state.assets);
     const [keyword, setKeyword] = useState("");
-    const [kindFilter, setKindFilter] = useState("all");
     const [page, setPage] = useState(1);
 
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return assets
-            .filter((a) => a.kind === "text" || a.kind === "image" || a.kind === "video")
-            .filter((a) => kindFilter === "all" || a.kind === kindFilter)
-            .filter((a) => !query || [a.title, ...(a.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, keyword, kindFilter]);
+            .filter((asset) => asset.kind === "image")
+            .filter((asset) => !query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query));
+    }, [assets, keyword]);
 
     const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
 
@@ -203,50 +236,23 @@ function MyAssetsTab({ onInsert }: { onInsert: (payload: InsertAssetPayload) => 
         setPage((v) => Math.min(v, maxPage));
     }, [filtered.length]);
 
-    const handleInsert = (asset: Asset) => {
-        if (asset.kind === "text") {
-            onInsert({ kind: "text", content: asset.data.content, title: asset.title });
-        } else {
-            onInsert(asset.kind === "video" ? { kind: "video", url: asset.data.url, storageKey: asset.data.storageKey, title: asset.title, width: asset.data.width, height: asset.data.height } : { kind: "image", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey, title: asset.title });
-        }
-    };
-
     return (
         <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3">
-                <Input
-                    className="w-56"
-                    size="small"
-                    prefix={<Search className="size-3.5 text-stone-400" />}
-                    placeholder="搜索素材"
-                    value={keyword}
-                    allowClear
-                    onChange={(e) => {
-                        setPage(1);
-                        setKeyword(e.target.value);
-                    }}
-                />
-                <div className="flex gap-1.5">
-                    {kindOptions.map((opt) => (
-                        <Tag.CheckableTag
-                            key={opt.value}
-                            checked={kindFilter === opt.value}
-                            className={cn("prompt-filter-tag", kindFilter === opt.value && "is-active")}
-                            onChange={() => {
-                                setPage(1);
-                                setKindFilter(opt.value);
-                            }}
-                        >
-                            {opt.label}
-                        </Tag.CheckableTag>
-                    ))}
-                </div>
-            </div>
+            <MaterialDrawerToolbar
+                keyword={keyword}
+                placeholder="搜索素材"
+                onKeywordChange={(value) => {
+                    setPage(1);
+                    setKeyword(value);
+                }}
+                onAddImage={onAddImage}
+                isUploading={isUploading}
+            />
 
             {visible.length ? (
                 <div className="grid grid-cols-4 gap-3">
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} title={asset.title} kind={asset.kind} cover={asset.coverUrl || (asset.kind === "image" ? asset.data.dataUrl : "")} onClick={() => handleInsert(asset)} />
+                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} />
                     ))}
                 </div>
             ) : (

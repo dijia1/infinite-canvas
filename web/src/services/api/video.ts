@@ -20,12 +20,10 @@ function aiApiUrl(path: string) {
 }
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
-    const model = config.model || config.videoModel;
     const seconds = normalizeVideoSeconds(config.videoSeconds);
     const size = normalizeVideoSize(config.size);
     const resolutionName = normalizeVideoResolution(config.vquality);
     const body = new FormData();
-    body.append("model", model);
     body.append("prompt", prompt);
     body.append("seconds", seconds);
     if (size) body.append("size", size);
@@ -36,7 +34,6 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     debugCanvasRequest("video generation", {
         url: aiApiUrl("/videos"),
         body: {
-            model,
             prompt,
             seconds,
             ...(size ? { size } : {}),
@@ -49,12 +46,12 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl("/videos"), body)).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");
         for (;;) {
-            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(`/videos/${created.id}`), { params: { model } })).data);
+            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(`/videos/${created.id}`))).data);
             if (video.status === "completed") break;
             if (video.status === "failed" || video.status === "cancelled") throw new Error(video.error?.message || "视频生成失败");
             await new Promise((resolve) => setTimeout(resolve, 2500));
         }
-        const content = await axios.get<Blob>(aiApiUrl(`/videos/${created.id}/content`), { params: { model }, responseType: "blob" });
+        const content = await axios.get<Blob>(aiApiUrl(`/videos/${created.id}/content`), { responseType: "blob" });
         await assertVideoBlob(content.data);
         return content.data;
     } catch (error) {
@@ -81,14 +78,14 @@ function normalizeVideoResolution(value: string) {
     return `${resolution}p`;
 }
 
-function unwrapVideoResponse(payload: ApiVideoResponse) {
+function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
     if (!payload) throw new Error("接口没有返回视频任务");
     if ("code" in payload && typeof payload.code === "number") {
         if (payload.code !== 0) throw new Error(payload.msg || "请求失败");
         if (!payload.data) throw new Error("接口没有返回视频任务");
         return payload.data;
     }
-    return payload;
+    return payload as VideoResponse;
 }
 
 function readAxiosError(error: unknown, fallback: string) {

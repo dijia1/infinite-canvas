@@ -1,23 +1,13 @@
 package middleware
 
-import (
-	"strings"
-
-	"github.com/basketikun/infinite-canvas/handler"
-	"github.com/basketikun/infinite-canvas/service"
-	"github.com/gin-gonic/gin"
-)
+import "github.com/gin-gonic/gin"
 
 func AdminAuth(c *gin.Context) {
-	token := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-	user, ok := service.CurrentAdmin(token)
-	if !ok {
-		handler.Fail(c.Writer, "未登录或权限不足")
-		c.Abort()
+	PortalIdentity(c)
+	if c.IsAborted() {
 		return
 	}
-	c.Request = c.Request.WithContext(service.WithUser(c.Request.Context(), user))
-	c.Next()
+	RequirePortalAdmin(c)
 }
 
 func NotFoundJSON(c *gin.Context) {

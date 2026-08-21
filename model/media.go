@@ -1,0 +1,22 @@
+package model
+
+type MediaSource string
+
+const (
+	MediaSourceGenerated MediaSource = "generated"
+	MediaSourceUpload    MediaSource = "upload"
+)
+
+// Media is a private image object owned by one Portal user.
+type Media struct {
+	ID          string      `json:"id" gorm:"primaryKey"`
+	OwnerUID    string      `json:"-" gorm:"index"`
+	Source      MediaSource `json:"source"`
+	ObjectKey   string      `json:"-" gorm:"uniqueIndex"`
+	ContentType string      `json:"contentType"`
+	Bytes       int64       `json:"bytes"`
+	Width       int         `json:"width"`
+	Height      int         `json:"height"`
+	Filename    string      `json:"filename"`
+	CreatedAt   string      `json:"createdAt"`
+}

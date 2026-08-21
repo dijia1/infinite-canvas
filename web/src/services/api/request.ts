@@ -22,12 +22,22 @@ export function serializeApiParams(params?: ApiParams) {
     return queryParams;
 }
 
+function appApiURL(url: string) {
+    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+    return url.startsWith("/api/") ? `${basePath}${url}` : url;
+}
+
+export function authorizationHeaders(token?: string) {
+    if (!token || token === "portal") return undefined;
+    return { Authorization: `Bearer ${token}` };
+}
+
 export async function apiGet<T>(url: string, params?: ApiParams, token?: string) {
     return apiRequest<T>({
         url,
         method: "GET",
         params: params || undefined,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: authorizationHeaders(token),
     });
 }
 
@@ -38,7 +48,7 @@ export async function apiPost<T>(url: string, body?: unknown, token?: string) {
         data: body ?? {},
         headers: {
             "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...authorizationHeaders(token),
         },
     });
 }
@@ -47,7 +57,7 @@ export async function apiDelete<T>(url: string, token?: string) {
     return apiRequest<T>({
         url,
         method: "DELETE",
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        headers: authorizationHeaders(token),
     });
 }
 
@@ -55,7 +65,7 @@ async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "DE
     let response;
     try {
         response = await axios.request<ApiResponse<T>>({
-            url: config.url,
+            url: appApiURL(config.url),
             method: config.method,
             params: config.params,
             paramsSerializer: { serialize: (params) => serializeApiParams(params as ApiParams).toString() },

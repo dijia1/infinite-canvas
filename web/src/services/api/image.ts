@@ -5,17 +5,18 @@ import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
-
-export type ChatCompletionMessage = {
-    role: "system" | "user" | "assistant";
-    content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
-};
+import { normalizeImageResolution } from "@/lib/image-generation-config";
 
 type ImageApiResponse = {
     data?: Array<Record<string, unknown>>;
     error?: { message?: string };
     code?: number;
     msg?: string;
+};
+
+export type ChatCompletionMessage = {
+    role: "system" | "user" | "assistant";
+    content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 };
 
 function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
@@ -25,13 +26,6 @@ function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
     console.groupEnd();
 }
 
-const QUALITY_BASE: Record<string, number> = {
-    low: 1024,
-    medium: 2048,
-    high: 2880,
-    standard: 1024,
-    hd: 2048,
-};
 const QUALITY_ALIASES: Record<string, string> = {
     "1k": "low",
     "2k": "medium",
@@ -39,41 +33,9 @@ const QUALITY_ALIASES: Record<string, string> = {
 };
 
 function normalizeQuality(quality: string) {
-    const value = quality.trim().toLowerCase();
+    const value = (quality || "").trim().toLowerCase();
     const normalized = QUALITY_ALIASES[value] || value;
-    return QUALITY_BASE[normalized] ? normalized : undefined;
-}
-
-/** Map "quality + ratio" to an explicit pixel dimension like "3840x2160". Returns undefined when quality is auto. */
-function resolveSize(quality: string, ratio: string): string | undefined {
-    const basePixels = QUALITY_BASE[quality];
-    if (!basePixels || ratio === "auto" || !ratio) return undefined;
-
-    const parts = ratio.split(":");
-    if (parts.length !== 2) return undefined;
-    const w = Number(parts[0]);
-    const h = Number(parts[1]);
-    if (!w || !h) return undefined;
-
-    const targetPixels = basePixels * basePixels;
-    const isLandscape = w >= h;
-    const longRatio = isLandscape ? w / h : h / w;
-
-    const longSideRaw = Math.sqrt(targetPixels * longRatio);
-    const longSide = Math.floor(longSideRaw / 16) * 16;
-    const shortSide = Math.round((longSide / longRatio) / 16) * 16;
-
-    const width = isLandscape ? longSide : shortSide;
-    const height = isLandscape ? shortSide : longSide;
-
-    return `${width}x${height}`;
-}
-
-function resolveRequestSize(quality: string | undefined, size: string) {
-    const value = size.trim();
-    if (!value || value === "auto") return undefined;
-    if (/^\d+x\d+$/.test(value)) return value;
-    return (quality && resolveSize(quality, value)) || value;
+    return normalized === "auto" || !normalized ? undefined : normalized;
 }
 
 function resolveImageDataUrl(item: Record<string, unknown>) {
@@ -94,13 +56,21 @@ function parseImagePayload(payload: ImageApiResponse) {
         payload.data
             ?.map(resolveImageDataUrl)
             .filter((value): value is string => Boolean(value))
-            .map((dataUrl) => ({ id: nanoid(), dataUrl })) || [];
+            .map((dataUrl, index) => ({ id: nanoid(), dataUrl, mediaId: typeof payload.data?.[index]?.mediaId === "string" ? payload.data[index].mediaId as string : undefined })) || [];
 
     if (images.length === 0) {
         throw new Error("接口没有返回图片");
     }
 
     return images;
+}
+
+export async function uploadUserImage(file: File) {
+    const form = new FormData();
+    form.set("image", file);
+    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string } }>(aiApiUrl("/media/images"), form);
+    if (response.data.code !== 0 || !response.data.data?.mediaId || !response.data.data.url) throw new Error(response.data.msg || "上传图片失败");
+    return { mediaId: response.data.data.mediaId, url: response.data.data.url };
 }
 
 function readAxiosError(error: unknown, fallback: string) {
@@ -111,48 +81,25 @@ function readAxiosError(error: unknown, fallback: string) {
     return error instanceof Error ? error.message : fallback;
 }
 
-function parseStreamChunk(chunk: string, onDelta: (value: string) => void) {
-    let deltaText = "";
-    for (const eventBlock of chunk.split("\n\n")) {
-        const data = eventBlock
-            .split("\n")
-            .find((line) => line.startsWith("data: "))
-            ?.slice(6);
-        if (!data || data === "[DONE]") continue;
-        const delta = (JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]?.delta?.content || "";
-        deltaText += delta;
-    }
-    if (deltaText) onDelta(deltaText);
-}
-
-function withSystemPrompt(config: AiConfig, prompt: string) {
-    const systemPrompt = config.systemPrompt.trim();
-    return systemPrompt ? `${systemPrompt}\n\n${prompt}` : prompt;
-}
-
 function aiApiUrl(path: string) {
-    return `/api/v1${path}`;
+    return `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/v1${path}`;
 }
 
 function aiHeaders(contentType?: string) {
     return contentType ? { "Content-Type": contentType } : undefined;
 }
 
-function withSystemMessage(config: AiConfig, messages: ChatCompletionMessage[]) {
-    const systemPrompt = config.systemPrompt.trim();
-    return systemPrompt ? [{ role: "system" as const, content: systemPrompt }, ...messages] : messages;
-}
-
 export async function requestGeneration(config: AiConfig, prompt: string) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const size = (config.size || "").trim();
+    const resolution = normalizeImageResolution(config.resolution);
     const body = {
-        model: config.model,
-        prompt: withSystemPrompt(config, prompt),
+        prompt,
         n,
         ...(quality ? { quality } : {}),
-        ...(requestSize ? { size: requestSize } : {}),
+        ...(size && size !== "auto" ? { size } : {}),
+        ...(resolution ? { resolution } : {}),
         response_format: "b64_json",
     };
     debugCanvasRequest("image generation", {
@@ -160,13 +107,9 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
         body,
     });
     try {
-        const response = await axios.post<ImageApiResponse>(
-            aiApiUrl("/images/generations"),
-            body,
-            {
-                headers: aiHeaders("application/json"),
-            },
-        );
+        const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/generations"), body, {
+            headers: aiHeaders("application/json"),
+        });
         const images = parseImagePayload(response.data);
         return images;
     } catch (error) {
@@ -177,29 +120,31 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[]) {
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
-    const promptWithSystem = withSystemPrompt(config, prompt);
+    const size = (config.size || "").trim();
+    const resolution = normalizeImageResolution(config.resolution);
     const formData = new FormData();
-    formData.set("model", config.model);
-    formData.set("prompt", promptWithSystem);
+    formData.set("prompt", prompt);
     formData.set("n", String(n));
     formData.set("response_format", "b64_json");
     if (quality) {
         formData.set("quality", quality);
     }
-    if (requestSize) {
-        formData.set("size", requestSize);
+    if (size && size !== "auto") {
+        formData.set("size", size);
+    }
+    if (resolution) {
+        formData.set("resolution", resolution);
     }
     const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => formData.append("image", file));
     debugCanvasRequest("image edit", {
         url: aiApiUrl("/images/edits"),
         body: {
-            model: config.model,
-            prompt: promptWithSystem,
+            prompt,
             n,
             ...(quality ? { quality } : {}),
-            ...(requestSize ? { size: requestSize } : {}),
+            ...(size && size !== "auto" ? { size } : {}),
+            ...(resolution ? { resolution } : {}),
             response_format: "b64_json",
         },
         references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
@@ -214,68 +159,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
-export async function requestImageQuestion(config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void) {
-    let buffer = "";
-    let answer = "";
-    let processedLength = 0;
-    const body = {
-        model: config.model,
-        messages: withSystemMessage(config, messages),
-        stream: true,
-    };
-    debugCanvasRequest("chat completions", {
-        url: aiApiUrl("/chat/completions"),
-        body,
-    });
-
-    try {
-        const response = await axios.post(
-            aiApiUrl("/chat/completions"),
-            body,
-            {
-                headers: {
-                    ...aiHeaders("application/json"),
-                } as Record<string, string>,
-                responseType: "text",
-                onDownloadProgress: (event) => {
-                    const responseText = String(event.event?.target?.responseText || "");
-                    const nextText = responseText.slice(processedLength);
-                    processedLength = responseText.length;
-                    buffer += nextText;
-                    const chunks = buffer.split("\n\n");
-                    buffer = chunks.pop() || "";
-                    for (const chunk of chunks) {
-                        parseStreamChunk(chunk, (delta) => {
-                            answer += delta;
-                            onDelta(answer);
-                        });
-                    }
-                },
-            },
-        );
-        if (typeof response.data === "object" && response.data && "code" in response.data && (response.data as { code?: number; msg?: string }).code !== 0) {
-            throw new Error((response.data as { msg?: string }).msg || "请求失败");
-        }
-        if (typeof response.data === "string") {
-            let apiError = "";
-            try {
-                const payload = JSON.parse(response.data) as { code?: number; msg?: string };
-                if (typeof payload.code === "number" && payload.code !== 0) {
-                    apiError = payload.msg || "请求失败";
-                }
-            } catch {
-                // ignore plain text stream content
-            }
-            if (apiError) throw new Error(apiError);
-        }
-        if (buffer) {
-            parseStreamChunk(buffer, (delta) => {
-                answer += delta;
-                onDelta(answer);
-            });
-        }
-    } catch (error) {
-        throw new Error(readAxiosError(error, "请求失败"));
-    }
-    return answer || "没有返回内容";
+/** 仅用于旧画布节点的兼容提示，不再发起文本模型请求。 */
+export async function requestImageQuestion(_config: AiConfig, _messages: ChatCompletionMessage[], _onDelta: (text: string) => void): Promise<string> {
+    throw new Error("文本生成功能已移除");
 }

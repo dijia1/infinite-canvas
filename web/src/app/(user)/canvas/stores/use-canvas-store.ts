@@ -21,7 +21,7 @@ export type CanvasProject = {
 type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
-    hydrate: () => Promise<void>;
+    hydrate: (scope?: string) => Promise<void>;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
@@ -79,9 +79,10 @@ export const useCanvasStore = create<CanvasStore>()(
         (set, get) => ({
             hydrated: false,
             projects: [],
-            hydrate: async () => {
+            hydrate: async (scope = CANVAS_GUEST_SCOPE) => {
                 if (get().hydrated) return;
                 queuedPersistState = null;
+                useCanvasStore.persist.setOptions({ name: `${CANVAS_STORE_KEY}:${scope}` });
                 try {
                     await useCanvasStore.persist.rehydrate();
                 } finally {

@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { ConfigProvider } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
+import { imageResolutionOptions, normalizeImageResolution } from "@/lib/image-generation-config";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -20,38 +21,23 @@ const aspectOptions = [
     { value: "4:3", label: "4:3", width: 1344, height: 1024, icon: "landscape" },
     { value: "3:4", label: "3:4", width: 1024, height: 1344, icon: "portrait" },
     { value: "9:16", label: "9:16", width: 1024, height: 1792, icon: "portrait" },
-    { value: "1:1-2k", label: "1:1(2k)", size: "2048x2048", width: 2048, height: 2048, icon: "square" },
-    { value: "16:9-2k", label: "16:9(2k)", size: "2048x1152", width: 2048, height: 1152, icon: "landscape" },
-    { value: "9:16-2k", label: "9:16(2k)", size: "1152x2048", width: 1152, height: 2048, icon: "portrait" },
-    { value: "16:9-4k", label: "16:9(4k)", size: "3840x2160", width: 3840, height: 2160, icon: "landscape" },
-    { value: "9:16-4k", label: "9:16(4k)", size: "2160x3840", width: 2160, height: 3840, icon: "portrait" },
     { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
 ];
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "resolution" | "count", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
     maxCount?: number;
-    quickCount?: number;
 };
 
-export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15, quickCount = 10 }: ImageSettingsPanelProps) {
+export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4 rounded-2xl px-1 py-0.5", maxCount = 15 }: ImageSettingsPanelProps) {
     const quality = config.quality || "auto";
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
-    const selectedAspect = aspectOptions.find((item) => (item.size || item.value) === activeSize || item.value === activeSize);
-    const dimensions = readSizeDimensions(activeSize, selectedAspect || aspectOptions[0]);
-    const selectAspect = (value: string) => {
-        const option = aspectOptions.find((item) => item.value === value);
-        onConfigChange("size", option?.size || option?.value || "auto");
-    };
-    const updateDimension = (key: "width" | "height", value: number | null) => {
-        const next = Math.max(1, Math.floor(value || dimensions[key] || 1024));
-        onConfigChange("size", `${key === "width" ? next : dimensions.width}x${key === "height" ? next : dimensions.height}`);
-    };
+    const resolution = normalizeImageResolution(config.resolution);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -69,11 +55,19 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>尺寸</SettingTitle>
-                    <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2.5">
-                        <DimensionInput prefix="W" value={dimensions.width} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("width", value)} />
-                        <span className="text-lg opacity-45">↔</span>
-                        <DimensionInput prefix="H" value={dimensions.height} disabled={activeSize === "auto"} theme={theme} onChange={(value) => updateDimension("height", value)} />
-                    </div>
+                    <select
+                        className="h-10 w-full rounded-xl border bg-transparent px-3 text-sm outline-none"
+                        style={{ borderColor: theme.node.stroke, color: theme.node.text }}
+                        value={resolution}
+                        onChange={(event) => onConfigChange("resolution", event.target.value)}
+                        onMouseDown={(event) => event.stopPropagation()}
+                    >
+                        {imageResolutionOptions.map((item) => (
+                            <option key={item.value} value={item.value}>
+                                {item.label}
+                            </option>
+                        ))}
+                    </select>
                 </div>
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
@@ -83,9 +77,9 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 key={item.value}
                                 type="button"
                                 className="flex h-[72px] cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border bg-transparent text-sm transition hover:opacity-80"
-                                style={{ borderColor: selectedAspect?.value === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
+                                style={{ borderColor: activeSize === item.value ? theme.node.text : theme.node.stroke, background: "transparent", color: theme.node.text }}
                                 onMouseDown={(event) => event.stopPropagation()}
-                                onClick={() => selectAspect(item.value)}
+                                onClick={() => onConfigChange("size", item.value)}
                             >
                                 <AspectIcon type={item.icon} width={item.width} height={item.height} color={theme.node.text} />
                                 <span>{item.label}</span>
@@ -96,7 +90,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {Array.from({ length: quickCount }, (_, index) => index + 1).map((value) => (
+                        {[1, 3, 5].map((value) => (
                             <OptionPill key={value} selected={count === value} theme={theme} onClick={() => onConfigChange("count", String(value))}>
                                 {value} 张
                             </OptionPill>
@@ -127,7 +121,11 @@ export function imageQualityLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => (item.size || item.value) === size || item.value === size)?.label || size;
+    return aspectOptions.find((item) => item.value === size)?.label || size;
+}
+
+export function imageResolutionLabel(resolution: string) {
+    return imageResolutionOptions.find((item) => item.value === normalizeImageResolution(resolution))?.label || "1K";
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {
@@ -141,25 +139,6 @@ function OptionPill({ selected, theme, onClick, children }: { selected: boolean;
         >
             {children}
         </button>
-    );
-}
-
-function DimensionInput({ prefix, value, disabled, theme, onChange }: { prefix: string; value: number; disabled: boolean; theme: CanvasTheme; onChange: (value: number | null) => void }) {
-    return (
-        <label className="flex h-9 overflow-hidden rounded-xl text-sm" style={{ background: theme.node.fill, color: theme.node.text, opacity: disabled ? 0.55 : 1 }}>
-            <span className="grid w-9 place-items-center" style={{ color: theme.node.muted }}>
-                {prefix}
-            </span>
-            <input
-                type="number"
-                min={1}
-                disabled={disabled}
-                className="min-w-0 flex-1 bg-transparent px-2 outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                value={value || ""}
-                onChange={(event) => onChange(Number(event.target.value) || null)}
-                onMouseDown={(event) => event.stopPropagation()}
-            />
-        </label>
     );
 }
 
@@ -198,12 +177,4 @@ function SettingTitle({ children, color }: { children: string; color: string }) 
             {children}
         </div>
     );
-}
-
-function readSizeDimensions(size: string, fallback: { width: number; height: number }) {
-    const match = size?.match(/^(\d+)x(\d+)$/);
-    return {
-        width: match ? Number(match[1]) : fallback.width,
-        height: match ? Number(match[2]) : fallback.height,
-    };
 }

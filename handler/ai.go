@@ -1,167 +1,138 @@
 package handler
 
 import (
-	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
-	"log"
-	"mime"
-	"mime/multipart"
 	"net/http"
-	"strings"
 
+	"github.com/basketikun/infinite-canvas/ai"
 	"github.com/basketikun/infinite-canvas/service"
 )
 
+type imageRequest struct {
+	Prompt     string `json:"prompt"`
+	N          int    `json:"n"`
+	Quality    string `json:"quality"`
+	Size       string `json:"size"`
+	Resolution string `json:"resolution"`
+}
+
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
-	proxyAIRequest(w, r, "/images/generations")
+	var payload imageRequest
+	_ = json.NewDecoder(r.Body).Decode(&payload)
+	images, err := service.GenerateImages(r.Context(), ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution})
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, imageResponse(images))
 }
 
 func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
-	proxyAIRequest(w, r, "/images/edits")
-}
-
-func AIChatCompletions(w http.ResponseWriter, r *http.Request) {
-	proxyAIRequest(w, r, "/chat/completions")
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		Fail(w, "图像编辑请求无效")
+		return
+	}
+	files := r.MultipartForm.File["image"]
+	references := make([]ai.ImageReference, 0, len(files))
+	for _, file := range files {
+		input, err := file.Open()
+		if err != nil {
+			Fail(w, "读取参考图失败")
+			return
+		}
+		data, readErr := io.ReadAll(input)
+		_ = input.Close()
+		if readErr != nil {
+			Fail(w, "读取参考图失败")
+			return
+		}
+		references = append(references, ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data})
+	}
+	images, err := service.EditImages(r.Context(), ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution")}, references)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, imageResponse(images))
 }
 
 func AIVideos(w http.ResponseWriter, r *http.Request) {
-	proxyAIRequest(w, r, "/videos")
+	request, err := videoRequestFromForm(r)
+	if err != nil {
+		Fail(w, "视频请求无效")
+		return
+	}
+	result, err := service.CreateVideo(r.Context(), request)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
 }
 
 func AIVideo(w http.ResponseWriter, r *http.Request, id string) {
-	proxyAIGetRequest(w, r, "/videos/"+id)
+	result, err := service.GetVideo(r.Context(), id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
 }
 
 func AIVideoContent(w http.ResponseWriter, r *http.Request, id string) {
-	proxyAIGetRequest(w, r, "/videos/"+id+"/content")
+	result, err := service.GetVideoContent(r.Context(), id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	if result.ContentType != "" {
+		w.Header().Set("Content-Type", result.ContentType)
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(result.Data)
 }
 
-func proxyAIGetRequest(w http.ResponseWriter, r *http.Request, path string) {
-	modelName := r.URL.Query().Get("model")
-	if strings.TrimSpace(modelName) == "" {
-		modelName = "grok-imagine-video"
-	}
-	channel, err := service.SelectModelChannel(modelName)
-	if err != nil {
-		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	request, err := http.NewRequest(http.MethodGet, service.BuildModelChannelURL(channel, path), nil)
-	if err != nil {
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
-	copyAIResponse(w, request, nil)
-}
-
-func proxyAIRequest(w http.ResponseWriter, r *http.Request, path string) {
-	body, contentType, modelName, err := readAIRequest(r)
-	if err != nil {
-		log.Printf("AI proxy request read failed: %v", err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	channel, err := service.SelectModelChannel(modelName)
-	if err != nil {
-		log.Printf("AI proxy select channel failed: model=%s err=%v", modelName, err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	request, err := http.NewRequest(http.MethodPost, service.BuildModelChannelURL(channel, path), bytes.NewReader(body))
-	if err != nil {
-		log.Printf("AI proxy build request failed: url=%s err=%v", service.BuildModelChannelURL(channel, path), err)
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	request.Header.Set("Authorization", "Bearer "+channel.APIKey)
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
-	}
-	copyAIResponse(w, request, nil)
-}
-
-func copyAIResponse(w http.ResponseWriter, request *http.Request, onFailure func()) {
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		log.Printf("AI proxy request failed: url=%s err=%v", request.URL.String(), err)
-		if onFailure != nil {
-			onFailure()
-		}
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode >= http.StatusBadRequest {
-		payload, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		log.Printf("AI upstream error: url=%s status=%d body=%s", request.URL.String(), response.StatusCode, strings.TrimSpace(string(payload)))
-		if onFailure != nil {
-			onFailure()
-		}
-		Fail(w, "AI 接口请求失败")
-		return
-	}
-
-	for key, values := range response.Header {
-		if strings.EqualFold(key, "Content-Length") {
-			continue
-		}
-		for _, value := range values {
-			w.Header().Add(key, value)
+func imageResponse(images []ai.ImageResult) []map[string]any {
+	result := make([]map[string]any, 0, len(images))
+	for _, image := range images {
+		if image.URL != "" {
+			result = append(result, map[string]any{"url": image.URL, "mediaId": image.MediaID, "expiresAt": image.ExpiresAt, "contentType": image.ContentType})
+		} else {
+			result = append(result, map[string]any{"b64_json": base64.StdEncoding.EncodeToString(image.Data)})
 		}
 	}
-	w.WriteHeader(response.StatusCode)
-	_, _ = io.Copy(w, response.Body)
+	return result
 }
 
-func readAIRequest(r *http.Request) ([]byte, string, string, error) {
-	contentType := r.Header.Get("Content-Type")
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		return nil, "", "", err
+func videoRequestFromForm(r *http.Request) (ai.VideoRequest, error) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return ai.VideoRequest{}, err
 	}
-	modelName := ""
-	if strings.HasPrefix(contentType, "multipart/form-data") {
-		modelName = readMultipartModel(body, contentType)
-	} else {
-		var payload struct {
-			Model string `json:"model"`
+	files := r.MultipartForm.File["input_reference[]"]
+	references := make([]ai.ImageReference, 0, len(files))
+	for _, file := range files {
+		input, err := file.Open()
+		if err != nil {
+			return ai.VideoRequest{}, err
 		}
-		_ = json.Unmarshal(body, &payload)
-		modelName = payload.Model
+		data, readErr := io.ReadAll(input)
+		_ = input.Close()
+		if readErr != nil {
+			return ai.VideoRequest{}, readErr
+		}
+		references = append(references, ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data})
 	}
-	if strings.TrimSpace(modelName) == "" {
-		return nil, "", "", errMissingModel
-	}
-	return body, contentType, modelName, nil
+	return ai.VideoRequest{Prompt: r.FormValue("prompt"), Seconds: r.FormValue("seconds"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution_name"), References: references}, nil
 }
 
-func readMultipartModel(body []byte, contentType string) string {
-	_, params, err := mime.ParseMediaType(contentType)
-	if err != nil {
-		return ""
+func number(value string) int {
+	var result int
+	_, _ = fmt.Sscan(value, &result)
+	if result < 1 {
+		return 1
 	}
-	reader := multipart.NewReader(bytes.NewReader(body), params["boundary"])
-	form, err := reader.ReadForm(32 << 20)
-	if err != nil {
-		return ""
-	}
-	defer form.RemoveAll()
-	if values := form.Value["model"]; len(values) > 0 {
-		return values[0]
-	}
-	return ""
-}
-
-var errMissingModel = &aiError{"缺少模型名称"}
-
-type aiError struct {
-	message string
-}
-
-func (err *aiError) Error() string {
-	return err.message
+	return result
 }

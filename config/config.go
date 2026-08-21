@@ -1,22 +1,25 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/base64"
-	"strings"
-
 	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Port           string `env:"PORT" envDefault:"8082"`
-	AdminUsername  string `env:"ADMIN_USERNAME" envDefault:"admin"`
-	AdminPassword  string `env:"ADMIN_PASSWORD" envDefault:"infinite-canvas"`
-	JWTSecret      string `env:"JWT_SECRET" envDefault:"infinite-canvas"`
-	JWTExpireHours int    `env:"JWT_EXPIRE_HOURS" envDefault:"168"`
-	StorageDriver  string `env:"STORAGE_DRIVER" envDefault:"sqlite"`
-	DatabaseDSN    string `env:"DATABASE_DSN" envDefault:"data/infinite-canvas.db"`
+	Port                string `env:"PORT" envDefault:"8082"`
+	StorageDriver       string `env:"STORAGE_DRIVER" envDefault:"sqlite"`
+	DatabaseDSN         string `env:"DATABASE_DSN" envDefault:"data/infinite-canvas.db"`
+	PortalAdminRole     string `env:"PORTAL_ADMIN_ROLE" envDefault:"portal-admin"`
+	MediaStorage        string `env:"MEDIA_STORAGE" envDefault:"local"`
+	MediaLocalDir       string `env:"MEDIA_LOCAL_DIR" envDefault:"data/media"`
+	OSSRegion           string `env:"OSS_REGION"`
+	OSSBucket           string `env:"OSS_BUCKET"`
+	OSSInternalEndpoint string `env:"OSS_INTERNAL_ENDPOINT"`
+	OSSPublicEndpoint   string `env:"OSS_PUBLIC_ENDPOINT"`
+	OSSAccessKeyID      string `env:"OSS_ACCESS_KEY_ID"`
+	OSSAccessKeySecret  string `env:"OSS_ACCESS_KEY_SECRET"`
+	OSSObjectPrefix     string `env:"OSS_OBJECT_PREFIX" envDefault:"images"`
+	OSSSignedURLTTL     string `env:"OSS_SIGNED_URL_TTL" envDefault:"15m"`
 }
 
 var Cfg Config
@@ -26,20 +29,5 @@ func Load() error {
 	if err := env.Parse(&Cfg); err != nil {
 		return err
 	}
-	if strings.TrimSpace(Cfg.JWTSecret) == "" || Cfg.JWTSecret == "infinite-canvas" {
-		secret, err := randomSecret()
-		if err != nil {
-			return err
-		}
-		Cfg.JWTSecret = secret
-	}
 	return nil
-}
-
-func randomSecret() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
 }

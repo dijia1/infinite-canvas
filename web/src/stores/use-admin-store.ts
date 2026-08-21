@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-import { ADMIN_AUTH_TOKEN_KEY, fetchCurrentAdmin, loginAdmin, type AdminUser } from "@/services/api/admin";
+import { ADMIN_AUTH_TOKEN_KEY, fetchCurrentAdmin, type AdminUser } from "@/services/api/admin";
 
 type AdminStore = {
     token: string;
@@ -22,31 +22,22 @@ export const useAdminStore = create<AdminStore>()(
             user: null,
             isReady: false,
             isLoading: false,
-            clearSession: () => set({ token: "", user: null, isReady: true }),
+            clearSession: () => {
+                set({ token: "", user: null, isReady: true });
+                window.location.assign("/");
+            },
             hydrateAdmin: async () => {
-                const token = get().token;
-                if (!token) {
-                    set({ user: null, isReady: true });
-                    return;
-                }
                 set({ isLoading: true });
                 try {
-                    const user = await fetchCurrentAdmin(token);
-                    set({ user, isReady: true, isLoading: false });
+                    const user = await fetchCurrentAdmin("");
+                    set({ token: "portal", user, isReady: true, isLoading: false });
                 } catch {
                     set({ token: "", user: null, isReady: true, isLoading: false });
                 }
             },
             login: async (payload) => {
-                set({ isLoading: true });
-                try {
-                    const session = await loginAdmin(payload);
-                    set({ token: session.token, user: session.user, isReady: true, isLoading: false });
-                    return session.user;
-                } catch (error) {
-                    set({ isLoading: false });
-                    throw error;
-                }
+				void payload;
+				throw new Error("请通过 Portal 工作台进入应用");
             },
         }),
         {

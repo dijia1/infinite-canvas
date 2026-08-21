@@ -1,18 +1,22 @@
 "use client";
 
 import { Drawer } from "antd";
+import { Images, Library } from "lucide-react";
 import Link from "next/link";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
+import { appPath } from "@/lib/app-path";
 import { cn } from "@/lib/utils";
 
 type MobileNavDrawerProps = {
     open: boolean;
     activeToolSlug?: NavigationToolSlug;
     onClose: () => void;
+    onOpenMyAssets: () => void;
+    onOpenPublicAssets: () => void;
 };
 
-export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ open, activeToolSlug, onClose, onOpenMyAssets, onOpenPublicAssets }: MobileNavDrawerProps) {
     return (
         <Drawer title="导航" placement="left" size={280} open={open} onClose={onClose} className="md:hidden">
             <div className="space-y-1">
@@ -22,7 +26,7 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     return (
                         <Link
                             key={tool.slug}
-                            href={`/${tool.slug}`}
+                            href={appPath(`/${tool.slug}`)}
                             onClick={onClose}
                             className={cn(
                                 "flex items-center gap-3 rounded-lg px-3 py-3 text-base transition",
@@ -34,6 +38,28 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                         </Link>
                     );
                 })}
+                <button
+                    type="button"
+                    onClick={() => {
+                        onClose();
+                        onOpenMyAssets();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                >
+                    <Images className="size-5" />
+                    <span>我的素材</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => {
+                        onClose();
+                        onOpenPublicAssets();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                >
+                    <Library className="size-5" />
+                    <span>公共素材</span>
+                </button>
             </div>
         </Drawer>
     );

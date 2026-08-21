@@ -7,7 +7,7 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// GetSettings 返回 public 和 private 两行配置。
+// GetSettings 返回 AI 配置。
 func GetSettings() (model.Settings, error) {
 	db, err := DB()
 	if err != nil {
@@ -19,26 +19,22 @@ func GetSettings() (model.Settings, error) {
 	}
 	result := model.Settings{}
 	for _, item := range items {
-		if item.Key == model.SettingKeyPrivate {
-			_ = json.Unmarshal(item.Value, &result.Private)
-		} else if item.Key == model.SettingKeyPublic {
-			_ = json.Unmarshal(item.Value, &result.Public)
+		if item.Key == model.SettingKeyAI {
+			_ = json.Unmarshal(item.Value, &result.AI)
 		}
 	}
 	return result, nil
 }
 
-// SaveSettings 保存 public 和 private 两行配置。
+// SaveSettings 保存 AI 配置。
 func SaveSettings(settings model.Settings, now string) (model.Settings, error) {
 	db, err := DB()
 	if err != nil {
 		return settings, err
 	}
-	publicValue, _ := json.Marshal(settings.Public)
-	privateValue, _ := json.Marshal(settings.Private)
+	value, _ := json.Marshal(settings.AI)
 	items := []model.Setting{
-		{Key: model.SettingKeyPublic, Value: publicValue, CreatedAt: now, UpdatedAt: now},
-		{Key: model.SettingKeyPrivate, Value: privateValue, CreatedAt: now, UpdatedAt: now},
+		{Key: model.SettingKeyAI, Value: value, CreatedAt: now, UpdatedAt: now},
 	}
 	err = db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},

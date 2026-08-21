@@ -2,10 +2,10 @@
 FROM oven/bun:1.3.13 AS web-build
 
 WORKDIR /app/web
+ARG NEXT_PUBLIC_BASE_PATH=/apps/infinite-canvas
+ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 COPY web/package.json web/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --registry=https://registry.npmmirror.com --cache-dir=/root/.bun/install/cache
-COPY VERSION /app/VERSION
-COPY CHANGELOG.md /app/CHANGELOG.md
 COPY web ./
 RUN bun run build
 
@@ -14,6 +14,7 @@ FROM golang:1.25-alpine AS api-build
 
 WORKDIR /app
 COPY go.mod go.sum ./
+COPY ai ./ai
 COPY config ./config
 COPY handler ./handler
 COPY middleware ./middleware
@@ -28,13 +29,11 @@ RUN go build -o /server .
 FROM oven/bun:1.3.13
 
 WORKDIR /app
-COPY VERSION /app/VERSION
-COPY CHANGELOG.md /app/CHANGELOG.md
+ARG NEXT_PUBLIC_BASE_PATH=/apps/infinite-canvas
+ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 COPY --from=api-build /server /app/server
 COPY --from=web-build /app/web /app/web
-ENV PROMPT_DATA_DIR=/app/data/prompts
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p /app/data/prompts
 
 EXPOSE 3000
 # 先启动内部 Go API，再由 Next.js 提供页面并代理 /api/*。

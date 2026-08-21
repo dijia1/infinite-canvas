@@ -1,11 +1,4 @@
 import { apiDelete, apiGet, apiPost, compactApiParams } from "@/services/api/request";
-import type { Prompt, PromptListResponse } from "@/services/api/prompts";
-
-export type AdminPromptCategory = {
-    category: string;
-    name: string;
-    description: string;
-};
 
 export const ADMIN_AUTH_TOKEN_KEY = "infinite-canvas-admin-auth-token-v1";
 
@@ -28,18 +21,6 @@ export async function fetchCurrentAdmin(token: string) {
     return apiGet<AdminUser>("/api/admin/me", undefined, token);
 }
 
-export async function fetchAdminPromptCategories(token: string) {
-    return apiGet<AdminPromptCategory[]>("/api/admin/prompt-categories", undefined, token);
-}
-
-export type AdminPromptQuery = {
-    keyword?: string;
-    category?: string;
-    tag?: string[];
-    page?: number;
-    pageSize?: number;
-};
-
 export type AdminAsset = {
     id: string;
     title: string;
@@ -59,22 +40,6 @@ export type AdminAssetListResponse = {
     tags: string[];
     total: number;
 };
-
-export async function fetchAdminPrompts(token: string, query: AdminPromptQuery = {}) {
-    return apiGet<PromptListResponse>("/api/admin/prompts", compactApiParams(query), token);
-}
-
-export async function saveAdminPrompt(token: string, prompt: Partial<Prompt>) {
-    return apiPost<Prompt>("/api/admin/prompts", prompt, token);
-}
-
-export async function deleteAdminPrompt(token: string, id: string) {
-    return apiDelete<boolean>(`/api/admin/prompts/${encodeURIComponent(id)}`, token);
-}
-
-export async function deleteAdminPrompts(token: string, ids: string[]) {
-    return apiPost<boolean>("/api/admin/prompts/batch-delete", { ids }, token);
-}
 
 export type AdminAssetQuery = {
     keyword?: string;
@@ -96,37 +61,29 @@ export async function deleteAdminAsset(token: string, id: string) {
     return apiDelete<boolean>(`/api/admin/assets/${encodeURIComponent(id)}`, token);
 }
 
-export type AdminModelChannel = {
-    protocol: "openai";
+export type AdminAIProvider = {
+    id: string;
     name: string;
-    baseUrl: string;
-    apiKey: string;
-    models: string[];
-    weight: number;
+    type: string;
     enabled: boolean;
-    remark: string;
+    config: Record<string, unknown>;
 };
 
-export type AdminPublicModelChannelSettings = {
-    availableModels: string[];
-    defaultModel: string;
-    defaultImageModel: string;
-    defaultVideoModel: string;
-    defaultTextModel: string;
-    systemPrompt: string;
+export type AdminAIProviderType = {
+    id: string;
+    name: string;
+    capabilities: Array<"image_generate" | "image_edit" | "video_generate">;
+    configFields: Array<{ key: string; label: string; type: "text" | "password"; placeholder?: string; required: boolean }>;
 };
 
-export type AdminPublicSettings = {
-    modelChannel: AdminPublicModelChannelSettings;
-};
-
-export type AdminPrivateSettings = {
-    channels: AdminModelChannel[];
+export type AdminAISettings = {
+    providers: AdminAIProvider[];
+    imageProviderId: string;
+    videoProviderId: string;
 };
 
 export type AdminSettings = {
-    public: AdminPublicSettings;
-    private: AdminPrivateSettings;
+    ai: AdminAISettings;
 };
 
 export async function fetchAdminSettings(token: string) {
@@ -137,16 +94,6 @@ export async function saveAdminSettings(token: string, settings: AdminSettings) 
     return apiPost<AdminSettings>("/api/admin/settings", settings, token);
 }
 
-export type AdminChannelActionRequest = {
-    index?: number;
-    channel: AdminModelChannel;
-    model?: string;
-};
-
-export async function fetchChannelModels(token: string, payload: AdminChannelActionRequest) {
-    return apiPost<string[]>("/api/admin/settings/channel-models", payload, token);
-}
-
-export async function testChannelModel(token: string, payload: AdminChannelActionRequest) {
-    return apiPost<string>("/api/admin/settings/channel-test", payload, token);
+export async function fetchAIProviderTypes(token: string) {
+    return apiGet<AdminAIProviderType[]>("/api/admin/ai/provider-types", undefined, token);
 }

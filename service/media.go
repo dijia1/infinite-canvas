@@ -1,0 +1,242 @@
+package service
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"mime"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
+	"github.com/basketikun/infinite-canvas/config"
+	"github.com/basketikun/infinite-canvas/model"
+	"github.com/basketikun/infinite-canvas/repository"
+	"github.com/google/uuid"
+)
+
+const maxMediaBytes = 50 << 20
+const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
+
+type imageStore interface {
+	Put(context.Context, string, []byte, string) error
+	Delete(context.Context, string) error
+	SignedURL(context.Context, string, string) (string, time.Time, error)
+}
+
+type MediaAccess struct {
+	MediaID     string    `json:"mediaId"`
+	URL         string    `json:"url"`
+	PreviewURL  string    `json:"previewUrl"`
+	ExpiresAt   time.Time `json:"expiresAt"`
+	ContentType string    `json:"contentType"`
+	Bytes       int64     `json:"bytes"`
+	Width       int       `json:"width"`
+	Height      int       `json:"height"`
+}
+
+func imageObjectKey(userUID, extension string, now time.Time) string {
+	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
+	if prefix == "" {
+		prefix = "images"
+	}
+	return fmt.Sprintf("%s/private/%s/%04d/%02d/%s.%s", prefix, userUID, now.Year(), now.Month(), uuid.NewString(), extension)
+}
+
+func publicImageObjectKey(extension string, now time.Time) string {
+	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
+	if prefix == "" {
+		prefix = "images"
+	}
+	return fmt.Sprintf("%s/public/%04d/%02d/%s.%s", prefix, now.Year(), now.Month(), uuid.NewString(), extension)
+}
+
+func canAccessMedia(user PortalUser, item model.Media) bool {
+	role := config.Cfg.PortalAdminRole
+	if strings.TrimSpace(role) == "" {
+		role = "portal-admin"
+	}
+	return user.UID == item.OwnerUID || user.HasRole(role)
+}
+
+func SaveUploadedImage(ctx context.Context, user PortalUser, filename, contentType string, data []byte) (MediaAccess, error) {
+	return saveImage(ctx, user, model.MediaSourceUpload, filename, contentType, data, false)
+}
+
+func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, filename, contentType string, data []byte, isPublic bool) (MediaAccess, error) {
+	if user.UID == "" {
+		return MediaAccess{}, errors.New("未经过 Portal Gateway 身份验证")
+	}
+	if len(data) == 0 || len(data) > maxMediaBytes {
+		return MediaAccess{}, errors.New("图片大小无效")
+	}
+	contentType, extension, err := normalizeImage(data, contentType)
+	if err != nil {
+		return MediaAccess{}, err
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return MediaAccess{}, err
+	}
+	createdAt := time.Now()
+	key := imageObjectKey(user.UID, extension, createdAt)
+	if isPublic {
+		key = publicImageObjectKey(extension, createdAt)
+	}
+	if err := store.Put(ctx, key, data, contentType); err != nil {
+		return MediaAccess{}, fmt.Errorf("保存图片失败: %w", err)
+	}
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Filename: filepath.Base(filename), CreatedAt: now()}
+	saved, err := repository.SaveMedia(item)
+	if err != nil {
+		_ = store.Delete(ctx, key)
+		return MediaAccess{}, err
+	}
+	return mediaAccess(ctx, store, saved)
+}
+
+func MediaAccessURL(ctx context.Context, user PortalUser, id string) (MediaAccess, error) {
+	item, found, err := repository.GetMedia(id)
+	if err != nil {
+		return MediaAccess{}, err
+	}
+	if !found {
+		return MediaAccess{}, safeMessageError{message: "图片不存在"}
+	}
+	if !canAccessMedia(user, item) {
+		return MediaAccess{}, safeMessageError{message: "无权访问该图片"}
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return MediaAccess{}, err
+	}
+	return mediaAccess(ctx, store, item)
+}
+
+func mediaAccess(ctx context.Context, store imageStore, item model.Media) (MediaAccess, error) {
+	url, expiresAt, err := store.SignedURL(ctx, item.ObjectKey, "")
+	if err != nil {
+		return MediaAccess{}, fmt.Errorf("生成图片访问地址失败: %w", err)
+	}
+	previewURL, _, err := store.SignedURL(ctx, item.ObjectKey, mediaPreviewProcess)
+	if err != nil {
+		return MediaAccess{}, fmt.Errorf("生成图片预览地址失败: %w", err)
+	}
+	if _, local := store.(localImageStore); local {
+		url = "/api/v1/media/" + item.ID + "/content"
+		previewURL = url
+	}
+	return MediaAccess{MediaID: item.ID, URL: url, PreviewURL: previewURL, ExpiresAt: expiresAt, ContentType: item.ContentType, Bytes: item.Bytes, Width: item.Width, Height: item.Height}, nil
+}
+
+func OpenLocalMedia(ctx context.Context, user PortalUser, id string) (io.ReadCloser, string, error) {
+	item, found, err := repository.GetMedia(id)
+	if err != nil {
+		return nil, "", err
+	}
+	if !found {
+		return nil, "", safeMessageError{message: "图片不存在"}
+	}
+	if !canAccessMedia(user, item) {
+		return nil, "", safeMessageError{message: "无权访问该图片"}
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return nil, "", err
+	}
+	local, ok := store.(localImageStore)
+	if !ok {
+		return nil, "", safeMessageError{message: "当前存储不支持本地文件访问"}
+	}
+	file, err := local.Open(item.ObjectKey)
+	return file, item.ContentType, err
+}
+
+func normalizeImage(data []byte, claimed string) (string, string, error) {
+	contentType, _, _ := mime.ParseMediaType(claimed)
+	detected := http.DetectContentType(data)
+	if !strings.HasPrefix(detected, "image/") {
+		return "", "", errors.New("图片格式无效")
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		contentType = detected
+	}
+	extensions, _ := mime.ExtensionsByType(contentType)
+	extension := "png"
+	if len(extensions) > 0 {
+		extension = strings.TrimPrefix(extensions[0], ".")
+	}
+	return contentType, extension, nil
+}
+
+type localImageStore struct{ directory string }
+
+func (store localImageStore) path(key string) string {
+	return filepath.Join(store.directory, filepath.FromSlash(key))
+}
+func (store localImageStore) Put(_ context.Context, key string, data []byte, _ string) error {
+	path := store.path(key)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0644)
+}
+func (store localImageStore) Delete(_ context.Context, key string) error {
+	return os.Remove(store.path(key))
+}
+func (store localImageStore) SignedURL(_ context.Context, key, _ string) (string, time.Time, error) {
+	return "/api/v1/media/local?key=" + key, time.Time{}, nil
+}
+func (store localImageStore) Open(key string) (io.ReadCloser, error) { return os.Open(store.path(key)) }
+
+type ossImageStore struct {
+	internal, public *oss.Client
+	bucket           string
+	ttl              time.Duration
+}
+
+func (store *ossImageStore) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	_, err := store.internal.PutObject(ctx, &oss.PutObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), Body: bytes.NewReader(data), ContentType: oss.Ptr(contentType), ContentLength: oss.Ptr(int64(len(data))), Acl: oss.ObjectACLPrivate})
+	return err
+}
+func (store *ossImageStore) Delete(ctx context.Context, key string) error {
+	_, err := store.internal.DeleteObject(ctx, &oss.DeleteObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)})
+	return err
+}
+func (store *ossImageStore) SignedURL(ctx context.Context, key, process string) (string, time.Time, error) {
+	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)}
+	if process != "" {
+		request.Process = oss.Ptr(process)
+	}
+	result, err := store.public.Presign(ctx, request, oss.PresignExpires(store.ttl))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return result.URL, result.Expiration, nil
+}
+
+func newImageStore() (imageStore, error) {
+	if strings.TrimSpace(config.Cfg.MediaStorage) == "" || strings.EqualFold(config.Cfg.MediaStorage, "local") {
+		return localImageStore{directory: config.Cfg.MediaLocalDir}, nil
+	}
+	if !strings.EqualFold(config.Cfg.MediaStorage, "oss") {
+		return nil, errors.New("MEDIA_STORAGE 必须为 local 或 oss")
+	}
+	if config.Cfg.OSSRegion == "" || config.Cfg.OSSBucket == "" || config.Cfg.OSSInternalEndpoint == "" || config.Cfg.OSSPublicEndpoint == "" || config.Cfg.OSSAccessKeyID == "" || config.Cfg.OSSAccessKeySecret == "" {
+		return nil, errors.New("OSS 配置不完整")
+	}
+	ttl, err := time.ParseDuration(config.Cfg.OSSSignedURLTTL)
+	if err != nil || ttl <= 0 {
+		return nil, errors.New("OSS_SIGNED_URL_TTL 无效")
+	}
+	provider := credentials.NewStaticCredentialsProvider(config.Cfg.OSSAccessKeyID, config.Cfg.OSSAccessKeySecret)
+	internalCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSInternalEndpoint).WithCredentialsProvider(provider)
+	publicCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSPublicEndpoint).WithUseCName(true).WithCredentialsProvider(provider)
+	return &ossImageStore{internal: oss.NewClient(internalCfg), public: oss.NewClient(publicCfg), bucket: config.Cfg.OSSBucket, ttl: ttl}, nil
+}
