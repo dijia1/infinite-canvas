@@ -20,8 +20,7 @@ import {
     type PublicImage,
 } from "@/services/api/public-images";
 import { fetchPortalSession } from "@/services/api/session";
-import { imagePreviewStorageKey, resolveImageUrl, uploadImagePreview } from "@/services/image-storage";
-import { loadPublicImage } from "@/services/public-image-cache";
+import { loadMediaPreview } from "@/services/image-storage";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns, type MaterialFolder } from "./material-folder-ui";
@@ -386,15 +385,10 @@ function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { im
     const [loadFailed, setLoadFailed] = useState(false);
     useEffect(() => {
         let cancelled = false;
-        void loadPublicImage(image, {
-            readCachedImage: resolveImageUrl,
-            requestAccess: async (id) => {
-                const access = await fetchPublicImageAccess(id);
+        void loadMediaPreview(image.mediaId, async () => {
+                const access = await fetchPublicImageAccess(image.id);
                 return access.previewUrl || access.url;
-            },
-            cacheImage: async (accessURL, mediaId) => (await uploadImagePreview(accessURL, mediaId)).url,
-            storageKey: imagePreviewStorageKey,
-        })
+            })
             .then((result) => {
                 if (!cancelled) {
                     setURL(result.url);

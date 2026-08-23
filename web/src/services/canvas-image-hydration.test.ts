@@ -43,6 +43,9 @@ test("hydrates cached images and clears stale recovery errors", async () => {
         fetchPublicImageAccess: async () => {
             throw new Error("缓存命中时不应请求公共图片");
         },
+        loadMediaImage: async () => {
+            throw new Error("缓存命中时不应加载媒体");
+        },
         uploadImage: async () => {
             throw new Error("缓存命中时不应上传图片");
         },
@@ -68,10 +71,14 @@ test("uses public image access when restoring a missing cached public image", as
             assert.equal(publicImageId, "public-2");
             return { url: "https://public.example/image" };
         },
-        uploadImage: async (source, mediaId) => {
+        loadMediaImage: async (mediaId, remoteURL) => {
+            const source = await remoteURL();
             assert.equal(source, "https://public.example/image");
             assert.equal(mediaId, "media-2");
             return { url: "blob:public", storageKey: "media:2", mediaId, width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" };
+        },
+        uploadImage: async () => {
+            throw new Error("远端恢复不应使用直接上传");
         },
     });
 
@@ -99,6 +106,10 @@ test("maps remote recovery failures to one image node without rejecting the batc
         fetchPublicImageAccess: async () => {
             throw new Error("不是公共图片");
         },
+        loadMediaImage: async (_mediaId, remoteURL) => {
+            await remoteURL();
+            throw new Error("远端地址不可用");
+        },
         uploadImage: async () => {
             throw new Error("远端地址不可用");
         },
@@ -124,6 +135,9 @@ test("restores video storage keys without running image recovery", async () => {
         fetchPublicImageAccess: async () => {
             throw new Error("视频不应读取公共图片");
         },
+        loadMediaImage: async () => {
+            throw new Error("视频不应加载图片");
+        },
         uploadImage: async () => {
             throw new Error("视频不应上传图片");
         },
@@ -141,6 +155,9 @@ test("keeps other nodes restored when a data URL persistence fallback fails", as
         },
         fetchPublicImageAccess: async () => {
             throw new Error("没有公共图片记录时不应请求公共图片");
+        },
+        loadMediaImage: async () => {
+            throw new Error("没有媒体记录时不应加载图片");
         },
         uploadImage: async () => {
             throw new Error("持久化失败");
@@ -160,6 +177,9 @@ test("persists data URL images and replaces stale metadata", async () => {
         },
         fetchPublicImageAccess: async () => {
             throw new Error("没有公共图片记录时不应请求公共图片");
+        },
+        loadMediaImage: async () => {
+            throw new Error("没有媒体记录时不应加载图片");
         },
         uploadImage: async (source, mediaId) => {
             assert.equal(source, "data:image/png;base64,source");

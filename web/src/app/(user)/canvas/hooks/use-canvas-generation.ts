@@ -1,0 +1,549 @@
+"use client";
+
+import { useRef, useState } from "react";
+
+import type { AiConfig } from "@/lib/ai-config";
+import type { ReferenceImage } from "@/types/image";
+import type { ChatCompletionMessage } from "@/services/api/image";
+import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
+import type { UploadedFile } from "@/services/file-storage";
+import { normalizeImageResolution } from "@/lib/image-generation-config";
+import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, referenceUrl, sourceNodeReferenceImages, type CanvasAngleParameters } from "../utils/canvas-generation-utils";
+import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
+import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
+import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "../types";
+import type { NodeGenerationContext } from "../components/canvas-node-generation";
+
+const VIDEO_NODE_MAX_WIDTH = 420;
+const VIDEO_NODE_MAX_HEIGHT = 420;
+const NODE_STATUS_LOADING = "loading" as const;
+const NODE_STATUS_SUCCESS = "success" as const;
+const NODE_STATUS_ERROR = "error" as const;
+
+type MutableRef<T> = { current: T };
+type StateSetter<T> = (value: T | ((previous: T) => T)) => void;
+type GeneratedImage = { id: string; dataUrl: string; mediaId?: string };
+type MessageApi = { error: (text: string) => void; warning: (text: string) => void };
+
+export type CanvasGenerationControllerOptions = {
+    nodesRef: MutableRef<CanvasNodeData[]>;
+    connectionsRef: MutableRef<CanvasConnection[]>;
+    effectiveConfig: AiConfig;
+    defaultConfig: AiConfig;
+    isAiConfigReady: (config: AiConfig, model?: string) => boolean;
+    openConfigDialog: (open: boolean) => void;
+    message: MessageApi;
+    setNodes: StateSetter<CanvasNodeData[]>;
+    setConnections: StateSetter<CanvasConnection[]>;
+    setSelectedNodeIds: StateSetter<Set<string>>;
+    setSelectedConnectionId: StateSetter<string | null>;
+    setDialogNodeId: StateSetter<string | null>;
+    setAngleNodeId: StateSetter<string | null>;
+    setRunningNodeId?: StateSetter<string | null>;
+    createId: () => string;
+    createConfigNode: (position: Position, metadata: CanvasNodeMetadata) => CanvasNodeData;
+    requestGeneration: (config: AiConfig, prompt: string) => Promise<GeneratedImage[]>;
+    requestEdit: (config: AiConfig, prompt: string, references: ReferenceImage[]) => Promise<GeneratedImage[]>;
+    requestImageQuestion: (config: AiConfig, messages: ChatCompletionMessage[], onDelta: (text: string) => void) => Promise<string>;
+    requestVideoGeneration: (config: AiConfig, prompt: string, references: ReferenceImage[]) => Promise<Blob>;
+    uploadImage: (input: string | Blob, mediaId?: string) => Promise<StoredCanvasImage>;
+    uploadMediaFile: (input: Blob, prefix: string) => Promise<UploadedFile>;
+    hydrateGenerationContext: (nodeId: string, prompt: string) => Promise<NodeGenerationContext>;
+    buildChatMessages?: (context: NodeGenerationContext) => ChatCompletionMessage[];
+    resolveImageUrl?: (storageKey?: string, fallback?: string) => Promise<string>;
+    resolveMetadataReferences?: (metadata: CanvasNodeMetadata) => Promise<ReferenceImage[] | null>;
+};
+
+export type CanvasGenerationController = {
+    readonly runningNodeId: string | null;
+    updateOptions: (options: CanvasGenerationControllerOptions) => void;
+    generateNode: (nodeId: string, mode: CanvasGenerationMode, prompt: string) => Promise<void>;
+    retryNode: (node: CanvasNodeData) => Promise<void>;
+    generateImageFromTextNode: (node: CanvasNodeData) => void;
+    generateAngleNode: (node: CanvasNodeData, params: CanvasAngleParameters) => Promise<void>;
+    clearRunningNode: (nodeIds?: Set<string>) => void;
+};
+
+function mediaMetadata(video: UploadedFile): CanvasNodeMetadata {
+    return { content: video.url, storageKey: video.storageKey, status: NODE_STATUS_SUCCESS, naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4" };
+}
+
+export function createCanvasGenerationController(initialOptions: CanvasGenerationControllerOptions): CanvasGenerationController {
+    let options = initialOptions;
+    let runningNodeId: string | null = null;
+    const setRunningNodeId = (next: string | null) => {
+        runningNodeId = next;
+        options.setRunningNodeId?.(next);
+    };
+    const createConnection = (fromNodeId: string, toNodeId: string): CanvasConnection => ({ id: options.createId(), fromNodeId, toNodeId });
+    const missingReference = (nodeId: string) => {
+        const errorDetails = "参考图片已丢失，无法继续重试";
+        options.message.error(errorDetails);
+        options.setNodes((prev) => prev.map((item) => (item.id === nodeId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+    };
+    const resolveMetadataReferences = async (metadata: CanvasNodeMetadata): Promise<ReferenceImage[] | null> => {
+        if (options.resolveMetadataReferences) return options.resolveMetadataReferences(metadata);
+        if (metadata.generationType !== "edit") return [];
+        if (!metadata.references?.length || !options.resolveImageUrl) return null;
+        const references = await Promise.all(
+            metadata.references.map(async (url, index) => {
+                const dataUrl = url.startsWith("image:") ? await options.resolveImageUrl!(url, "") : url;
+                return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+            }),
+        );
+        return references.every(Boolean) ? (references as ReferenceImage[]) : null;
+    };
+
+    const generateAngleNode = async (node: CanvasNodeData, params: CanvasAngleParameters) => {
+        if (!node.metadata?.content) return;
+        const generationConfig = { ...buildGenerationConfig(options.effectiveConfig, node, "image", options.defaultConfig), count: "1" };
+        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
+            options.openConfigDialog(true);
+            return;
+        }
+        const childId = options.createId();
+        const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+        const title = buildAngleLabel(params);
+        const prompt = buildAnglePrompt(params);
+        const references = [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata.mimeType || "image/png", dataUrl: node.metadata.content, storageKey: node.metadata.storageKey }];
+        const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, references);
+        options.setAngleNodeId(null);
+        setRunningNodeId(childId);
+        options.setNodes((prev) => [
+            ...prev,
+            {
+                id: childId,
+                type: CanvasNodeType.Image,
+                title,
+                position: { x: node.position.x + node.width + 96, y: node.position.y },
+                width: imageConfig.width,
+                height: imageConfig.height,
+                metadata: { prompt, status: NODE_STATUS_LOADING, ...generationMetadata },
+            },
+        ]);
+        options.setConnections((prev) => [...prev, createConnection(node.id, childId)]);
+        options.setSelectedNodeIds(new Set([childId]));
+        options.setDialogNodeId(childId);
+        try {
+            const image = (await options.requestEdit(generationConfig, prompt, references))[0];
+            const uploaded = await options.uploadImage(image.dataUrl, image.mediaId);
+            const size = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+            options.setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, width: size.width, height: size.height, metadata: { ...item.metadata, ...imageMetadata(uploaded), prompt, ...generationMetadata } } : item)));
+        } catch (error) {
+            const errorDetails = error instanceof Error ? error.message : "生成失败";
+            options.setNodes((prev) => prev.map((item) => (item.id === childId ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+        } finally {
+            setRunningNodeId(null);
+        }
+    };
+
+    const generateNode = async (nodeId: string, mode: CanvasGenerationMode, prompt: string) => {
+        const sourceNode = options.nodesRef.current.find((node) => node.id === nodeId);
+        const generationConfig = buildGenerationConfig(options.effectiveConfig, sourceNode, mode, options.defaultConfig);
+        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
+            options.openConfigDialog(true);
+            return;
+        }
+        setRunningNodeId(nodeId);
+        const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
+        const editingTextNode = mode === "text" && Boolean(sourceTextContent);
+        const generationContext = await options.hydrateGenerationContext(nodeId, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
+        const effectivePrompt = generationContext.prompt.trim();
+        const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image && !editingTextNode;
+        if (!effectivePrompt && mode === "text") {
+            setRunningNodeId(null);
+            return;
+        }
+        let pendingChildIds: string[] = [];
+        if (markSourceStatus) options.setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
+        try {
+            if (mode === "image") {
+                const count = getGenerationCount(generationConfig.count);
+                const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
+                const isImageNode = sourceNode?.type === CanvasNodeType.Image;
+                const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
+                const sourceReference = isImageNode && sourceNode?.metadata?.content ? sourceNodeReferenceImages(sourceNode) : [];
+                const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                const generationMetadata = buildImageGenerationMetadata(referenceImages.length ? "edit" : "generation", generationConfig, count, referenceImages);
+                const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
+                const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+                const parentPosition = sourceNode?.position || { x: 0, y: 0 };
+                const rootId = isEmptyImageNode ? nodeId : options.createId();
+                const childIds = count > 1 ? Array.from({ length: count }, () => options.createId()) : [];
+                const targetIds = count > 1 ? childIds : [rootId];
+                pendingChildIds = isEmptyImageNode ? childIds : [rootId, ...childIds];
+                const rootNode: CanvasNodeData = {
+                    id: rootId,
+                    type: CanvasNodeType.Image,
+                    title: effectivePrompt.slice(0, 32) || "Generated Image",
+                    position: { x: isEmptyImageNode ? parentPosition.x : parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - imageConfig.height / 2 },
+                    width: isEmptyImageNode ? sourceNode?.width || imageConfig.width : imageConfig.width,
+                    height: isEmptyImageNode ? sourceNode?.height || imageConfig.height : imageConfig.height,
+                    metadata: {
+                        prompt: effectivePrompt,
+                        status: NODE_STATUS_LOADING,
+                        isBatchRoot: count > 1,
+                        batchChildIds: count > 1 ? childIds : undefined,
+                        batchUsesReferenceImages: referenceImages.length > 0,
+                        ...generationMetadata,
+                        imageBatchExpanded: count > 1 ? true : undefined,
+                    },
+                };
+                const childNodes = childIds.map((id, index): CanvasNodeData => ({
+                    id,
+                    type: CanvasNodeType.Image,
+                    title: effectivePrompt.slice(0, 32) || "Generated Image",
+                    position: { x: rootNode.position.x + rootNode.width + 120 + (index % 2) * (imageConfig.width + 36), y: rootNode.position.y + Math.floor(index / 2) * (imageConfig.height + 36) },
+                    width: imageConfig.width,
+                    height: imageConfig.height,
+                    metadata: { prompt: effectivePrompt, status: NODE_STATUS_LOADING, batchRootId: count > 1 ? rootId : undefined, ...generationMetadata },
+                }));
+                const batchConnections = [...(isEmptyImageNode ? [] : [createConnection(nodeId, rootId)]), ...childIds.map((childId) => createConnection(rootId, childId))];
+                options.setNodes((prev) => [
+                    ...prev.map((node) =>
+                        node.id !== nodeId
+                            ? node
+                            : isConfigNode
+                              ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_LOADING, errorDetails: undefined } }
+                              : isEmptyImageNode
+                                ? { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...node.metadata, ...rootNode.metadata, errorDetails: undefined } }
+                                : isImageNode
+                                  ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
+                                  : {
+                                        ...node,
+                                        type: CanvasNodeType.Text,
+                                        title: prompt.slice(0, 32) || "Prompt",
+                                        width: parentConfig.width,
+                                        height: parentConfig.height,
+                                        metadata: { ...node.metadata, content: prompt, prompt, status: NODE_STATUS_SUCCESS, fontSize: 14, errorDetails: undefined },
+                                    },
+                    ),
+                    ...(isEmptyImageNode ? [] : [rootNode]),
+                    ...childNodes,
+                ]);
+                options.setConnections((prev) => [...prev, ...batchConnections]);
+                options.setSelectedNodeIds(new Set([nodeId]));
+                options.setSelectedConnectionId(null);
+                options.setDialogNodeId(nodeId);
+                let hasSuccess = false;
+                let hasFailure = false;
+                await Promise.all(
+                    targetIds.map(async (targetId) => {
+                        try {
+                            const image = referenceImages.length
+                                ? (await options.requestEdit({ ...generationConfig, count: "1" }, effectivePrompt, referenceImages))[0]
+                                : (await options.requestGeneration({ ...generationConfig, count: "1" }, effectivePrompt))[0];
+                            const uploaded = await options.uploadImage(image.dataUrl, image.mediaId);
+                            const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
+                            options.setNodes((prev) => {
+                                const root = prev.find((node) => node.id === rootId);
+                                return prev.map((node) => {
+                                    if (node.id !== targetId && node.id !== rootId) return node;
+                                    const center = { x: node.position.x + node.width / 2, y: node.position.y + node.height / 2 };
+                                    if (node.id === rootId && (targetId === rootId || !root?.metadata?.primaryImageId))
+                                        return {
+                                            ...node,
+                                            position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 },
+                                            width: imageSize.width,
+                                            height: imageSize.height,
+                                            metadata: { ...node.metadata, ...imageMetadata(uploaded), primaryImageId: targetId },
+                                        };
+                                    if (node.id === targetId)
+                                        return { ...node, position: { x: center.x - imageSize.width / 2, y: center.y - imageSize.height / 2 }, width: imageSize.width, height: imageSize.height, metadata: { ...node.metadata, ...imageMetadata(uploaded) } };
+                                    return node;
+                                });
+                            });
+                            hasSuccess = true;
+                            if (isConfigNode) options.setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } } : node)));
+                        } catch (error) {
+                            const errorDetails = error instanceof Error ? error.message : "生成失败";
+                            hasFailure = true;
+                            options.setNodes((prev) => prev.map((node) => (node.id === targetId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
+                        }
+                    }),
+                );
+                if (hasFailure) options.message.error(hasSuccess ? "部分图片生成失败" : "全部图片生成失败");
+                options.setNodes((prev) =>
+                    prev.map((node) =>
+                        node.id === nodeId && isConfigNode
+                            ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
+                            : node.id === nodeId && isEmptyImageNode
+                              ? { ...node, metadata: { ...node.metadata, status: hasSuccess ? NODE_STATUS_SUCCESS : NODE_STATUS_ERROR, errorDetails: hasSuccess ? undefined : "全部图片生成失败" } }
+                              : node.id === rootId && !hasSuccess
+                                ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "全部图片生成失败" } }
+                                : node,
+                    ),
+                );
+                return;
+            }
+
+            if (mode === "video") {
+                const spec = nodeSizeFromRatio(generationConfig.size, NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+                const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content;
+                const videoId = isEmptyVideoNode ? nodeId : options.createId();
+                const parent = sourceNode?.position || { x: 0, y: 0 };
+                const videoNode: CanvasNodeData = {
+                    id: videoId,
+                    type: CanvasNodeType.Video,
+                    title: effectivePrompt.slice(0, 32) || "Generated Video",
+                    position: isEmptyVideoNode ? sourceNode!.position : { x: parent.x + (sourceNode?.width || spec.width) + 96, y: parent.y },
+                    width: isEmptyVideoNode ? sourceNode!.width : spec.width,
+                    height: isEmptyVideoNode ? sourceNode!.height : spec.height,
+                    metadata: {
+                        prompt: effectivePrompt,
+                        status: NODE_STATUS_LOADING,
+                        model: generationConfig.model,
+                        size: generationConfig.size,
+                        seconds: generationConfig.videoSeconds,
+                        vquality: generationConfig.vquality,
+                        references: generationContext.referenceImages.map(referenceUrl).filter((url): url is string => Boolean(url)),
+                    },
+                };
+                pendingChildIds = [videoId];
+                options.setNodes((prev) =>
+                    isEmptyVideoNode
+                        ? prev.map((node) => (node.id === nodeId ? { ...node, ...videoNode } : node))
+                        : [...prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } } : node)), videoNode],
+                );
+                if (!isEmptyVideoNode) options.setConnections((prev) => [...prev, createConnection(nodeId, videoId)]);
+                const video = await options.uploadMediaFile(await options.requestVideoGeneration(generationConfig, effectivePrompt, generationContext.referenceImages), "video");
+                const videoSize = fitNodeSize(video.width || spec.width, video.height || spec.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                options.setNodes((prev) =>
+                    prev.map((node) =>
+                        node.id === videoId
+                            ? {
+                                  ...node,
+                                  width: videoSize.width,
+                                  height: videoSize.height,
+                                  position: { x: node.position.x + node.width / 2 - videoSize.width / 2, y: node.position.y + node.height / 2 - videoSize.height / 2 },
+                                  metadata: {
+                                      ...node.metadata,
+                                      ...mediaMetadata(video),
+                                      prompt: effectivePrompt,
+                                      model: generationConfig.model,
+                                      size: generationConfig.size,
+                                      seconds: generationConfig.videoSeconds,
+                                      vquality: generationConfig.vquality,
+                                      references: generationContext.referenceImages.map(referenceUrl).filter((url): url is string => Boolean(url)),
+                                  },
+                              }
+                            : node,
+                    ),
+                );
+                return;
+            }
+
+            let streamed = "";
+            const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
+            const textCount = isConfigNode ? getGenerationCount(generationConfig.count) : 1;
+            const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : CanvasNodeType.Text];
+            const textConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Text];
+            const parentPosition = sourceNode?.position || { x: 0, y: 0 };
+            const childIds = isConfigNode || editingTextNode ? Array.from({ length: textCount }, () => options.createId()) : [];
+            pendingChildIds = childIds;
+            if (isConfigNode || editingTextNode) {
+                const childNodes = childIds.map((id, index): CanvasNodeData => ({
+                    id,
+                    type: CanvasNodeType.Text,
+                    title: prompt.slice(0, 32) || "Generated Text",
+                    position: { x: parentPosition.x + parentConfig.width + 96, y: parentPosition.y + parentConfig.height / 2 - textConfig.height / 2 + (index - (textCount - 1) / 2) * (textConfig.height + 36) },
+                    width: textConfig.width,
+                    height: textConfig.height,
+                    metadata: { prompt, status: NODE_STATUS_LOADING, fontSize: 14 },
+                }));
+                options.setNodes((prev) => [...prev.map((node) => (node.id === nodeId && isConfigNode ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)), ...childNodes]);
+                options.setConnections((prev) => [...prev, ...childIds.map((childId) => createConnection(nodeId, childId))]);
+            }
+            const answers = await Promise.all(
+                (childIds.length ? childIds : [nodeId]).map((targetNodeId) => {
+                    let localStreamed = "";
+                    return options
+                        .requestImageQuestion(generationConfig, options.buildChatMessages?.({ ...generationContext, prompt: effectivePrompt }) || [], (text) => {
+                            localStreamed = text;
+                            streamed = text;
+                            if (!isConfigNode) options.setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
+                        })
+                        .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }));
+                }),
+            );
+            const answerByNodeId = new Map(answers.map((item) => [item.nodeId, item.content]));
+            options.setNodes((prev) =>
+                prev.map((node) =>
+                    childIds.includes(node.id)
+                        ? { ...node, metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
+                        : node.id === nodeId && isConfigNode
+                          ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
+                          : node.id === nodeId && !editingTextNode
+                            ? { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
+                            : node,
+                ),
+            );
+        } catch (error) {
+            const errorDetails = error instanceof Error ? error.message : "生成失败";
+            options.message.error(errorDetails);
+            options.setNodes((prev) =>
+                prev.map((node) => (node.id === nodeId || pendingChildIds.includes(node.id) ? (node.id === nodeId && !markSourceStatus ? node : { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } }) : node)),
+            );
+        } finally {
+            setRunningNodeId(null);
+        }
+    };
+
+    const retryNode = async (node: CanvasNodeData) => {
+        const sourceNode = findRetrySourceNode(node.id, options.nodesRef.current, options.connectionsRef.current) || node;
+        const batchRoot = node.metadata?.batchRootId ? options.nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
+        const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
+        const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
+        const generationConfig =
+            hasSavedImageMetadata && savedImageMetadata
+                ? {
+                      ...options.effectiveConfig,
+                      model: savedImageMetadata.model || options.effectiveConfig.imageModel || options.effectiveConfig.model,
+                      quality: savedImageMetadata.quality || options.effectiveConfig.quality || options.defaultConfig.quality,
+                      size: savedImageMetadata.size || options.effectiveConfig.size || options.defaultConfig.size,
+                      resolution: savedImageMetadata.resolution || options.effectiveConfig.resolution || options.defaultConfig.resolution,
+                      count: "1",
+                  }
+                : { ...buildGenerationConfig(options.effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", options.defaultConfig), count: "1" };
+        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
+            options.openConfigDialog(true);
+            return;
+        }
+        const context = hasSavedImageMetadata ? null : await options.hydrateGenerationContext(sourceNode.id, sourceNode.metadata?.prompt || node.metadata?.prompt || "");
+        const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
+        if (!prompt) {
+            options.message.warning("找不到提示词，无法重试");
+            return;
+        }
+        const useReferenceImages = savedImageMetadata?.generationType ? savedImageMetadata.generationType === "edit" : Boolean(context?.referenceImages.length);
+        const retryReferenceImages =
+            hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
+        if (useReferenceImages && !retryReferenceImages) {
+            missingReference(node.id);
+            return;
+        }
+        setRunningNodeId(node.id);
+        options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+        try {
+            if (node.type === CanvasNodeType.Text) {
+                if (!context) return;
+                let streamed = "";
+                const answer = await options.requestImageQuestion(generationConfig, options.buildChatMessages?.({ ...context, prompt }) || [], (text) => {
+                    streamed = text;
+                    options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
+                });
+                options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                return;
+            }
+            if (node.type === CanvasNodeType.Video) {
+                const video = await options.uploadMediaFile(await options.requestVideoGeneration(generationConfig, prompt, retryReferenceImages || []), "video");
+                const videoSize = fitNodeSize(video.width || node.width, video.height || node.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                options.setNodes((prev) =>
+                    prev.map((item) =>
+                        item.id === node.id
+                            ? {
+                                  ...item,
+                                  width: videoSize.width,
+                                  height: videoSize.height,
+                                  position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 },
+                                  metadata: { ...item.metadata, ...mediaMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality },
+                              }
+                            : item,
+                    ),
+                );
+                return;
+            }
+            const image = useReferenceImages ? (await options.requestEdit(generationConfig, prompt, retryReferenceImages || []))[0] : (await options.requestGeneration(generationConfig, prompt))[0];
+            const uploadedImage = await options.uploadImage(image.dataUrl, image.mediaId);
+            const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
+            const imageSize = fitNodeSize(uploadedImage.width, uploadedImage.height, imageConfig.width, imageConfig.height);
+            const generationMetadata = savedImageMetadata?.generationType
+                ? {
+                      generationType: savedImageMetadata.generationType,
+                      model: generationConfig.model,
+                      size: generationConfig.size,
+                      resolution: generationConfig.resolution,
+                      quality: generationConfig.quality,
+                      count: savedImageMetadata.count || 1,
+                      references: savedImageMetadata.references,
+                  }
+                : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
+            options.setNodes((prev) =>
+                prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, width: imageSize.width, height: imageSize.height, metadata: { ...item.metadata, ...imageMetadata(uploadedImage), prompt, ...generationMetadata } } : item)),
+            );
+        } catch (error) {
+            const errorDetails = error instanceof Error ? error.message : "生成失败";
+            options.message.error(errorDetails);
+            options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_ERROR, errorDetails } } : item)));
+        } finally {
+            setRunningNodeId(null);
+        }
+    };
+
+    const generateImageFromTextNode = (node: CanvasNodeData) => {
+        const prompt = (node.metadata?.content || node.metadata?.prompt || "").trim();
+        if (!prompt) {
+            options.message.warning("文本节点为空，无法生图");
+            return;
+        }
+        const sourceNode = options.nodesRef.current.find((item) => item.id === node.id);
+        if (!sourceNode) return;
+        const nodeSize = getNodeSpec(CanvasNodeType.Config);
+        const configNode = options.createConfigNode(
+            { x: sourceNode.position.x + sourceNode.width + 96 + nodeSize.width / 2, y: sourceNode.position.y + sourceNode.height / 2 },
+            {
+                prompt: "",
+                model: options.effectiveConfig.imageModel || options.effectiveConfig.model,
+                size: options.effectiveConfig.size,
+                resolution: normalizeImageResolution(options.effectiveConfig.resolution),
+                count: Number(options.effectiveConfig.count) || 1,
+            },
+        );
+        const nextNodes = options.nodesRef.current.map((item) => (item.id === sourceNode.id ? { ...item, metadata: { ...item.metadata, content: prompt, prompt, status: NODE_STATUS_SUCCESS } } : item)).concat(configNode);
+        const nextConnections = [...options.connectionsRef.current, createConnection(sourceNode.id, configNode.id)];
+        options.nodesRef.current = nextNodes;
+        options.connectionsRef.current = nextConnections;
+        options.setNodes(nextNodes);
+        options.setConnections(nextConnections);
+        options.setSelectedNodeIds(new Set([configNode.id]));
+        options.setSelectedConnectionId(null);
+        options.setDialogNodeId(configNode.id);
+    };
+    const clearRunningNode = (nodeIds?: Set<string>) => {
+        if (!runningNodeId || (nodeIds && !nodeIds.has(runningNodeId))) return;
+        setRunningNodeId(null);
+    };
+
+    return {
+        get runningNodeId() {
+            return runningNodeId;
+        },
+        updateOptions(next) {
+            options = next;
+        },
+        generateNode,
+        retryNode,
+        generateImageFromTextNode,
+        generateAngleNode,
+        clearRunningNode,
+    };
+}
+
+export type UseCanvasGenerationOptions = Omit<CanvasGenerationControllerOptions, "setRunningNodeId">;
+
+export function useCanvasGeneration(options: UseCanvasGenerationOptions) {
+    const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+    const controllerRef = useRef<CanvasGenerationController | null>(null);
+    const controllerOptions = { ...options, setRunningNodeId };
+    if (!controllerRef.current) controllerRef.current = createCanvasGenerationController(controllerOptions);
+    else controllerRef.current.updateOptions(controllerOptions);
+    const controller = controllerRef.current;
+    return {
+        runningNodeId,
+        generateNode: controller.generateNode,
+        retryNode: controller.retryNode,
+        generateImageFromTextNode: controller.generateImageFromTextNode,
+        generateAngleNode: controller.generateAngleNode,
+        clearRunningNode: controller.clearRunningNode,
+    };
+}

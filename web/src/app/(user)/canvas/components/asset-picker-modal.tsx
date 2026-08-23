@@ -7,7 +7,8 @@ import { ImageOff, RefreshCw } from "lucide-react";
 import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
 import { deleteUserImage, uploadUserImage } from "@/services/api/image";
-import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, promoteImageStorageKey, resolveImageUrl, uploadImage, uploadImagePreview, type UploadedImage } from "@/services/image-storage";
+import { fetchPublicImageAccess } from "@/services/api/public-images";
+import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, loadMediaPreview, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
@@ -52,12 +53,35 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const uploadStoredImage = useCallback(
         async (assetId: string, image: UploadedImage, file: File) => {
             const remote = await uploadUserImage(file);
-            const persisted = await promoteImageStorageKey(image, remote.mediaId);
+            const assetExists = () => useAssetStore.getState().assets.some((asset) => asset.id === assetId);
+            if (!assetExists()) {
+                await deleteUserImage(remote.mediaId);
+                return false;
+            }
+            let persisted: UploadedImage;
+            try {
+                persisted = await promoteImageStorageKey(image, remote.mediaId);
+            } catch (error) {
+                if (!assetExists()) {
+                    await deleteUserImage(remote.mediaId);
+                    return false;
+                }
+                throw error;
+            }
+            if (!assetExists()) {
+                try {
+                    await deleteUserImage(remote.mediaId);
+                } finally {
+                    await deleteStoredImages([persisted.storageKey]);
+                }
+                return false;
+            }
             updateAsset(assetId, {
                 coverUrl: persisted.url,
                 data: { dataUrl: persisted.url, storageKey: persisted.storageKey, width: persisted.width, height: persisted.height, bytes: persisted.bytes, mimeType: persisted.mimeType },
                 metadata: { mediaId: remote.mediaId, uploadState: "uploaded" },
             });
+            return true;
         },
         [updateAsset],
     );
@@ -78,8 +102,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                     data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
                     metadata: { uploadState: "pending" },
                 });
-                await uploadStoredImage(assetId, image, file);
-                message.success("图片已加入我的素材");
+                if (await uploadStoredImage(assetId, image, file)) message.success("图片已加入我的素材");
             } catch (error) {
                 if (assetId) updateAsset(assetId, { metadata: { uploadState: "failed", uploadError: uploadErrorMessage(error) } });
                 message.error(error instanceof Error ? error.message : `${source === "剪贴板" ? "粘贴" : "上传"}图片失败`);
@@ -102,8 +125,9 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
             setIsUploading(true);
             updateAsset(asset.id, { metadata: { uploadState: "pending" } });
             try {
-                await uploadStoredImage(asset.id, { url: asset.coverUrl || asset.data.dataUrl, storageKey: asset.data.storageKey, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType }, file);
-                message.success("图片上传成功");
+                if (await uploadStoredImage(asset.id, { url: asset.coverUrl || asset.data.dataUrl, storageKey: asset.data.storageKey, width: asset.data.width, height: asset.data.height, bytes: asset.data.bytes, mimeType: asset.data.mimeType }, file)) {
+                    message.success("图片上传成功");
+                }
             } catch (error) {
                 updateAsset(asset.id, { metadata: { uploadState: "failed", uploadError: uploadErrorMessage(error) } });
                 message.error(error instanceof Error ? error.message : "图片上传失败");
@@ -118,11 +142,12 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         async (asset: ImageAsset) => {
             if (deletingAssetId) return;
             const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+            const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
             setDeletingAssetId(asset.id);
             try {
-                if (mediaId) await deleteUserImage(mediaId);
+                if (mediaId && !publicImageId) await deleteUserImage(mediaId);
                 removeAsset(asset.id);
-                await deleteStoredImages([asset.data.storageKey, ...(mediaId ? [imagePreviewStorageKey(mediaId)] : [])].filter((key): key is string => Boolean(key)));
+                if (!publicImageId) await deleteStoredImages([asset.data.storageKey, ...(mediaId ? [imagePreviewStorageKey(mediaId)] : [])].filter((key): key is string => Boolean(key)));
                 message.success("图片已永久删除");
             } catch (error) {
                 message.error(error instanceof Error ? `删除图片失败：${error.message}` : "删除图片失败");
@@ -491,6 +516,15 @@ function uploadErrorMessage(error: unknown) {
     return error instanceof Error ? error.message : "上传图片失败";
 }
 
+function formatMaterialPreviewError(error: unknown) {
+    const message = error instanceof Error ? error.message.trim() : "未知错误";
+    const safeMessage = message
+        .replace(/https?:\/\/\S+/gi, "远端地址")
+        .replace(/\s+/g, " ")
+        .slice(0, 120);
+    return `缩略图加载失败：${safeMessage || "未知错误"}`;
+}
+
 function PickerCard({
     asset,
     onRetry,
@@ -506,39 +540,44 @@ function PickerCard({
     const uploadState = asset.metadata?.uploadState;
     const failed = uploadState === "failed";
     const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+    const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
     const [previewURL, setPreviewURL] = useState(cover);
     const [loadFailed, setLoadFailed] = useState(false);
+    const [previewError, setPreviewError] = useState("");
     useEffect(() => {
         let cancelled = false;
         if (!mediaId || uploadState === "pending" || failed) {
             setPreviewURL(cover);
             setLoadFailed(false);
+            setPreviewError("");
             return () => {
                 cancelled = true;
             };
         }
         void (async () => {
-            const cached = await resolveImageUrl(imagePreviewStorageKey(mediaId), "");
-            if (cached) return cached;
-            const access = await getRemoteImageAccess(mediaId);
-            return (await uploadImagePreview(access.previewUrl || access.url, mediaId)).url;
+            return (await loadMediaPreview(mediaId, async () => {
+                const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
+                return access.previewUrl || access.url;
+            })).url;
         })()
             .then((url) => {
                 if (!cancelled) {
                     setPreviewURL(url || cover);
                     setLoadFailed(false);
+                    setPreviewError("");
                 }
             })
-            .catch(() => {
+            .catch((error) => {
                 if (!cancelled) {
-                    setPreviewURL("");
-                    setLoadFailed(true);
+                    setPreviewURL(cover);
+                    setLoadFailed(!cover);
+                    setPreviewError(formatMaterialPreviewError(error));
                 }
             });
         return () => {
             cancelled = true;
         };
-    }, [cover, failed, mediaId, uploadState]);
+    }, [cover, failed, mediaId, publicImageId, uploadState]);
     const preview = loadFailed ? "" : previewURL || cover;
     return (
         <div
@@ -554,10 +593,15 @@ function PickerCard({
                 if (preview) onPreview({ title: asset.title, url: preview });
             }}
             onContextMenu={(event: MouseEvent) => onImageContextMenu(asset, event)}
-            title={preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除"}
+            title={previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
         >
             {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : <BrokenImagePlaceholder />}
             {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
+            {previewError ? (
+                <div className="absolute inset-x-0 bottom-0 truncate bg-amber-100/95 px-1.5 py-1 text-[10px] leading-3 text-amber-950 dark:bg-amber-950/95 dark:text-amber-100" aria-label="缩略图加载失败" title={previewError}>
+                    {previewError}
+                </div>
+            ) : null}
             {failed ? (
                 <button
                     type="button"

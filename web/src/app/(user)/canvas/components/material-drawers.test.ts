@@ -115,7 +115,7 @@ test("material cards keep destructive actions in their context menus", async () 
     assert.match(privateDrawer, /onPreview/);
     assert.match(privateDrawer, /deleteUserImage/);
     assert.match(privateDrawer, /deleteStoredImages/);
-    assert.match(privateDrawer, /if \(mediaId\) await deleteUserImage\(mediaId\);[\s\S]*removeAsset\(asset\.id\);[\s\S]*deleteStoredImages/);
+    assert.match(privateDrawer, /if \(mediaId && !publicImageId\) await deleteUserImage\(mediaId\);[\s\S]*removeAsset\(asset\.id\);[\s\S]*if \(!publicImageId\) await deleteStoredImages/);
     assert.match(publicDrawer, /deleteAdminPublicImage/);
     assert.match(publicDrawer, /\{isAdmin \?/);
     assert.match(privateDrawer, /imageContextMenu/);
@@ -140,6 +140,40 @@ test("failed remote material previews render a broken state while retaining dele
     assert.match(publicDrawer, /draggable=\{Boolean\(url\) && !loadFailed\}/);
     assert.match(privateDrawer, /void deleteImage\(imageContextMenu\.asset\)/);
     assert.match(publicDrawer, /remove\.mutate\(imageContextMenu\.image\.id\)/);
+});
+
+test("private material previews retain a local image and expose a safe remote-preview failure reason", async () => {
+    const privateDrawer = await readFile(componentURL("asset-picker-modal.tsx"), "utf8");
+
+    assert.match(privateDrawer, /const \[previewError, setPreviewError\] = useState/);
+    assert.match(privateDrawer, /setPreviewURL\(cover\);[\s\S]*setPreviewError\(formatMaterialPreviewError\(error\)\)/);
+    assert.match(privateDrawer, /aria-label="缩略图加载失败"/);
+    assert.match(privateDrawer, /formatMaterialPreviewError/);
+});
+
+test("material drawers defer access URLs until their cache variants miss", async () => {
+    const [privateDrawer, publicDrawer] = await Promise.all([readFile(componentURL("asset-picker-modal.tsx"), "utf8"), readFile(componentURL("public-image-drawer.tsx"), "utf8")]);
+
+    assert.match(privateDrawer, /loadMediaPreview\(mediaId, async \(\) => \{[\s\S]*getRemoteImageAccess\(mediaId\)/);
+    assert.match(publicDrawer, /loadMediaPreview\(image\.mediaId, async \(\) => \{[\s\S]*fetchPublicImageAccess\(image\.id\)/);
+});
+
+test("private material cards retain the public access identity of saved public images", async () => {
+    const privateDrawer = await readFile(componentURL("asset-picker-modal.tsx"), "utf8");
+
+    assert.match(privateDrawer, /const publicImageId = typeof asset\.metadata\?\.publicImageId === "string"/);
+    assert.match(privateDrawer, /publicImageId \? await fetchPublicImageAccess\(publicImageId\) : await getRemoteImageAccess\(mediaId\)/);
+});
+
+test("deleting a saved public image only removes the private reference, and cancelled uploads compensate remote media", async () => {
+    const privateDrawer = await readFile(componentURL("asset-picker-modal.tsx"), "utf8");
+
+    assert.match(privateDrawer, /if \(mediaId && !publicImageId\) await deleteUserImage\(mediaId\);/);
+    assert.match(privateDrawer, /if \(!publicImageId\) await deleteStoredImages/);
+    assert.match(privateDrawer, /const assetExists = \(\) => useAssetStore\.getState\(\)\.assets\.some\(\(asset\) => asset\.id === assetId\);/);
+    assert.match(privateDrawer, /if \(!assetExists\(\)\)/);
+    assert.match(privateDrawer, /await deleteUserImage\(remote\.mediaId\);[\s\S]*return false;/);
+    assert.match(privateDrawer, /finally \{[\s\S]*await deleteStoredImages\(\[persisted\.storageKey\]\);[\s\S]*\}/);
 });
 
 test("material drawers provide folder navigation and admin-only public management", async () => {

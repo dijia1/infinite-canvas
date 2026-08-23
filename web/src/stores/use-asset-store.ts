@@ -8,8 +8,9 @@ import { localForageStorage } from "@/lib/localforage-storage";
 import { portalStorageScope } from "@/lib/portal-storage-scope";
 import { cleanupUnusedImages } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
+import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { hydrateStoredAssets } from "./asset-storage-hydration";
-import { resolveImageUrl, resolveRemoteImage, uploadImage } from "@/services/image-storage";
+import { loadMediaImage, resolveImageUrl, resolveRemoteImage, uploadImage } from "@/services/image-storage";
 
 export type AssetKind = "text" | "image" | "video";
 export type PrivateAssetFolder = {
@@ -101,7 +102,13 @@ const assetStorage: PersistStorage<AssetStore> = {
             if (!parsed?.state || !Array.isArray(parsed.state.assets)) return null;
             parsed.state.folders = parseStoredFolders((parsed.state as { folders?: unknown }).folders);
             const assets = parsed.state.assets.filter((asset): asset is Asset => Boolean(asset) && typeof asset === "object" && "kind" in asset);
-            const hydratedImages = await hydrateStoredAssets(assets, { resolveImageUrl, resolveRemoteImage, uploadImage });
+            const hydratedImages = await hydrateStoredAssets(assets, {
+                resolveImageUrl,
+                resolveRemoteImage,
+                resolvePublicImage: async (publicImageId) => (await fetchPublicImageAccess(publicImageId)).url,
+                loadMediaImage,
+                uploadImage,
+            });
             parsed.state.assets = await Promise.all(
                 hydratedImages.map(async (asset) => {
                     if (asset.kind !== "video" || !asset.data.storageKey) return asset;

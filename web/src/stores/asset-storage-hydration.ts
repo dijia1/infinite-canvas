@@ -26,6 +26,8 @@ type StoredImage = {
 type ImageHydrationDependencies = {
     resolveImageUrl: (storageKey?: string, fallback?: string) => Promise<string>;
     resolveRemoteImage: (mediaId: string) => Promise<string>;
+    resolvePublicImage?: (publicImageId: string) => Promise<string>;
+    loadMediaImage: (mediaId: string, remoteURL: () => Promise<string>) => Promise<StoredImage>;
     uploadImage: (source: string, mediaId?: string) => Promise<StoredImage>;
 };
 
@@ -48,7 +50,10 @@ async function hydrateStoredAsset<T extends StoredAsset>(asset: T, dependencies:
             const mediaId = typeof imageAsset.metadata?.mediaId === "string" ? imageAsset.metadata.mediaId : "";
             if (!mediaId) return asset;
 
-            const restored = await dependencies.uploadImage(await dependencies.resolveRemoteImage(mediaId), mediaId);
+            const publicImageId = typeof imageAsset.metadata?.publicImageId === "string" ? imageAsset.metadata.publicImageId : "";
+            const restored = await dependencies.loadMediaImage(mediaId, async () =>
+                publicImageId && dependencies.resolvePublicImage ? dependencies.resolvePublicImage(publicImageId) : dependencies.resolveRemoteImage(mediaId),
+            );
             return withImage(asset, restored.url, restored.storageKey, restored);
         }
 

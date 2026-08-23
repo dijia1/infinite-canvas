@@ -28,6 +28,7 @@ export type CanvasImageHydrationDependencies = {
     readCachedImage: (storageKey: string) => Promise<string>;
     resolveRemoteImage: (mediaId: string) => Promise<string>;
     fetchPublicImageAccess: (publicImageId: string) => Promise<{ url: string }>;
+    loadMediaImage: (mediaId: string, remoteURL: () => Promise<string>) => Promise<StoredCanvasImage>;
     uploadImage: (source: string, mediaId?: string) => Promise<StoredCanvasImage>;
 };
 
@@ -63,8 +64,9 @@ export async function hydrateCanvasImages(nodes: CanvasNodeData[], dependencies:
             const recovery = await recoverPersistedImage(metadata || {}, {
                 readCachedImage: dependencies.readCachedImage,
                 downloadMediaImage: async (mediaId) => {
-                    const remote = metadata?.publicImageId ? (await dependencies.fetchPublicImageAccess(metadata.publicImageId)).url : await dependencies.resolveRemoteImage(mediaId);
-                    const image = await dependencies.uploadImage(remote, mediaId);
+                    const image = await dependencies.loadMediaImage(mediaId, async () =>
+                        metadata?.publicImageId ? (await dependencies.fetchPublicImageAccess(metadata.publicImageId)).url : dependencies.resolveRemoteImage(mediaId),
+                    );
                     return restoredImageMetadata(image);
                 },
             });
