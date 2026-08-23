@@ -46,6 +46,7 @@ func parseQuery(r *http.Request) model.Query {
 		Tags:     q["tag"],
 		Category: q.Get("category"),
 		Type:     q.Get("type"),
+		FolderID: q.Get("folderId"),
 		Page:     page,
 		PageSize: pageSize,
 	}

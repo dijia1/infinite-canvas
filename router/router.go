@@ -26,7 +26,9 @@ func New() *gin.Engine {
 	v1.POST("/media/images", gin.WrapF(handler.UploadImage))
 	v1.GET("/media/:id/access", func(c *gin.Context) { handler.MediaAccess(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/media/:id/content", func(c *gin.Context) { handler.LocalMediaContent(c.Writer, c.Request, c.Param("id")) })
+	v1.DELETE("/media/:id", func(c *gin.Context) { handler.DeletePrivateMedia(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/public-images", gin.WrapF(handler.PublicImages))
+	v1.GET("/public-folders", gin.WrapF(handler.PublicFolders))
 	v1.GET("/public-images/:id/access", func(c *gin.Context) { handler.PublicImageAccess(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/public-images/:id/content", func(c *gin.Context) { handler.PublicImageContent(c.Writer, c.Request, c.Param("id")) })
 	v1.POST("/videos", gin.WrapF(handler.AIVideos))
@@ -42,6 +44,16 @@ func New() *gin.Engine {
 	admin.POST("/settings", gin.WrapF(handler.AdminSaveSettings))
 	admin.GET("/ai/provider-types", gin.WrapF(handler.AdminAIProviderTypes))
 	admin.POST("/public-images", gin.WrapF(handler.AdminUploadPublicImage))
+	admin.POST("/public-folders", gin.WrapF(handler.AdminCreatePublicFolder))
+	admin.PATCH("/public-folders/:id", func(c *gin.Context) {
+		handler.AdminRenamePublicFolder(c.Writer, c.Request, c.Param("id"))
+	})
+	admin.DELETE("/public-folders/:id", func(c *gin.Context) {
+		handler.AdminDeletePublicFolder(c.Writer, c.Request, c.Param("id"))
+	})
+	admin.PATCH("/public-images/:id", func(c *gin.Context) {
+		handler.AdminUpdatePublicImage(c.Writer, c.Request, c.Param("id"))
+	})
 	admin.DELETE("/public-images/:id", func(c *gin.Context) {
 		handler.AdminDeletePublicImage(c.Writer, c.Request, c.Param("id"))
 	})

@@ -9,9 +9,9 @@ import { saveAs } from "file-saver";
 import { requestEdit, requestGeneration, requestImageQuestion, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { requestVideoGeneration } from "@/services/api/video";
-import { defaultConfig, type AiConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
+import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { recoverPersistedImage } from "@/services/image-recovery";
+import { hydrateCanvasImages, imageMetadata } from "@/services/canvas-image-hydration";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
@@ -21,10 +21,24 @@ import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
+import { distanceBetweenPoints, segmentHitsConnection } from "../utils/canvas-connection-geometry";
+import {
+    buildAngleLabel,
+    buildAnglePrompt,
+    buildGenerationConfig,
+    buildImageGenerationMetadata,
+    findRetrySourceNode,
+    getGenerationCount,
+    getInputSummary,
+    referenceUrl,
+    resetInterruptedGeneration,
+    sourceNodeReferenceImages,
+} from "../utils/canvas-generation-utils";
+import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection } from "../utils/canvas-graph-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
-import { ActiveConnectionPath, ConnectionPath, getConnectionCurve } from "../components/canvas-connections";
+import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog, type CanvasImageAngleParams } from "../components/canvas-node-angle-dialog";
@@ -34,13 +48,13 @@ import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canva
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
-import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "../components/canvas-node-prompt-panel";
+import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { isCanvasPerfDebugEnabled, logCanvasPerf, useCanvasPerfDebugRegistration, useCanvasPerfRender } from "../utils/canvas-performance-debug";
-import { CanvasNodeType, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
+import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
 import type { ReferenceImage } from "@/types/image";
 
 type CanvasClipboard = {
@@ -325,7 +339,13 @@ function InfiniteCanvasPage() {
         }
 
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes));
+            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes), {
+                resolveMediaUrl,
+                readCachedImage: (storageKey) => resolveImageUrl(storageKey, ""),
+                resolveRemoteImage,
+                fetchPublicImageAccess,
+                uploadImage,
+            });
             setNodes(restoredNodes);
             setConnections(project.connections);
             setBackgroundMode(project.backgroundMode);
@@ -1324,7 +1344,8 @@ function InfiniteCanvasPage() {
         const image = cached
             ? { url: cached, storageKey: `media:${payload.mediaId}`, width: access.width, height: access.height, bytes: access.bytes, mimeType: access.contentType, mediaId: payload.mediaId }
             : await uploadImage(access.url, payload.mediaId);
-        const size = fitNodeSize(image.width, image.height);
+        const dimensions = image.width > 0 && image.height > 0 ? image : { ...image, ...(await readImageMeta(cached || image.url)) };
+        const size = fitNodeSize(dimensions.width, dimensions.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newNode: CanvasNodeData = {
             id,
@@ -1333,7 +1354,7 @@ function InfiniteCanvasPage() {
             position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: { ...imageMetadata(image), publicImageId: payload.id },
+            metadata: { ...imageMetadata(dimensions), publicImageId: payload.id },
         };
 
         setNodes((prev) => [...prev, newNode]);
@@ -1620,7 +1641,13 @@ function InfiniteCanvasPage() {
                     bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
                     mimeType: node.metadata.mimeType || "image/png",
                 },
-                metadata: { source: "canvas", nodeId: node.id, prompt: node.metadata?.prompt },
+                metadata: {
+                    source: "canvas",
+                    nodeId: node.id,
+                    prompt: node.metadata?.prompt,
+                    mediaId: node.metadata?.mediaId,
+                    uploadState: node.metadata?.mediaId ? "uploaded" : undefined,
+                },
             });
             message.success("已加入我的素材");
         },
@@ -1655,7 +1682,7 @@ function InfiniteCanvasPage() {
     const generateAngleNode = useCallback(
         async (node: CanvasNodeData, params: CanvasImageAngleParams) => {
             if (!node.metadata?.content) return;
-            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image"), count: "1" };
+            const generationConfig = { ...buildGenerationConfig(effectiveConfig, node, "image", defaultConfig), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -1808,9 +1835,9 @@ function InfiniteCanvasPage() {
     }, []);
 
     const handleGenerateNode = useCallback(
-        async (nodeId: string, mode: CanvasNodeGenerationMode, prompt: string) => {
+        async (nodeId: string, mode: CanvasGenerationMode, prompt: string) => {
             const sourceNode = nodesRef.current.find((node) => node.id === nodeId);
-            const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode);
+            const generationConfig = buildGenerationConfig(effectiveConfig, sourceNode, mode, defaultConfig);
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -2120,7 +2147,7 @@ function InfiniteCanvasPage() {
                           resolution: savedImageMetadata.resolution || effectiveConfig.resolution || defaultConfig.resolution,
                           count: "1",
                       }
-                    : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image"), count: "1" };
+                    : { ...buildGenerationConfig(effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", defaultConfig), count: "1" };
             if (!isAiConfigReady(generationConfig, generationConfig.model)) {
                 openConfigDialog(true);
                 return;
@@ -2606,7 +2633,6 @@ function InfiniteCanvasPage() {
                 >
                     <p className="text-sm opacity-60">这会删除当前画布上的所有节点和连线。</p>
                 </Modal>
-
             </section>
         </main>
     );
@@ -2723,32 +2749,12 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
     );
 }
 
-
 function imageExtension(dataUrl: string) {
     return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
 }
 
-function imageMetadata(image: UploadedImage): CanvasNodeMetadata {
-	return { content: image.url, storageKey: image.storageKey, mediaId: image.mediaId, status: "success", naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
-}
-
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {
     return { content: video.url, storageKey: video.storageKey, status: "success", naturalWidth: video.width, naturalHeight: video.height, bytes: video.bytes, mimeType: video.mimeType || "video/mp4" };
-}
-
-function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
-    return {
-        generationType: type,
-        size: config.size,
-        resolution: config.resolution,
-        quality: config.quality,
-        count,
-        references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
-    };
-}
-
-function referenceUrl(image: ReferenceImage) {
-    return image.storageKey || image.url || (!image.dataUrl.startsWith("data:") ? image.dataUrl : undefined);
 }
 
 async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
@@ -2763,204 +2769,9 @@ async function resolveMetadataReferences(metadata: CanvasNodeMetadata) {
     return references.every(Boolean) ? (references as ReferenceImage[]) : null;
 }
 
-async function hydrateCanvasImages(nodes: CanvasNodeData[]) {
-    return Promise.all(
-        nodes.map(async (node) => {
-            const content = node.metadata?.content;
-            if (node.type === CanvasNodeType.Video && node.metadata?.storageKey) return { ...node, metadata: { ...node.metadata, content: await resolveMediaUrl(node.metadata.storageKey, content) } };
-            if (node.type !== CanvasNodeType.Image) return node;
-
-            const recovery = await recoverPersistedImage(node.metadata || {}, {
-                readCachedImage: (storageKey) => resolveImageUrl(storageKey, ""),
-                downloadMediaImage: async (mediaId) => {
-                    const remote = node.metadata?.publicImageId ? (await fetchPublicImageAccess(node.metadata.publicImageId)).url : await resolveRemoteImage(mediaId);
-                    const image = await uploadImage(remote, mediaId);
-                    return { content: image.url, storageKey: image.storageKey, mediaId: image.mediaId, naturalWidth: image.width, naturalHeight: image.height, bytes: image.bytes, mimeType: image.mimeType };
-                },
-            });
-
-            if (recovery.status === "cached" || recovery.status === "remote") {
-                return { ...node, metadata: { ...node.metadata, ...recovery, status: NODE_STATUS_SUCCESS, errorDetails: undefined } };
-            }
-            if (recovery.status === "error") {
-                return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: `恢复图片失败：${recovery.error}` } };
-            }
-
-            if (!content) return node;
-            if (node.metadata?.storageKey || content.startsWith("blob:")) {
-                return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: "本地图片缓存已丢失，且没有可恢复的媒体记录" } };
-            }
-            if (!content.startsWith("data:image/")) return node;
-
-            try {
-                return { ...node, metadata: { ...node.metadata, ...imageMetadata(await uploadImage(content)), status: NODE_STATUS_SUCCESS, errorDetails: undefined } };
-            } catch (error) {
-                const errorDetails = error instanceof Error ? error.message : "图片恢复失败";
-                return { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: `恢复图片失败：${errorDetails}` } };
-            }
-        }),
-    );
-}
-
-function getGenerationCount(count: string) {
-    return Math.max(1, Math.min(15, Math.floor(Math.abs(Number(count)) || 1)));
-}
-
 function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeData["metadata"]> = {}) {
     const next = { ...node, metadata: { ...node.metadata, ...(patch || {}) } };
     const spec = node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = typeof patch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(patch.size, spec.width, spec.height) : null;
     return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
-}
-
-function normalizeConnection(firstNodeId: string, secondNodeId: string, nodes: CanvasNodeData[], firstHandleType: "source" | "target") {
-    const first = nodes.find((node) => node.id === firstNodeId);
-    const second = nodes.find((node) => node.id === secondNodeId);
-    if (!first || !second || first.id === second.id) return null;
-    if (first.type === CanvasNodeType.Config && second.type === CanvasNodeType.Config) return null;
-    if (second.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    if (first.type === CanvasNodeType.Config && firstHandleType === "target") return { fromNodeId: second.id, toNodeId: first.id };
-    if (first.type === CanvasNodeType.Config) return { fromNodeId: first.id, toNodeId: second.id };
-    return { fromNodeId: first.id, toNodeId: second.id };
-}
-
-function distanceBetweenPoints(a: Position, b: Position) {
-    return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function cubicBezierPoint(start: Position, control1: Position, control2: Position, end: Position, t: number): Position {
-    const mt = 1 - t;
-    const mt2 = mt * mt;
-    const t2 = t * t;
-
-    return {
-        x: mt2 * mt * start.x + 3 * mt2 * t * control1.x + 3 * mt * t2 * control2.x + t2 * t * end.x,
-        y: mt2 * mt * start.y + 3 * mt2 * t * control1.y + 3 * mt * t2 * control2.y + t2 * t * end.y,
-    };
-}
-
-function sampleConnectionPoints(from: CanvasNodeData, to: CanvasNodeData, steps = 24) {
-    const curve = getConnectionCurve(from, to);
-    return Array.from({ length: steps + 1 }, (_, index) => cubicBezierPoint(curve.start, curve.control1, curve.control2, curve.end, index / steps));
-}
-
-function pointToSegmentDistance(point: Position, segmentStart: Position, segmentEnd: Position) {
-    const dx = segmentEnd.x - segmentStart.x;
-    const dy = segmentEnd.y - segmentStart.y;
-    if (dx === 0 && dy === 0) return distanceBetweenPoints(point, segmentStart);
-    const t = Math.max(0, Math.min(1, ((point.x - segmentStart.x) * dx + (point.y - segmentStart.y) * dy) / (dx * dx + dy * dy)));
-    return distanceBetweenPoints(point, { x: segmentStart.x + dx * t, y: segmentStart.y + dy * t });
-}
-
-function orientation(a: Position, b: Position, c: Position) {
-    const value = (b.y - a.y) * (c.x - b.x) - (b.x - a.x) * (c.y - b.y);
-    if (Math.abs(value) < 0.0001) return 0;
-    return value > 0 ? 1 : 2;
-}
-
-function onSegment(a: Position, b: Position, c: Position) {
-    return b.x <= Math.max(a.x, c.x) && b.x >= Math.min(a.x, c.x) && b.y <= Math.max(a.y, c.y) && b.y >= Math.min(a.y, c.y);
-}
-
-function segmentsIntersect(startA: Position, endA: Position, startB: Position, endB: Position) {
-    const o1 = orientation(startA, endA, startB);
-    const o2 = orientation(startA, endA, endB);
-    const o3 = orientation(startB, endB, startA);
-    const o4 = orientation(startB, endB, endA);
-    if (o1 !== o2 && o3 !== o4) return true;
-    if (o1 === 0 && onSegment(startA, startB, endA)) return true;
-    if (o2 === 0 && onSegment(startA, endB, endA)) return true;
-    if (o3 === 0 && onSegment(startB, startA, endB)) return true;
-    if (o4 === 0 && onSegment(startB, endA, endB)) return true;
-    return false;
-}
-
-function segmentDistance(startA: Position, endA: Position, startB: Position, endB: Position) {
-    if (segmentsIntersect(startA, endA, startB, endB)) return 0;
-    return Math.min(pointToSegmentDistance(startA, startB, endB), pointToSegmentDistance(endA, startB, endB), pointToSegmentDistance(startB, startA, endA), pointToSegmentDistance(endB, startA, endA));
-}
-
-function segmentHitsConnection(cutStart: Position, cutEnd: Position, from: CanvasNodeData, to: CanvasNodeData, threshold: number) {
-    const points = sampleConnectionPoints(from, to);
-    for (let index = 1; index < points.length; index += 1) {
-        if (segmentDistance(cutStart, cutEnd, points[index - 1], points[index]) <= threshold) return true;
-    }
-    return false;
-}
-
-function getInputSummary(inputs: NodeGenerationInput[]) {
-    return {
-        textCount: inputs.filter((input) => input.type === "text").length,
-        imageCount: inputs.filter((input) => input.type === "image").length,
-    };
-}
-
-function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasNodeGenerationMode): AiConfig {
-    const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : config.textModel;
-    return {
-        ...config,
-        model: node?.metadata?.model || defaultModel || config.model || defaultConfig.model,
-        quality: node?.metadata?.quality || config.quality || defaultConfig.quality,
-        size: node?.metadata?.size || config.size || defaultConfig.size,
-        resolution: normalizeImageResolution(node?.metadata?.resolution || config.resolution || defaultConfig.resolution),
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || defaultConfig.vquality,
-        count: String(node?.metadata?.count || config.count || defaultConfig.count),
-    };
-}
-
-function resetInterruptedGeneration(nodes: CanvasNodeData[]) {
-    return nodes.map((node) => (node.metadata?.status === "loading" ? { ...node, metadata: { ...node.metadata, status: "error" as const, errorDetails: "页面刷新后生成已中断，请重新生成。" } } : node));
-}
-
-function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    const queue = connections.filter((connection) => connection.toNodeId === nodeId).map((connection) => connection.fromNodeId);
-    const visited = new Set<string>();
-    while (queue.length) {
-        const id = queue.shift()!;
-        if (visited.has(id)) continue;
-        visited.add(id);
-        const node = nodes.find((item) => item.id === id);
-        if (node?.type === CanvasNodeType.Config) return node;
-        connections.filter((connection) => connection.toNodeId === id).forEach((connection) => queue.push(connection.fromNodeId));
-    }
-    return null;
-}
-
-function sourceNodeReferenceImages(node: CanvasNodeData | null) {
-    if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
-    return [
-        {
-            id: node.id,
-            name: `${node.title || node.id}.png`,
-            type: node.metadata.mimeType || "image/png",
-            dataUrl: node.metadata.content,
-            storageKey: node.metadata.storageKey,
-        },
-    ];
-}
-
-function isHiddenBatchChild(node: CanvasNodeData, nodes: CanvasNodeData[], collapsingBatchIds?: Set<string>) {
-    const rootId = node.metadata?.batchRootId;
-    if (!rootId) return false;
-    const root = nodes.find((item) => item.id === rootId);
-    if (root && collapsingBatchIds?.has(rootId)) return false;
-    return Boolean(root && !root.metadata?.imageBatchExpanded);
-}
-
-function isHiddenBatchConnectionEndpoint(node: CanvasNodeData, nodes: CanvasNodeData[]) {
-    const rootId = node.metadata?.batchRootId;
-    if (!rootId) return false;
-    const root = nodes.find((item) => item.id === rootId);
-    return Boolean(root && !root.metadata?.imageBatchExpanded);
-}
-
-function buildAngleLabel(params: CanvasImageAngleParams) {
-    const horizontal = params.horizontalAngle === 0 ? "正面视角" : params.horizontalAngle > 0 ? `向右旋转 ${params.horizontalAngle} 度` : `向左旋转 ${Math.abs(params.horizontalAngle)} 度`;
-    const pitch = params.pitchAngle === 0 ? "水平视角" : params.pitchAngle > 0 ? `俯视 ${params.pitchAngle} 度` : `仰视 ${Math.abs(params.pitchAngle)} 度`;
-    return `AI 多角度：${horizontal}，${pitch}，镜头距离 ${params.cameraDistance.toFixed(1)}，${params.wideAngle ? "广角" : "标准"}镜头`;
-}
-
-function buildAnglePrompt(params: CanvasImageAngleParams) {
-    return `基于参考图重新生成同一主体的新视角，保持主体、颜色、材质和画面风格一致，不要只做透视变形。${buildAngleLabel(params)}。`;
 }

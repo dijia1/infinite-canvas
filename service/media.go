@@ -5,6 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"mime"
 	"net/http"
@@ -92,7 +96,8 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	if err := store.Put(ctx, key, data, contentType); err != nil {
 		return MediaAccess{}, fmt.Errorf("保存图片失败: %w", err)
 	}
-	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Filename: filepath.Base(filename), CreatedAt: now()}
+	width, height := imageDimensions(data)
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), CreatedAt: now()}
 	saved, err := repository.SaveMedia(item)
 	if err != nil {
 		_ = store.Delete(ctx, key)
@@ -117,6 +122,50 @@ func MediaAccessURL(ctx context.Context, user PortalUser, id string) (MediaAcces
 		return MediaAccess{}, err
 	}
 	return mediaAccess(ctx, store, item)
+}
+
+func DeletePrivateMedia(ctx context.Context, user PortalUser, id string) error {
+	item, found, err := repository.GetMedia(id)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if !canAccessMedia(user, item) {
+		return safeMessageError{message: "无权删除该图片"}
+	}
+	_, isPublic, err := repository.GetPublicImageByMediaID(item.ID)
+	if err != nil {
+		return err
+	}
+	if isPublic {
+		return safeMessageError{message: "公共图片请通过公共素材管理删除"}
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return err
+	}
+	if err := deleteImageObject(ctx, store, item.ObjectKey); err != nil {
+		return fmt.Errorf("删除图片文件失败: %w", err)
+	}
+	return repository.DeleteMedia(item.ID)
+}
+
+func deleteImageObject(ctx context.Context, store imageStore, key string) error {
+	err := store.Delete(ctx, key)
+	if err == nil || isMissingImageObjectError(err) {
+		return nil
+	}
+	return err
+}
+
+func isMissingImageObjectError(err error) bool {
+	if errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	var serviceError *oss.ServiceError
+	return errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusNotFound
 }
 
 func mediaAccess(ctx context.Context, store imageStore, item model.Media) (MediaAccess, error) {
@@ -173,6 +222,14 @@ func normalizeImage(data []byte, claimed string) (string, string, error) {
 		extension = strings.TrimPrefix(extensions[0], ".")
 	}
 	return contentType, extension, nil
+}
+
+func imageDimensions(data []byte) (int, int) {
+	config, _, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return 0, 0
+	}
+	return config.Width, config.Height
 }
 
 type localImageStore struct{ directory string }

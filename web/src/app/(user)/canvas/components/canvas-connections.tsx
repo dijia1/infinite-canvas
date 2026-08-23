@@ -1,23 +1,7 @@
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { getConnectionCurve } from "../utils/canvas-connection-geometry";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "../types";
-
-export function getConnectionCurve(from: CanvasNodeData, to: CanvasNodeData) {
-    const startX = from.position.x + from.width;
-    const startY = from.position.y + from.height / 2;
-    const endX = to.position.x;
-    const endY = to.position.y + to.height / 2;
-    const dx = Math.abs(endX - startX);
-    const curvature = Math.max(dx * 0.5, 50);
-
-    return {
-        start: { x: startX, y: startY },
-        control1: { x: startX + curvature, y: startY },
-        control2: { x: endX - curvature, y: endY },
-        end: { x: endX, y: endY },
-        pathD: `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`,
-    };
-}
 
 export function ConnectionPath({ connection, from, to, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; pendingCut?: boolean; onSelect: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"github.com/basketikun/infinite-canvas/model"
 )
 
@@ -65,6 +67,13 @@ func TestPublicMediaAccessAllowsEveryPortalUser(t *testing.T) {
 	}
 }
 
+func TestSavePublicImageRejectsNamesOutsideTrimmedOneToSixtyFourCharacters(t *testing.T) {
+	_, _, err := SavePublicImage(context.Background(), PortalUser{UID: "admin"}, "image.png", "image/png", nil, strings.Repeat("a", 65), "")
+	if err == nil || !strings.Contains(err.Error(), "1-64") {
+		t.Fatalf("SavePublicImage() error = %v, want title length validation", err)
+	}
+}
+
 func TestMediaAccessIncludesWebPPreviewURL(t *testing.T) {
 	access, err := mediaAccess(context.Background(), &fakeImageStore{}, model.Media{ID: "media-preview", ObjectKey: "images/private/user/source.png"})
 	if err != nil {
@@ -76,5 +85,17 @@ func TestMediaAccessIncludesWebPPreviewURL(t *testing.T) {
 	}
 	if !strings.Contains(preview.String(), "x-oss-process="+mediaPreviewProcess) {
 		t.Fatalf("PreviewURL = %q, want signed WebP process", preview.String())
+	}
+}
+
+func TestMissingImageObjectErrorsAreSafeToDelete(t *testing.T) {
+	if !isMissingImageObjectError(os.ErrNotExist) {
+		t.Fatal("local missing object must be treated as already deleted")
+	}
+	if !isMissingImageObjectError(&oss.ServiceError{StatusCode: 404, Code: "NoSuchKey"}) {
+		t.Fatal("OSS 404 object must be treated as already deleted")
+	}
+	if isMissingImageObjectError(&oss.ServiceError{StatusCode: 403, Code: "AccessDenied"}) {
+		t.Fatal("OSS permission errors must not be treated as already deleted")
 	}
 }

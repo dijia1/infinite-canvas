@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -51,8 +52,30 @@ func MediaAccess(w http.ResponseWriter, r *http.Request, id string) {
 	OK(w, result)
 }
 
+func DeletePrivateMedia(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	if err := service.DeletePrivateMedia(r.Context(), user, id); err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, true)
+}
+
 func PublicImages(w http.ResponseWriter, r *http.Request) {
 	result, err := service.ListPublicImages(parseQuery(r))
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
+func PublicFolders(w http.ResponseWriter, _ *http.Request) {
+	result, err := service.ListPublicFolders()
 	if err != nil {
 		FailError(w, err)
 		return
@@ -127,7 +150,7 @@ func AdminUploadPublicImage(w http.ResponseWriter, r *http.Request) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	item, access, err := service.SavePublicImage(r.Context(), user, header.Filename, header.Header.Get("Content-Type"), data, strings.TrimSpace(r.FormValue("title")))
+	item, access, err := service.SavePublicImage(r.Context(), user, header.Filename, header.Header.Get("Content-Type"), data, strings.TrimSpace(r.FormValue("title")), r.FormValue("folderId"))
 	if err != nil {
 		FailError(w, err)
 		return
@@ -141,6 +164,64 @@ func AdminDeletePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	OK(w, true)
+}
+
+func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title    string `json:"title"`
+		ParentID string `json:"parentId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.CreatePublicFolder(input.Title, input.ParentID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, item)
+}
+
+func AdminRenamePublicFolder(w http.ResponseWriter, r *http.Request, id string) {
+	var input struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.RenamePublicFolder(id, input.Title)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, item)
+}
+
+func AdminDeletePublicFolder(w http.ResponseWriter, r *http.Request, id string) {
+	if err := service.DeletePublicFolder(id); err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, true)
+}
+
+func AdminUpdatePublicImage(w http.ResponseWriter, r *http.Request, id string) {
+	var input struct {
+		Title    *string `json:"title"`
+		FolderID *string `json:"folderId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.UpdatePublicImage(id, input.Title, input.FolderID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, item)
 }
 
 func PortalSession(w http.ResponseWriter, r *http.Request) {

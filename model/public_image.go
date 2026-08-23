@@ -6,6 +6,7 @@ package model
 type PublicImage struct {
 	ID          string `json:"id" gorm:"primaryKey"`
 	MediaID     string `json:"mediaId" gorm:"uniqueIndex"`
+	FolderID    string `json:"folderId" gorm:"index"`
 	Title       string `json:"title" gorm:"index"`
 	UploaderUID string `json:"uploaderUid" gorm:"index"`
 	CreatedAt   string `json:"createdAt"`

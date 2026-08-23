@@ -4,6 +4,7 @@ import type { AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
+import { apiDelete } from "@/services/api/request";
 import type { ReferenceImage } from "@/types/image";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 
@@ -56,7 +57,7 @@ function parseImagePayload(payload: ImageApiResponse) {
         payload.data
             ?.map(resolveImageDataUrl)
             .filter((value): value is string => Boolean(value))
-            .map((dataUrl, index) => ({ id: nanoid(), dataUrl, mediaId: typeof payload.data?.[index]?.mediaId === "string" ? payload.data[index].mediaId as string : undefined })) || [];
+            .map((dataUrl, index) => ({ id: nanoid(), dataUrl, mediaId: typeof payload.data?.[index]?.mediaId === "string" ? (payload.data[index].mediaId as string) : undefined })) || [];
 
     if (images.length === 0) {
         throw new Error("接口没有返回图片");
@@ -71,6 +72,10 @@ export async function uploadUserImage(file: File) {
     const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string } }>(aiApiUrl("/media/images"), form);
     if (response.data.code !== 0 || !response.data.data?.mediaId || !response.data.data.url) throw new Error(response.data.msg || "上传图片失败");
     return { mediaId: response.data.data.mediaId, url: response.data.data.url };
+}
+
+export async function deleteUserImage(mediaId: string) {
+    return apiDelete<void>(`/api/v1/media/${encodeURIComponent(mediaId)}`);
 }
 
 function readAxiosError(error: unknown, fallback: string) {

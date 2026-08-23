@@ -4,23 +4,10 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { apiGet } from "@/services/api/request";
+import type { AiConfig } from "@/lib/ai-config";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 
-export type AiConfig = {
-    /** @deprecated 仅兼容旧画布记录，不再参与请求。 */
-    model: string;
-    imageModel: string;
-    videoModel: string;
-    textModel: string;
-    models: string[];
-    systemPrompt: string;
-    videoSeconds: string;
-    vquality: string;
-    quality: string;
-    size: string;
-    resolution: string;
-    count: string;
-};
+export type { AiConfig } from "@/lib/ai-config";
 
 export type AIStatus = { imageAvailable: boolean; imageEditable: boolean; videoAvailable: boolean };
 export type AICapability = "image" | "imageEdit" | "video";
