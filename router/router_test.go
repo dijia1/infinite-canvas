@@ -195,6 +195,49 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 	}
 }
 
+func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testing.T) {
+	memberID := "member-list-" + time.Now().Format("20060102150405.000000000")
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{
+		UserUID:     memberID,
+		DisplayName: "成员列表测试",
+		Enabled:     true,
+		Roles:       []string{"设计师"},
+		SyncedAt:    time.Now().UTC(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	denied := httptest.NewRequest(http.MethodGet, "/api/admin/members", nil)
+	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
+	deniedResponse := httptest.NewRecorder()
+	New().ServeHTTP(deniedResponse, denied)
+	if deniedResponse.Code != http.StatusForbidden {
+		t.Fatalf("non-admin members status = %d, want %d; body = %s", deniedResponse.Code, http.StatusForbidden, deniedResponse.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/members?query=%E6%88%90%E5%91%98", nil)
+	request.Header.Set("X-Portal-User-Uid", "member-list-admin")
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	var payload struct {
+		Code int `json:"code"`
+		Data struct {
+			Items []model.PortalMember `json:"items"`
+			Total int                  `json:"total"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Code != 0 || payload.Data.Total == 0 {
+		t.Fatalf("member list status/body = %d/%s", response.Code, response.Body.String())
+	}
+	for _, item := range payload.Data.Items {
+		if item.UserUID == memberID && item.DisplayName == "成员列表测试" {
+			return
+		}
+	}
+	t.Fatalf("member %q missing from list: %+v", memberID, payload.Data.Items)
+}
+
 func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	const userUID = "2b5892c4-3dd2-4f82-8644-f0d14a0b5e71"
 	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"]}`}

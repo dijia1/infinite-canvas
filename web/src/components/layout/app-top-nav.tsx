@@ -79,7 +79,7 @@ export function AppTopNav() {
                                     公共素材
                                 </TopMaterialButton>
                                 {session.data?.isAdmin ? (
-                                    <Dropdown menu={{ items: [{ key: "operation-logs", label: <Link href={appPath("/admin/operations")}>操作记录</Link> }] }} trigger={["click"]}>
+                                    <Dropdown menu={{ items: [{ key: "members", label: <Link href={appPath("/admin/members")}>成员管理</Link> }, { key: "operation-logs", label: <Link href={appPath("/admin/operations")}>操作记录</Link> }] }} trigger={["click"]}>
                                         <button type="button" className="relative flex h-16 shrink-0 items-center gap-1 text-sm leading-6 text-stone-500 transition hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">
                                             管理
                                             <ChevronDown className="size-3.5" />

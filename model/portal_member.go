@@ -10,3 +10,28 @@ type PortalMember struct {
 	Roles       []string  `json:"roles" gorm:"serializer:json"`
 	SyncedAt    time.Time `json:"syncedAt"`
 }
+
+type PortalMemberQuery struct {
+	Query    string
+	Page     int
+	PageSize int
+}
+
+func (q *PortalMemberQuery) Normalize() {
+	if q.Page < 1 {
+		q.Page = 1
+	}
+	if q.PageSize < 1 {
+		q.PageSize = 20
+	}
+	if q.PageSize > MaxPageSize {
+		q.PageSize = MaxPageSize
+	}
+}
+
+func (q *PortalMemberQuery) Offset() int { return (q.Page - 1) * q.PageSize }
+
+type PortalMemberList struct {
+	Items []PortalMember `json:"items"`
+	Total int            `json:"total"`
+}

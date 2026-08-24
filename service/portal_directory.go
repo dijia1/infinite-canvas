@@ -126,6 +126,19 @@ func SyncPortalMember(ctx context.Context, userUID string) error {
 	return repository.UpsertPortalMembers([]model.PortalMember{member})
 }
 
+func ListPortalMembers(query model.PortalMemberQuery) (model.PortalMemberList, error) {
+	items, total, err := repository.ListPortalMembers(query)
+	if err != nil {
+		return model.PortalMemberList{}, err
+	}
+	for index := range items {
+		if items[index].Roles == nil {
+			items[index].Roles = []string{}
+		}
+	}
+	return model.PortalMemberList{Items: items, Total: int(total)}, nil
+}
+
 func PortalDisplayName(user PortalUser) string {
 	member, found, err := repository.GetPortalMember(user.UID)
 	if err == nil && found && strings.TrimSpace(member.DisplayName) != "" {

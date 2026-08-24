@@ -54,6 +54,7 @@ func New() *gin.Engine {
 	admin.POST("/settings", gin.WrapF(handler.AdminSaveSettings))
 	admin.GET("/ai/provider-types", gin.WrapF(handler.AdminAIProviderTypes))
 	admin.GET("/operation-logs", gin.WrapF(handler.AdminOperationLogs))
+	admin.GET("/members", gin.WrapF(handler.AdminPortalMembers))
 	admin.POST("/members/sync", gin.WrapF(handler.AdminSyncPortalMembers))
 	admin.POST("/public-images", gin.WrapF(handler.AdminUploadPublicImage))
 	admin.POST("/public-folders", gin.WrapF(handler.AdminCreatePublicFolder))

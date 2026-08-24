@@ -1,5 +1,7 @@
 package repository
 
+import "strings"
+
 import (
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
@@ -57,4 +59,24 @@ func GetPortalMember(userUID string) (model.PortalMember, bool, error) {
 		return model.PortalMember{}, false, result.Error
 	}
 	return item, result.RowsAffected > 0, nil
+}
+
+func ListPortalMembers(q model.PortalMemberQuery) ([]model.PortalMember, int64, error) {
+	db, err := DB()
+	if err != nil {
+		return nil, 0, err
+	}
+	q.Normalize()
+	tx := db.Model(&model.PortalMember{})
+	if query := strings.TrimSpace(q.Query); query != "" {
+		like := "%" + query + "%"
+		tx = tx.Where("user_uid LIKE ? OR display_name LIKE ?", like, like)
+	}
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]model.PortalMember, 0)
+	err = tx.Order("enabled desc, display_name asc, user_uid asc").Offset(q.Offset()).Limit(q.PageSize).Find(&items).Error
+	return items, total, err
 }

@@ -50,6 +50,17 @@ func AdminOperationLogs(w http.ResponseWriter, r *http.Request) {
 	OK(w, result)
 }
 
+func AdminPortalMembers(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	result, err := service.ListPortalMembers(model.PortalMemberQuery{Query: r.URL.Query().Get("query"), Page: page, PageSize: pageSize})
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func AdminSyncPortalMembers(w http.ResponseWriter, r *http.Request) {
 	result, err := service.SyncPortalMembers(r.Context())
 	if err != nil {

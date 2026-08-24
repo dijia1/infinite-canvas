@@ -1,12 +1,12 @@
 "use client";
 
-import { ReloadOutlined } from "@ant-design/icons";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Empty, Input, Pagination, Select, Spin, Tag } from "antd";
-import { useDeferredValue, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Empty, Input, Pagination, Select, Spin, Tag } from "antd";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useDeferredValue, useEffect, useState } from "react";
 
 import { getRemoteImageAccess } from "@/services/image-storage";
-import { fetchOperationLogs, syncPortalMembers, type OperationLog } from "@/services/api/operation-logs";
+import { fetchOperationLogs, type OperationLog } from "@/services/api/operation-logs";
 
 const PAGE_SIZE = 20;
 
@@ -29,24 +29,23 @@ const actionLabels: Record<string, string> = {
 };
 
 export default function AdminOperationsPage() {
-    const { message } = App.useApp();
-    const queryClient = useQueryClient();
+    return <Suspense><AdminOperationsContent /></Suspense>;
+}
+
+function AdminOperationsContent() {
+    const searchParams = useSearchParams();
+    const actorFromMember = searchParams.get("actor") || "";
     const [page, setPage] = useState(1);
     const [action, setAction] = useState("");
     const [status, setStatus] = useState("");
-    const [actor, setActor] = useState("");
+    const [actor, setActor] = useState(actorFromMember);
     const deferredActor = useDeferredValue(actor);
     const query = useQuery({ queryKey: ["operation-logs", page, action, status, deferredActor], queryFn: () => fetchOperationLogs({ page, pageSize: PAGE_SIZE, action, status, actor: deferredActor }) });
 
-    const sync = async () => {
-        try {
-            const result = await syncPortalMembers();
-            message.success(`已同步 ${result.count} 名 Portal 用户`);
-            await queryClient.invalidateQueries({ queryKey: ["operation-logs"] });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "Portal 用户同步失败");
-        }
-    };
+    useEffect(() => {
+        setPage(1);
+        setActor(actorFromMember);
+    }, [actorFromMember]);
 
     const updateFilter = (setter: (value: string) => void, value: string) => {
         setPage(1);
@@ -60,9 +59,6 @@ export default function AdminOperationsPage() {
                     <h1 className="text-xl font-semibold">操作记录</h1>
                     <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">仅保留最近 7 天的可信服务端操作。</p>
                 </div>
-                <Button icon={<ReloadOutlined />} onClick={() => void sync()}>
-                    同步 Portal 用户
-                </Button>
             </div>
             <div className="flex flex-wrap gap-3">
                 <Input.Search value={actor} allowClear placeholder="按用户姓名或 UID 搜索" className="w-60" onChange={(event) => updateFilter(setActor, event.target.value)} />
