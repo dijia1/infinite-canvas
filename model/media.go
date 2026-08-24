@@ -18,5 +18,7 @@ type Media struct {
 	Width       int         `json:"width"`
 	Height      int         `json:"height"`
 	Filename    string      `json:"filename"`
+	Title       string      `json:"title" gorm:"index"`
+	FolderID    string      `json:"folderId" gorm:"index"`
 	CreatedAt   string      `json:"createdAt"`
 }

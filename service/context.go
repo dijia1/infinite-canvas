@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"strings"
+
+	"github.com/basketikun/infinite-canvas/config"
 )
 
 type portalUserContextKey struct{}
@@ -20,6 +22,14 @@ func (user PortalUser) HasRole(role string) bool {
 		}
 	}
 	return false
+}
+
+func IsPortalAdmin(user PortalUser) bool {
+	role := strings.TrimSpace(config.Cfg.PortalAdminRole)
+	if role == "" {
+		role = "portal-admin"
+	}
+	return user.HasRole(role)
 }
 
 func WithPortalUser(ctx context.Context, user PortalUser) context.Context {

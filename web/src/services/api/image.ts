@@ -9,7 +9,7 @@ import type { ReferenceImage } from "@/types/image";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 
 type ImageApiResponse = {
-    data?: Array<Record<string, unknown>>;
+    data?: Record<string, unknown> | Array<Record<string, unknown>>;
     error?: { message?: string };
     code?: number;
     msg?: string;
@@ -39,31 +39,43 @@ function normalizeQuality(quality: string) {
     return normalized === "auto" || !normalized ? undefined : normalized;
 }
 
-function resolveImageDataUrl(item: Record<string, unknown>) {
-    if (typeof item.b64_json === "string" && item.b64_json) {
-        return `data:image/png;base64,${item.b64_json}`;
-    }
-    if (typeof item.url === "string" && item.url) {
-        return item.url;
-    }
-    return null;
-}
+export type GeneratedImage = { id: string; dataUrl: string; mediaId?: string };
 
-function parseImagePayload(payload: ImageApiResponse) {
+export type ImageGenerationTask = {
+    id: string;
+    clientRequestId: string;
+    status: "queued" | "submitting" | "running" | "succeeded" | "failed";
+    progress: number;
+    error?: string;
+    images: GeneratedImage[];
+};
+
+function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || "请求失败");
     }
-    const images =
-        payload.data
-            ?.map(resolveImageDataUrl)
-            .filter((value): value is string => Boolean(value))
-            .map((dataUrl, index) => ({ id: nanoid(), dataUrl, mediaId: typeof payload.data?.[index]?.mediaId === "string" ? (payload.data[index].mediaId as string) : undefined })) || [];
-
-    if (images.length === 0) {
-        throw new Error("接口没有返回图片");
+    const item = payload.data;
+    if (!item || Array.isArray(item) || typeof item.id !== "string" || !item.id) {
+        throw new Error("接口没有返回图片任务");
     }
-
-    return images;
+    const images = Array.isArray(item.images)
+        ? item.images
+              .map((image): GeneratedImage | null => {
+                  if (!image || typeof image !== "object") return null;
+                  const value = image as Record<string, unknown>;
+                  if (typeof value.url !== "string" || !value.url) return null;
+                  return { id: nanoid(), dataUrl: value.url, ...(typeof value.mediaId === "string" ? { mediaId: value.mediaId } : {}) };
+              })
+              .filter((image): image is GeneratedImage => Boolean(image))
+        : [];
+    return {
+        id: item.id,
+        clientRequestId: typeof item.clientRequestId === "string" ? item.clientRequestId : "",
+        status: item.status === "queued" || item.status === "submitting" || item.status === "running" || item.status === "succeeded" || item.status === "failed" ? item.status : "failed",
+        progress: typeof item.progress === "number" ? item.progress : 0,
+        error: typeof item.error === "string" ? item.error : undefined,
+        images,
+    };
 }
 
 export async function uploadUserImage(file: File) {
@@ -94,14 +106,14 @@ function aiHeaders(contentType?: string) {
     return contentType ? { "Content-Type": contentType } : undefined;
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string) {
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+export async function requestGeneration(config: AiConfig, prompt: string, clientRequestId: string): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
     const body = {
+        clientRequestId,
         prompt,
-        n,
+        n: 1,
         ...(quality ? { quality } : {}),
         ...(size && size !== "auto" ? { size } : {}),
         ...(resolution ? { resolution } : {}),
@@ -115,21 +127,20 @@ export async function requestGeneration(config: AiConfig, prompt: string) {
         const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/generations"), body, {
             headers: aiHeaders("application/json"),
         });
-        const images = parseImagePayload(response.data);
-        return images;
+        return parseImageTask(response.data);
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[]) {
-    const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId: string): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
     const formData = new FormData();
+    formData.set("clientRequestId", clientRequestId);
     formData.set("prompt", prompt);
-    formData.set("n", String(n));
+    formData.set("n", "1");
     formData.set("response_format", "b64_json");
     if (quality) {
         formData.set("quality", quality);
@@ -145,8 +156,9 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     debugCanvasRequest("image edit", {
         url: aiApiUrl("/images/edits"),
         body: {
+            clientRequestId,
             prompt,
-            n,
+            n: 1,
             ...(quality ? { quality } : {}),
             ...(size && size !== "auto" ? { size } : {}),
             ...(resolution ? { resolution } : {}),
@@ -157,10 +169,27 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/edits"), formData, { headers: aiHeaders() });
-        const images = parseImagePayload(response.data);
-        return images;
+        return parseImageTask(response.data);
     } catch (error) {
         throw new Error(readAxiosError(error, "请求失败"));
+    }
+}
+
+export async function getImageGenerationTask(taskId: string): Promise<ImageGenerationTask> {
+    try {
+        const response = await axios.get<ImageApiResponse>(aiApiUrl(`/images/tasks/${encodeURIComponent(taskId)}`));
+        return parseImageTask(response.data);
+    } catch (error) {
+        throw new Error(readAxiosError(error, "查询图片任务失败"));
+    }
+}
+
+export async function getImageGenerationTaskByClientRequest(clientRequestId: string): Promise<ImageGenerationTask> {
+    try {
+        const response = await axios.get<ImageApiResponse>(aiApiUrl(`/images/tasks/by-client-request/${encodeURIComponent(clientRequestId)}`));
+        return parseImageTask(response.data);
+    } catch (error) {
+        throw new Error(readAxiosError(error, "查询图片任务失败"));
     }
 }
 

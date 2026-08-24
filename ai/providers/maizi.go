@@ -34,11 +34,14 @@ type maiziProvider struct {
 type maiziTaskCreateResponse struct {
 	Data []struct {
 		TaskID string `json:"task_id"`
+		Status string `json:"status"`
 	} `json:"data"`
 }
 
 type maiziTaskResponse struct {
+	ID         string   `json:"id"`
 	Status     string   `json:"status"`
+	Progress   int      `json:"progress"`
 	ResultURLs []string `json:"result_urls"`
 	Error      string   `json:"error_msg"`
 }
@@ -85,6 +88,21 @@ func (provider *maiziProvider) EditImage(ctx context.Context, request ai.ImageRe
 	return provider.generate(ctx, request, references)
 }
 
+func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
+	if len(request.References) > 0 && strings.TrimSpace(request.Request.Prompt) == "" {
+		return ai.ImageTask{}, maiziError{message: "提示词不能为空"}
+	}
+	return provider.createAsyncTask(ctx, request.Request, request.References)
+}
+
+func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.ImageTask, error) {
+	var result maiziTaskResponse
+	if err := provider.doJSON(ctx, http.MethodGet, maiziBaseURL+"/tasks/"+id, nil, &result); err != nil {
+		return ai.ImageTask{}, err
+	}
+	return ai.ImageTask{ID: firstNonEmpty(result.ID, id), Status: strings.ToLower(strings.TrimSpace(result.Status)), Progress: result.Progress, ResultURLs: result.ResultURLs, Error: strings.TrimSpace(result.Error)}, nil
+}
+
 func (provider *maiziProvider) generate(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) ([]ai.ImageResult, error) {
 	count := request.Count
 	if count < 1 {
@@ -127,6 +145,11 @@ func (provider *maiziProvider) generate(ctx context.Context, request ai.ImageReq
 }
 
 func (provider *maiziProvider) createTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) (string, error) {
+	task, err := provider.createAsyncTask(ctx, request, references)
+	return task.ID, err
+}
+
+func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) (ai.ImageTask, error) {
 	body := map[string]any{"model": provider.config.Model, "prompt": request.Prompt}
 	if request.Size != "" {
 		body["size"] = request.Size
@@ -150,16 +173,16 @@ func (provider *maiziProvider) createTask(ctx context.Context, request ai.ImageR
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return "", err
+		return ai.ImageTask{}, err
 	}
 	var result maiziTaskCreateResponse
 	if err := provider.doJSON(ctx, http.MethodPost, maiziBaseURL+"/images/generations", data, &result); err != nil {
-		return "", err
+		return ai.ImageTask{}, err
 	}
 	if len(result.Data) == 0 || result.Data[0].TaskID == "" {
-		return "", maiziError{message: "MaiziAI 未返回任务 ID"}
+		return ai.ImageTask{}, maiziError{message: "MaiziAI 未返回任务 ID"}
 	}
-	return result.Data[0].TaskID, nil
+	return ai.ImageTask{ID: result.Data[0].TaskID, Status: strings.ToLower(strings.TrimSpace(result.Data[0].Status))}, nil
 }
 
 func maiziResolution(value string) string {
@@ -188,11 +211,11 @@ func maiziResolution(value string) string {
 
 func (provider *maiziProvider) waitTask(ctx context.Context, taskID string) ([]ai.ImageResult, error) {
 	for {
-		var task maiziTaskResponse
-		if err := provider.doJSON(ctx, http.MethodGet, maiziBaseURL+"/tasks/"+taskID, nil, &task); err != nil {
+		task, err := provider.GetImageTask(ctx, taskID)
+		if err != nil {
 			return nil, err
 		}
-		switch strings.ToLower(task.Status) {
+		switch task.Status {
 		case "completed":
 			if len(task.ResultURLs) == 0 {
 				return nil, maiziError{message: "MaiziAI 任务完成但未返回图片"}
@@ -214,6 +237,15 @@ func (provider *maiziProvider) waitTask(ctx context.Context, taskID string) ([]a
 		case <-time.After(maiziPollInterval):
 		}
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (provider *maiziProvider) doJSON(ctx context.Context, method, url string, body []byte, result any) error {

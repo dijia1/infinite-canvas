@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,26 +11,34 @@ import (
 )
 
 type imageRequest struct {
-	Prompt     string `json:"prompt"`
-	N          int    `json:"n"`
-	Quality    string `json:"quality"`
-	Size       string `json:"size"`
-	Resolution string `json:"resolution"`
+	ClientRequestID string `json:"clientRequestId"`
+	Prompt          string `json:"prompt"`
+	N               int    `json:"n"`
+	Quality         string `json:"quality"`
+	Size            string `json:"size"`
+	Resolution      string `json:"resolution"`
 }
 
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 	var payload imageRequest
-	_ = json.NewDecoder(r.Body).Decode(&payload)
-	images, err := service.GenerateImages(r.Context(), ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution})
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		Fail(w, "图片生成请求无效")
+		return
+	}
+	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
+		ClientRequestID: payload.ClientRequestID,
+		Mode:            service.ImageTaskModeGeneration,
+		Request:         ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution},
+	})
 	if err != nil {
 		FailError(w, err)
 		return
 	}
-	OK(w, imageResponse(images))
+	OK(w, task)
 }
 
 func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
 		Fail(w, "图像编辑请求无效")
 		return
 	}
@@ -51,12 +58,35 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 		}
 		references = append(references, ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data})
 	}
-	images, err := service.EditImages(r.Context(), ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution")}, references)
+	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
+		ClientRequestID: r.FormValue("clientRequestId"),
+		Mode:            service.ImageTaskModeEdit,
+		Request:         ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution")},
+		References:      references,
+	})
 	if err != nil {
 		FailError(w, err)
 		return
 	}
-	OK(w, imageResponse(images))
+	OK(w, task)
+}
+
+func AIImageTask(w http.ResponseWriter, r *http.Request, id string) {
+	task, err := service.GetImageTask(r.Context(), id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, task)
+}
+
+func AIImageTaskByClientRequest(w http.ResponseWriter, r *http.Request, clientRequestID string) {
+	task, err := service.GetImageTaskByClientRequest(r.Context(), clientRequestID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, task)
 }
 
 func AIVideos(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +97,11 @@ func AIVideos(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := service.CreateVideo(r.Context(), request)
 	if err != nil {
+		service.RecordOperation(r.Context(), service.OperationLogInput{Action: "video_generate", Status: "failure", TargetType: "video_task", Prompt: request.Prompt, ErrorMessage: service.AuditErrorSummary(err, "视频生成失败")})
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "video_generate", TargetType: "video_task", TargetID: result.ID, Prompt: request.Prompt})
 	OK(w, result)
 }
 
@@ -93,18 +125,6 @@ func AIVideoContent(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(result.Data)
-}
-
-func imageResponse(images []ai.ImageResult) []map[string]any {
-	result := make([]map[string]any, 0, len(images))
-	for _, image := range images {
-		if image.URL != "" {
-			result = append(result, map[string]any{"url": image.URL, "mediaId": image.MediaID, "expiresAt": image.ExpiresAt, "contentType": image.ContentType})
-		} else {
-			result = append(result, map[string]any{"b64_json": base64.StdEncoding.EncodeToString(image.Data)})
-		}
-	}
-	return result
 }
 
 func videoRequestFromForm(r *http.Request) (ai.VideoRequest, error) {

@@ -51,9 +51,14 @@ function restoredImageMetadata(image: StoredCanvasImage): RestoredCanvasImageMet
     };
 }
 
-export async function hydrateCanvasImages(nodes: CanvasNodeData[], dependencies: CanvasImageHydrationDependencies): Promise<CanvasNodeData[]> {
+export async function hydrateCanvasImages(
+    nodes: CanvasNodeData[],
+    dependencies: CanvasImageHydrationDependencies,
+    options: { shouldHydrate?: (node: CanvasNodeData) => boolean } = {},
+): Promise<CanvasNodeData[]> {
     return Promise.all(
         nodes.map(async (node) => {
+            if (options.shouldHydrate && !options.shouldHydrate(node)) return node;
             const metadata = node.metadata;
             const content = metadata?.content;
             if (node.type === "video" && metadata?.storageKey) {

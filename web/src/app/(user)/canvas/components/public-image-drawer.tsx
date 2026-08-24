@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Empty, Input, Modal, Pagination, Spin } from "antd";
 import { ImageOff } from "lucide-react";
@@ -25,6 +25,7 @@ import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns, type MaterialFolder } from "./material-folder-ui";
 import { PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PublicImageDropPayload } from "./material-image-drag";
+import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
 const PAGE_SIZE = 24;
 type ContextMenu = { x: number; y: number };
@@ -381,55 +382,44 @@ function gridColumnClass(stage: number) {
 }
 
 function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { image: PublicImage; isAdmin: boolean; onPreview: (preview: { title: string; url: string }) => void; onImageContextMenu: (event: MouseEvent) => void }) {
-    const [url, setURL] = useState("");
     const [loadFailed, setLoadFailed] = useState(false);
-    useEffect(() => {
-        let cancelled = false;
-        void loadMediaPreview(image.mediaId, async () => {
+    const loadPreview = useCallback(async () => {
+        return await loadMediaPreview(image.mediaId, async () => {
                 const access = await fetchPublicImageAccess(image.id);
                 return access.previewUrl || access.url;
-            })
-            .then((result) => {
-                if (!cancelled) {
-                    setURL(result.url);
-                    setLoadFailed(false);
-                }
-            })
-            .catch(() => {
-                if (!cancelled) {
-                    setURL("");
-                    setLoadFailed(true);
-                }
             });
-        return () => {
-            cancelled = true;
-        };
-    }, [image]);
+    }, [image.id, image.mediaId]);
+    const { ref, url, error, loading } = useVisibleMediaPreview({ identity: image.id, enabled: true, load: loadPreview });
+    useEffect(() => {
+        if (url) setLoadFailed(false);
+    }, [url]);
+    const previewFailed = loadFailed || Boolean(error);
     return (
         <div
+            ref={ref}
             data-material-card
-            draggable={Boolean(url) && !loadFailed}
-            className={`group relative overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 ${url && !loadFailed ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
+            draggable={Boolean(url) && !previewFailed}
+            className={`group relative overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 ${url && !previewFailed ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
             onDragStart={(event) => {
-                if (!url || loadFailed) return;
+                if (!url || previewFailed) return;
                 event.dataTransfer.effectAllowed = "copyMove";
                 event.dataTransfer.setData(PUBLIC_IMAGE_DRAG_TYPE, JSON.stringify({ id: image.id, mediaId: image.mediaId, title: image.title } satisfies PublicImageDropPayload));
             }}
             onClick={() => {
-                if (url && !loadFailed) onPreview({ title: image.title, url });
+                if (url && !previewFailed) onPreview({ title: image.title, url });
             }}
             onContextMenu={(event: MouseEvent) => {
                 event.preventDefault();
                 if (isAdmin) onImageContextMenu(event);
             }}
-            title={url && !loadFailed ? (isAdmin ? "点击查看，拖入画布使用；右键管理" : "点击查看，拖入画布使用") : loadFailed ? "图片已损坏" : "图片加载中"}
+            title={url && !previewFailed ? (isAdmin ? "点击查看，拖入画布使用；右键管理" : "点击查看，拖入画布使用") : previewFailed ? "图片已损坏" : "图片加载中"}
         >
-            {loadFailed ? (
+            {previewFailed ? (
                 <BrokenImagePlaceholder />
             ) : url ? (
                 <img src={url} alt="" className="aspect-[4/3] w-full object-cover" draggable={false} onError={() => setLoadFailed(true)} />
             ) : (
-                <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" />
+                <div className={`aspect-[4/3] bg-stone-100 dark:bg-stone-800 ${loading ? "animate-pulse" : ""}`} />
             )}
         </div>
     );

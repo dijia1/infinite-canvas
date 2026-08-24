@@ -1,10 +1,12 @@
 package repository
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
@@ -35,14 +37,61 @@ func DB() (*gorm.DB, error) {
 		if dbErr != nil {
 			return
 		}
+		if dbErr = configureConnectionPool(db); dbErr != nil {
+			return
+		}
 		dbErr = db.AutoMigrate(
 			&model.Media{},
+			&model.ImageGenerationTask{},
+			&model.PrivateFolder{},
 			&model.PublicFolder{},
 			&model.PublicImage{},
 			&model.Setting{},
+			&model.PortalMember{},
+			&model.OperationLog{},
 		)
 	})
 	return db, dbErr
+}
+
+func configureConnectionPool(database *gorm.DB) error {
+	sqlDB, err := database.DB()
+	if err != nil {
+		return err
+	}
+
+	maxOpenConns := config.Cfg.DatabaseMaxOpenConns
+	if maxOpenConns == 0 {
+		maxOpenConns = 20
+	}
+	if maxOpenConns < 1 {
+		return fmt.Errorf("DB_MAX_OPEN_CONNS must be greater than 0")
+	}
+
+	maxIdleConns := config.Cfg.DatabaseMaxIdleConns
+	if maxIdleConns == 0 {
+		maxIdleConns = 10
+	}
+	if maxIdleConns < 0 || maxIdleConns > maxOpenConns {
+		return fmt.Errorf("DB_MAX_IDLE_CONNS must be between 0 and DB_MAX_OPEN_CONNS")
+	}
+
+	maxLifetimeValue := strings.TrimSpace(config.Cfg.DatabaseConnMaxLifetime)
+	if maxLifetimeValue == "" {
+		maxLifetimeValue = "30m"
+	}
+	maxLifetime, err := time.ParseDuration(maxLifetimeValue)
+	if err != nil {
+		return fmt.Errorf("DB_CONN_MAX_LIFETIME must be a positive duration: %w", err)
+	}
+	if maxLifetime <= 0 {
+		return fmt.Errorf("DB_CONN_MAX_LIFETIME must be a positive duration")
+	}
+
+	sqlDB.SetMaxOpenConns(maxOpenConns)
+	sqlDB.SetMaxIdleConns(maxIdleConns)
+	sqlDB.SetConnMaxLifetime(maxLifetime)
+	return nil
 }
 
 func dialector(driver string, dsn string) gorm.Dialector {

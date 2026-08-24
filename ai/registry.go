@@ -124,6 +124,24 @@ type ImageEditor interface {
 	EditImage(context.Context, ImageRequest, []ImageReference) ([]ImageResult, error)
 }
 
+type ImageTaskRequest struct {
+	Request    ImageRequest
+	References []ImageReference
+}
+
+type ImageTask struct {
+	ID         string
+	Status     string
+	Progress   int
+	ResultURLs []string
+	Error      string
+}
+
+type ImageTaskProvider interface {
+	CreateImageTask(context.Context, ImageTaskRequest) (ImageTask, error)
+	GetImageTask(context.Context, string) (ImageTask, error)
+}
+
 type VideoRequest struct {
 	Prompt     string
 	Seconds    string

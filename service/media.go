@@ -30,6 +30,7 @@ const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
 
 type imageStore interface {
 	Put(context.Context, string, []byte, string) error
+	Get(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
 	SignedURL(context.Context, string, string) (string, time.Time, error)
 }
@@ -97,7 +98,7 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 		return MediaAccess{}, fmt.Errorf("保存图片失败: %w", err)
 	}
 	width, height := imageDimensions(data)
-	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), CreatedAt: now()}
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
 	saved, err := repository.SaveMedia(item)
 	if err != nil {
 		_ = store.Delete(ctx, key)
@@ -244,6 +245,9 @@ func (store localImageStore) Put(_ context.Context, key string, data []byte, _ s
 	}
 	return os.WriteFile(path, data, 0644)
 }
+func (store localImageStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
+	return store.Open(key)
+}
 func (store localImageStore) Delete(_ context.Context, key string) error {
 	return os.Remove(store.path(key))
 }
@@ -261,6 +265,13 @@ type ossImageStore struct {
 func (store *ossImageStore) Put(ctx context.Context, key string, data []byte, contentType string) error {
 	_, err := store.internal.PutObject(ctx, &oss.PutObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), Body: bytes.NewReader(data), ContentType: oss.Ptr(contentType), ContentLength: oss.Ptr(int64(len(data))), Acl: oss.ObjectACLPrivate})
 	return err
+}
+func (store *ossImageStore) Get(ctx context.Context, key string) (io.ReadCloser, error) {
+	result, err := store.internal.GetObject(ctx, &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)})
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
 }
 func (store *ossImageStore) Delete(ctx context.Context, key string) error {
 	_, err := store.internal.DeleteObject(ctx, &oss.DeleteObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)})

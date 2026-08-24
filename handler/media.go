@@ -35,6 +35,7 @@ func UploadImage(w http.ResponseWriter, r *http.Request) {
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_image_upload", TargetType: "media", TargetID: result.MediaID, TargetName: header.Filename, MediaIDs: []string{result.MediaID}})
 	OK(w, result)
 }
 
@@ -62,6 +63,123 @@ func DeletePrivateMedia(w http.ResponseWriter, r *http.Request, id string) {
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_image_delete", TargetType: "media", TargetID: id})
+	OK(w, true)
+}
+
+func PrivateImages(w http.ResponseWriter, r *http.Request) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	result, err := service.ListPrivateImages(r.Context(), user)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
+func UpdatePrivateImage(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input struct {
+		Title    *string `json:"title"`
+		FolderID *string `json:"folderId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.UpdatePrivateImage(r.Context(), user, id, input.Title, input.FolderID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	action := "private_image_update"
+	if input.Title != nil && input.FolderID == nil {
+		action = "private_image_rename"
+	} else if input.FolderID != nil && input.Title == nil {
+		action = "private_image_move"
+	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: action, TargetType: "media", TargetID: item.ID, TargetName: item.Title, MediaIDs: []string{item.ID}})
+	OK(w, item)
+}
+
+func PrivateFolders(w http.ResponseWriter, r *http.Request) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	result, err := service.ListPrivateFolders(r.Context(), user)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
+func CreatePrivateFolder(w http.ResponseWriter, r *http.Request) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input struct {
+		Title    string `json:"title"`
+		ParentID string `json:"parentId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.CreatePrivateFolder(r.Context(), user, input.Title, input.ParentID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_folder_create", TargetType: "private_folder", TargetID: item.ID, TargetName: item.Title})
+	OK(w, item)
+}
+
+func RenamePrivateFolder(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	item, err := service.RenamePrivateFolder(r.Context(), user, id, input.Title)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_folder_rename", TargetType: "private_folder", TargetID: item.ID, TargetName: item.Title})
+	OK(w, item)
+}
+
+func DeletePrivateFolder(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	if err := service.DeletePrivateFolder(r.Context(), user, id); err != nil {
+		FailError(w, err)
+		return
+	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_folder_delete", TargetType: "private_folder", TargetID: id})
 	OK(w, true)
 }
 
@@ -155,6 +273,7 @@ func AdminUploadPublicImage(w http.ResponseWriter, r *http.Request) {
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "public_image_upload", TargetType: "public_image", TargetID: item.ID, TargetName: item.Title, MediaIDs: []string{item.MediaID}})
 	OK(w, map[string]any{"item": item, "access": access})
 }
 
@@ -163,6 +282,7 @@ func AdminDeletePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "public_image_delete", TargetType: "public_image", TargetID: id})
 	OK(w, true)
 }
 
@@ -180,6 +300,7 @@ func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "public_folder_create", TargetType: "public_folder", TargetID: item.ID, TargetName: item.Title})
 	OK(w, item)
 }
 
@@ -196,6 +317,7 @@ func AdminRenamePublicFolder(w http.ResponseWriter, r *http.Request, id string) 
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "public_folder_rename", TargetType: "public_folder", TargetID: id, TargetName: item.Title})
 	OK(w, item)
 }
 
@@ -204,6 +326,7 @@ func AdminDeletePublicFolder(w http.ResponseWriter, r *http.Request, id string) 
 		FailError(w, err)
 		return
 	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "public_folder_delete", TargetType: "public_folder", TargetID: id})
 	OK(w, true)
 }
 
@@ -221,6 +344,13 @@ func AdminUpdatePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 		FailError(w, err)
 		return
 	}
+	action := "public_image_update"
+	if input.Title != nil && input.FolderID == nil {
+		action = "public_image_rename"
+	} else if input.FolderID != nil && input.Title == nil {
+		action = "public_image_move"
+	}
+	service.RecordOperation(r.Context(), service.OperationLogInput{Action: action, TargetType: "public_image", TargetID: id, TargetName: item.Title, MediaIDs: []string{item.MediaID}})
 	OK(w, item)
 }
 
@@ -230,5 +360,5 @@ func PortalSession(w http.ResponseWriter, r *http.Request) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	OK(w, map[string]any{"user": user, "isAdmin": user.HasRole("portal-admin")})
+	OK(w, map[string]any{"user": map[string]any{"uid": user.UID, "username": user.Username, "displayName": service.PortalDisplayName(user), "roles": user.Roles}, "isAdmin": service.IsPortalAdmin(user)})
 }

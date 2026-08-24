@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { hydrateStoredAssets } from "./asset-storage-hydration.ts";
 
-test("recovers a persisted private image from its media ID when the local cache is absent", async () => {
+test("keeps a persisted private image metadata-only when the local cache is absent", async () => {
+    let remoteLoads = 0;
     const [asset] = await hydrateStoredAssets(
         [
             {
@@ -16,15 +17,12 @@ test("recovers a persisted private image from its media ID when the local cache 
         ],
         {
             resolveImageUrl: async () => "",
-            resolveRemoteImage: async (mediaId) => {
-                assert.equal(mediaId, "media-1");
-                return "https://media.example/image";
-            },
+            resolveRemoteImage: async () => "https://media.example/image",
             loadMediaImage: async (mediaId, remoteURL) => {
-                const source = await remoteURL();
-                assert.equal(source, "https://media.example/image");
+                remoteLoads += 1;
                 assert.equal(mediaId, "media-1");
-                return { url: "blob:restored", storageKey: "media:media-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" };
+                await remoteURL();
+                return { url: "blob:should-not-load", storageKey: "media:media-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" };
             },
             uploadImage: async () => {
                 throw new Error("远端恢复不应使用直接上传");
@@ -35,13 +33,45 @@ test("recovers a persisted private image from its media ID when the local cache 
     assert.deepEqual(asset, {
         id: "asset-1",
         kind: "image",
-        coverUrl: "blob:restored",
-        data: { dataUrl: "blob:restored", storageKey: "media:media-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" },
+        coverUrl: "blob:expired",
+        data: { dataUrl: "blob:expired", storageKey: "media:media-1", width: 1, height: 1, bytes: 1, mimeType: "image/png" },
         metadata: { mediaId: "media-1" },
     });
+    assert.equal(remoteLoads, 0);
 });
 
-test("recovers a persisted public image through its public image ID when the local cache is absent", async () => {
+test("keeps persisted remote assets metadata-only during startup hydration", async () => {
+    let remoteLoads = 0;
+    const [asset] = await hydrateStoredAssets(
+        [
+            {
+                id: "asset-metadata-only",
+                kind: "image",
+                coverUrl: "blob:expired",
+                data: { dataUrl: "blob:expired", storageKey: "media:media-metadata-only", width: 1200, height: 800, bytes: 2048, mimeType: "image/png" },
+                metadata: { mediaId: "media-metadata-only", uploadState: "uploaded" },
+            },
+        ],
+        {
+            resolveImageUrl: async () => "",
+            resolveRemoteImage: async () => "https://media.example/image",
+            loadMediaImage: async () => {
+                remoteLoads += 1;
+                return { url: "blob:should-not-load", storageKey: "media:media-metadata-only", width: 1200, height: 800, bytes: 2048, mimeType: "image/png" };
+            },
+            uploadImage: async () => {
+                throw new Error("远端已保存素材不应在启动时转换为本地图片");
+            },
+        },
+    );
+
+    assert.equal(remoteLoads, 0);
+    assert.equal(asset.coverUrl, "blob:expired");
+    assert.equal(asset.data.dataUrl, "blob:expired");
+});
+
+test("keeps a persisted public image metadata-only when the local cache is absent", async () => {
+    let remoteLoads = 0;
     const [asset] = await hydrateStoredAssets(
         [
             {
@@ -54,18 +84,13 @@ test("recovers a persisted public image through its public image ID when the loc
         ],
         {
             resolveImageUrl: async () => "",
-            resolveRemoteImage: async () => {
-                throw new Error("公共图片不应使用私人媒体访问接口");
-            },
-            resolvePublicImage: async (publicImageId) => {
-                assert.equal(publicImageId, "public-1");
-                return "https://public.example/image";
-            },
+            resolveRemoteImage: async () => "https://media.example/image",
+            resolvePublicImage: async () => "https://public.example/image",
             loadMediaImage: async (mediaId, remoteURL) => {
-                const source = await remoteURL();
-                assert.equal(source, "https://public.example/image");
+                remoteLoads += 1;
                 assert.equal(mediaId, "media-public-1");
-                return { url: "blob:public-restored", storageKey: "media:media-public-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" };
+                await remoteURL();
+                return { url: "blob:should-not-load", storageKey: "media:media-public-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/webp" };
             },
             uploadImage: async () => {
                 throw new Error("远端恢复不应使用直接上传");
@@ -73,9 +98,10 @@ test("recovers a persisted public image through its public image ID when the loc
         },
     );
 
-    assert.equal(asset.coverUrl, "blob:public-restored");
-    assert.equal(asset.data.dataUrl, "blob:public-restored");
+    assert.equal(asset.coverUrl, "blob:expired");
+    assert.equal(asset.data.dataUrl, "blob:expired");
     assert.deepEqual(asset.metadata, { mediaId: "media-public-1", publicImageId: "public-1" });
+    assert.equal(remoteLoads, 0);
 });
 
 test("keeps other persisted assets when one image cannot be recovered", async () => {

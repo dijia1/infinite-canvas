@@ -1,9 +1,8 @@
-name: Docker image
+name: Build and deploy infinite canvas
 
 on:
   push:
     branches: ["main"]
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -11,10 +10,33 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache: true
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - run: go test ./...
+
+      - working-directory: web
+        run: bun install --frozen-lockfile
+
+      - working-directory: web
+        run: bun test
+
+      - working-directory: web
+        run: bun run typecheck
+
+      - working-directory: web
+        run: bun run build
 
       - uses: docker/setup-buildx-action@v3
 
@@ -29,15 +51,64 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
-            type=ref,event=tag
-            type=sha,prefix=sha-
+            type=raw,value=latest
+            type=raw,value=sha-${{ github.sha }}
 
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-production:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: infinite-canvas-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload release configuration and deploy immutable image
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          DEPLOY_SHA: ${{ github.sha }}
+          INFINITE_CANVAS_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: |
+          set -Eeuo pipefail
+          key_file=$(mktemp)
+          known_hosts_file=$(mktemp)
+          trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$key_file"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known_hosts_file"
+          chmod 600 "$key_file" "$known_hosts_file"
+          ssh_options=(
+            -i "$key_file"
+            -o BatchMode=yes
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$known_hosts_file"
+          )
+          release_dir="/program/apps/infinite-canvas/releases/$DEPLOY_SHA"
+          tar -czf - docker-compose.yml scripts/deploy-production.sh scripts/initialize-release-state.sh | ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -Eeuo pipefail
+            mkdir -p '$release_dir'
+            tar -xzf - -C '$release_dir'
+            chmod 700 '$release_dir/scripts/deploy-production.sh' '$release_dir/scripts/initialize-release-state.sh'
+          "
+          printf '%s' "$GHCR_READ_TOKEN" | ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+            set -Eeuo pipefail
+            trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+            docker login ghcr.io --username '$GHCR_USERNAME' --password-stdin
+            '$release_dir/scripts/deploy-production.sh' '$DEPLOY_SHA' '$INFINITE_CANVAS_IMAGE' '$release_dir'
+          "

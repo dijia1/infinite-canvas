@@ -1,7 +1,7 @@
 import { apiGet } from "@/services/api/request";
 
 export type PortalSession = {
-    user: { uid: string; username: string; roles: string[] };
+    user: { uid: string; username: string; displayName: string; roles: string[] };
     isAdmin: boolean;
 };
 

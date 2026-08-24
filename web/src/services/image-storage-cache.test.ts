@@ -37,6 +37,9 @@ function createTestOperations(options: {
     fetchImageBlob?: (url: string) => Promise<Blob>;
     createPreviewBlob?: (blob: Blob) => Promise<Blob>;
     previewBudgetBytes?: number;
+    cacheBudgetBytes?: number;
+    cacheHighWatermarkBytes?: number;
+    cacheLowWatermarkBytes?: number;
     objectUrls?: Map<string, string>;
     now?: () => number;
     readMeta?: (url: string) => Promise<{ width: number; height: number; mimeType: string }>;
@@ -57,6 +60,9 @@ function createTestOperations(options: {
         readMeta: options.readMeta || (async () => ({ width: 640, height: 480, mimeType: "image/png" })),
         now: options.now || (() => 1234),
         previewBudgetBytes: options.previewBudgetBytes,
+        cacheBudgetBytes: options.cacheBudgetBytes,
+        cacheHighWatermarkBytes: options.cacheHighWatermarkBytes,
+        cacheLowWatermarkBytes: options.cacheLowWatermarkBytes,
     });
     return { operations, revoked, store };
 }
@@ -72,6 +78,59 @@ function deferred<T>() {
 test("original and preview variants keep the existing stable cache keys", () => {
     assert.equal(imageStorageKeyForMedia("media-1"), "media:media-1");
     assert.equal(imagePreviewStorageKey("media-1"), "preview:media-1");
+});
+
+test("global cache budget evicts the oldest preview before inactive originals down to the low watermark", async () => {
+    let timestamp = 0;
+    const { operations, store } = createTestOperations({
+        cacheBudgetBytes: 20,
+        cacheHighWatermarkBytes: 12,
+        cacheLowWatermarkBytes: 6,
+        now: () => ++timestamp,
+    });
+
+    await operations.storeImage(new Blob(["111111"], { type: "image/png" }), "media:old-original");
+    await operations.setImageBlob("preview:old-preview", new Blob(["222222"], { type: "image/webp" }));
+    await operations.storeImage(new Blob(["333333"], { type: "image/png" }), "media:new-original");
+    operations.releaseObjectURL("media:old-original");
+    operations.releaseObjectURL("preview:old-preview");
+
+    const withBudget = operations as typeof operations & { enforceCacheBudget?: () => Promise<void> };
+    assert.ok(withBudget.enforceCacheBudget, "缓存操作应提供全局预算回收");
+    await withBudget.enforceCacheBudget?.();
+
+    assert.equal(await store.getItem("preview:old-preview"), null);
+    assert.equal(await store.getItem("media:old-original"), null);
+    assert.ok(await store.getItem("media:new-original"));
+});
+
+test("global cache budget retains a blob while it has a visible Object URL", async () => {
+    const { operations, store } = createTestOperations({ cacheBudgetBytes: 20, cacheHighWatermarkBytes: 12, cacheLowWatermarkBytes: 6 });
+
+    await operations.storeImage(new Blob(["visible"], { type: "image/png" }), "media:visible");
+    await operations.setImageBlob("preview:old", new Blob(["oldest"], { type: "image/webp" }));
+    await operations.setImageBlob("media:new", new Blob(["newest"], { type: "image/png" }));
+    operations.releaseObjectURL("preview:old");
+    operations.releaseObjectURL("media:new");
+
+    await operations.enforceCacheBudget();
+
+    assert.ok(await store.getItem<Blob>("media:visible"));
+    assert.equal(await store.getItem<Blob>("preview:old"), null);
+    assert.equal(await store.getItem<Blob>("media:new"), null);
+});
+
+test("preview budget does not evict an actively displayed preview", async () => {
+    const { operations, store } = createTestOperations({ previewBudgetBytes: 6 });
+
+    await operations.setImageBlob("preview:visible", new Blob(["visible"], { type: "image/webp" }));
+    await operations.setImageBlob("preview:inactive", new Blob(["inactive"], { type: "image/webp" }));
+    operations.releaseObjectURL("preview:inactive");
+
+    await operations.enforcePreviewCacheBudget();
+
+    assert.ok(await store.getItem<Blob>("preview:visible"));
+    assert.equal(await store.getItem<Blob>("preview:inactive"), null);
 });
 
 test("loadMediaImage uses a cached original without fetching the remote URL", async () => {
@@ -503,7 +562,7 @@ test("generic cleanup evicts only the least-recently-used previews above the pre
     assert.ok(await store.getItem("preview:new"));
 });
 
-test("preview budget eviction removes the least-recently-used preview even when its original is still referenced", async () => {
+test("preview budget retains an actively displayed preview even when its original is referenced", async () => {
     const store = new MemoryStore();
     const oldPreview = new Blob(["old"]);
     await store.setItem("media:old", new Blob(["original"]));
@@ -520,10 +579,10 @@ test("preview budget eviction removes the least-recently-used preview even when 
     await operations.enforcePreviewCacheBudget();
 
     assert.ok(await store.getItem("media:old"));
-    assert.equal(await store.getItem("preview:old"), null);
-    assert.equal(await store.getItem("preview-meta:old"), null);
-    assert.deepEqual(revoked, ["blob:old-preview"]);
-    assert.ok(await store.getItem("preview:new"));
+    assert.ok(await store.getItem("preview:old"));
+    assert.ok(await store.getItem("preview-meta:old"));
+    assert.deepEqual(revoked, []);
+    assert.equal(await store.getItem("preview:new"), null);
 });
 
 test("a successful preview write schedules low-priority budget eviction", async () => {
@@ -600,6 +659,7 @@ test("the final concurrent preview completion schedules budget eviction after ea
 
     remoteBlobs.get("https://oss.example/first.webp")?.resolve(new Blob(["one"], { type: "image/webp" }));
     await first;
+    operations.releaseObjectURL("preview:first");
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     remoteBlobs.get("https://oss.example/second.webp")?.resolve(new Blob(["two"], { type: "image/webp" }));
@@ -745,6 +805,19 @@ test("replacing a cached object URL revokes the obsolete URL once", async () => 
 
     assert.notEqual(first, second);
     assert.deepEqual(revoked, [first]);
+});
+
+test("releasing a visible image revokes only its in-memory object URL and preserves the IndexedDB blob", async () => {
+    const store = new MemoryStore();
+    const { operations, revoked } = createTestOperations({ store });
+    const objectURL = await operations.setImageBlob("preview:visible", new Blob(["preview"], { type: "image/webp" }));
+
+    const withRelease = operations as typeof operations & { releaseObjectURL?: (storageKey: string) => void };
+    assert.ok(withRelease.releaseObjectURL, "缓存操作应支持释放不可见图片的 Blob URL");
+    withRelease.releaseObjectURL?.("preview:visible");
+
+    assert.deepEqual(revoked, [objectURL]);
+    assert.ok(await store.getItem("preview:visible"));
 });
 
 test("overwriting an image through storeImage replaces its object URL", async () => {

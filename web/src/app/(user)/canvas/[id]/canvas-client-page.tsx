@@ -6,11 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import { ImageIcon, Images, List, Menu, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { requestEdit, requestGeneration, requestImageQuestion, uploadUserImage } from "@/services/api/image";
+import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, requestImageQuestion, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { loadMediaImage, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { loadMediaImage, releaseImageObjectURL, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { hydrateCanvasImages, imageMetadata } from "@/services/canvas-image-hydration";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -68,6 +68,21 @@ const VIDEO_NODE_MAX_WIDTH = 420;
 const VIDEO_NODE_MAX_HEIGHT = 420;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
+const CANVAS_MEDIA_PREFETCH_PADDING = 280;
+
+function isCanvasNodeNearViewport(node: CanvasNodeData, viewport: ViewportTransform, viewportSize: { width: number; height: number }) {
+    const viewLeft = -viewport.x / viewport.k - CANVAS_MEDIA_PREFETCH_PADDING;
+    const viewTop = -viewport.y / viewport.k - CANVAS_MEDIA_PREFETCH_PADDING;
+    const viewRight = viewLeft + viewportSize.width / viewport.k + CANVAS_MEDIA_PREFETCH_PADDING * 2;
+    const viewBottom = viewTop + viewportSize.height / viewport.k + CANVAS_MEDIA_PREFETCH_PADDING * 2;
+    return node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom;
+}
+
+function canHydrateCanvasImage(node: CanvasNodeData) {
+    if (node.type !== CanvasNodeType.Image) return false;
+    const metadata = node.metadata;
+    return Boolean(metadata?.mediaId || metadata?.storageKey || metadata?.content?.startsWith("data:image/"));
+}
 
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
     const spec = getNodeSpec(type);
@@ -199,6 +214,8 @@ function InfiniteCanvasPage() {
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingCanvasImageHydrationIdsRef = useRef<Set<string>>(new Set());
+    const renderedCanvasImageStorageByIdRef = useRef<Map<string, string>>(new Map());
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -247,6 +264,17 @@ function InfiniteCanvasPage() {
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     const viewportRef = useRef(viewport);
     const deferredMiniMapNodes = useDeferredValue(nodes);
+    const canvasImageHydrationDependencies = useMemo(
+        () => ({
+            resolveMediaUrl,
+            readCachedImage: (storageKey: string) => resolveImageUrl(storageKey, ""),
+            resolveRemoteImage,
+            fetchPublicImageAccess,
+            loadMediaImage,
+            uploadImage,
+        }),
+        [],
+    );
 
     const historySnapshot = useMemo<CanvasHistoryEntry>(() => ({ nodes, connections, backgroundMode, showImageInfo }), [backgroundMode, connections, nodes, showImageInfo]);
 
@@ -285,14 +313,13 @@ function InfiniteCanvasPage() {
         }
 
         const restore = async () => {
-            const restoredNodes = await hydrateCanvasImages(resetInterruptedGeneration(project.nodes), {
-                resolveMediaUrl,
-                readCachedImage: (storageKey) => resolveImageUrl(storageKey, ""),
-                resolveRemoteImage,
-                fetchPublicImageAccess,
-                loadMediaImage,
-                uploadImage,
-            });
+            const initialNodes = resetInterruptedGeneration(project.nodes);
+            const rect = containerRef.current?.getBoundingClientRect();
+            const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
+            const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, project.viewport, initialViewportSize);
+            pendingCanvasImageHydrationIdsRef.current = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
+            const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate });
+            restoredNodes.filter(shouldHydrate).forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
             setNodes(restoredNodes);
             setConnections(project.connections);
             setBackgroundMode(project.backgroundMode);
@@ -307,7 +334,7 @@ function InfiniteCanvasPage() {
             setProjectLoaded(true);
         };
         void restore();
-    }, [hydrated, openProject, projectId, replaceBaseline, router]);
+    }, [canvasImageHydrationDependencies, hydrated, openProject, projectId, replaceBaseline, router]);
 
     useEffect(() => {
         if (!projectLoaded || isPausedRef.current || isApplyingRef.current) return;
@@ -425,6 +452,7 @@ function InfiniteCanvasPage() {
         retryNode: handleRetryNode,
         generateImageFromTextNode,
         generateAngleNode,
+        resumePendingImageTasks,
         clearRunningNode,
     } = useCanvasGeneration({
         nodesRef,
@@ -444,6 +472,8 @@ function InfiniteCanvasPage() {
         createConfigNode: (position, metadata) => createCanvasNode(CanvasNodeType.Config, position, metadata),
         requestGeneration,
         requestEdit,
+        getImageTask: getImageGenerationTask,
+        getImageTaskByClientRequest: getImageGenerationTaskByClientRequest,
         requestImageQuestion,
         requestVideoGeneration,
         uploadImage,
@@ -452,6 +482,11 @@ function InfiniteCanvasPage() {
         buildChatMessages: buildNodeChatMessages,
         resolveImageUrl,
     });
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        resumePendingImageTasks();
+    }, [projectLoaded, resumePendingImageTasks]);
 
     useCanvasPerfRender("InfiniteCanvasPage", () => ({
         nodes: nodes.length,
@@ -482,17 +517,36 @@ function InfiniteCanvasPage() {
     }, []);
 
     const visibleNodes = useMemo(() => {
-        const padding = 280;
         const rect = containerRef.current?.getBoundingClientRect();
         const width = rect?.width || size.width;
         const height = rect?.height || size.height;
-        const viewLeft = -viewport.x / viewport.k - padding;
-        const viewTop = -viewport.y / viewport.k - padding;
-        const viewRight = viewLeft + width / viewport.k + padding * 2;
-        const viewBottom = viewTop + height / viewport.k + padding * 2;
-
-        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && node.position.x + node.width > viewLeft && node.position.x < viewRight && node.position.y + node.height > viewTop && node.position.y < viewBottom);
+        return nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && isCanvasNodeNearViewport(node, viewport, { width, height }));
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
+
+    useEffect(() => {
+        if (!projectLoaded) return;
+        const candidates = visibleNodes.filter((node) => pendingCanvasImageHydrationIdsRef.current.has(node.id));
+        if (!candidates.length) return;
+        candidates.forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
+
+        void hydrateCanvasImages(candidates, canvasImageHydrationDependencies).then((restoredNodes) => {
+            const restoredById = new Map(restoredNodes.map((node) => [node.id, node]));
+            pause();
+            setNodes((current) => current.map((node) => restoredById.get(node.id) || node));
+            window.requestAnimationFrame(() => resume());
+        });
+    }, [canvasImageHydrationDependencies, pause, projectLoaded, resume, visibleNodes]);
+
+    useEffect(() => {
+        const nextStorageById = new Map(visibleNodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storageKey).map((node) => [node.id, node.metadata!.storageKey!] as const));
+        const visibleStorageKeys = new Set(nextStorageById.values());
+        renderedCanvasImageStorageByIdRef.current.forEach((storageKey, nodeId) => {
+            if (nextStorageById.has(nodeId) || visibleStorageKeys.has(storageKey)) return;
+            releaseImageObjectURL(storageKey);
+            pendingCanvasImageHydrationIdsRef.current.add(nodeId);
+        });
+        renderedCanvasImageStorageByIdRef.current = nextStorageById;
+    }, [visibleNodes]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const visibleConnections = useMemo(
         () =>

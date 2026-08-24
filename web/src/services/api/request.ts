@@ -32,6 +32,13 @@ export function authorizationHeaders(token?: string) {
     return { Authorization: `Bearer ${token}` };
 }
 
+export function jsonRequestHeaders(body: unknown, token?: string) {
+    return {
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...authorizationHeaders(token),
+    };
+}
+
 export async function apiGet<T>(url: string, params?: ApiParams, token?: string) {
     return apiRequest<T>({
         url,
@@ -45,11 +52,8 @@ export async function apiPost<T>(url: string, body?: unknown, token?: string) {
     return apiRequest<T>({
         url,
         method: "POST",
-        data: body ?? {},
-        headers: {
-            "Content-Type": "application/json",
-            ...authorizationHeaders(token),
-        },
+        data: body,
+        headers: jsonRequestHeaders(body, token),
     });
 }
 
@@ -61,7 +65,16 @@ export async function apiDelete<T>(url: string, token?: string) {
     });
 }
 
-async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "DELETE"; params?: ApiParams; data?: unknown; headers?: Record<string, string> }) {
+export async function apiPatch<T>(url: string, body: unknown, token?: string) {
+    return apiRequest<T>({
+        url,
+        method: "PATCH",
+        data: body,
+        headers: jsonRequestHeaders(body, token),
+    });
+}
+
+async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "PATCH" | "DELETE"; params?: ApiParams; data?: unknown; headers?: Record<string, string> }) {
     let response;
     try {
         response = await axios.request<ApiResponse<T>>({

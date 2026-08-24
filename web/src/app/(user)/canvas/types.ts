@@ -47,11 +47,13 @@ export type CanvasNodeMetadata = {
     imageBatchExpanded?: boolean;
     inputOrder?: string[];
     storageKey?: string;
-	mediaId?: string;
-	publicImageId?: string;
+    mediaId?: string;
+    publicImageId?: string;
     assetId?: string;
     mimeType?: string;
     bytes?: number;
+    imageTaskId?: string;
+    imageTaskClientRequestId?: string;
 };
 
 export type CanvasNodeData = {

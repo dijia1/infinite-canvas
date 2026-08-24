@@ -65,6 +65,64 @@ func TestMaiziProviderCreatesAndCompletesImageTask(t *testing.T) {
 	}
 }
 
+func TestMaiziProviderCreatesAsyncTaskWithoutPolling(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	var requests atomic.Int32
+	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		requests.Add(1)
+		if request.URL.Path != "/v1/images/generations" {
+			t.Errorf("unexpected request: %s", request.URL)
+		}
+		body, _ := io.ReadAll(request.Body)
+		if !strings.Contains(string(body), `"images":["data:image/png;base64,aGVsbG8="]`) {
+			t.Errorf("task request references = %s", body)
+		}
+		return jsonResponse(`{"data":[{"task_id":"task-created","status":"pending"}]}`), nil
+	})
+
+	typeInfo, _ := ai.Type("maizi-image")
+	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	tasks, ok := provider.(ai.ImageTaskProvider)
+	if !ok {
+		t.Fatal("MaiziAI provider does not implement ImageTaskProvider")
+	}
+	task, err := tasks.CreateImageTask(context.Background(), ai.ImageTaskRequest{Request: ai.ImageRequest{Prompt: "一只猫", Size: "1:1", Resolution: "1k"}, References: []ai.ImageReference{{ContentType: "image/png", Data: []byte("hello")}}})
+	if err != nil {
+		t.Fatalf("CreateImageTask() error = %v", err)
+	}
+	if task.ID != "task-created" || task.Status != "pending" || requests.Load() != 1 {
+		t.Fatalf("CreateImageTask() = %#v, requests = %d", task, requests.Load())
+	}
+}
+
+func TestMaiziProviderGetsAsyncTaskStatus(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Method != http.MethodGet || request.URL.Path != "/v1/tasks/task-1" {
+			t.Errorf("unexpected request: %s %s", request.Method, request.URL)
+		}
+		return jsonResponse(`{"id":"task-1","status":"completed","progress":100,"result_urls":["https://cdn.example.com/result.png"]}`), nil
+	})
+
+	typeInfo, _ := ai.Type("maizi-image")
+	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	task, err := provider.(ai.ImageTaskProvider).GetImageTask(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("GetImageTask() error = %v", err)
+	}
+	if task.Status != "completed" || task.Progress != 100 || len(task.ResultURLs) != 1 {
+		t.Fatalf("GetImageTask() = %#v", task)
+	}
+}
+
 func TestMaiziProviderNormalizesLegacyResolution(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })

@@ -1,7 +1,7 @@
 "use client";
 
 import { Drawer } from "antd";
-import { Images, Library } from "lucide-react";
+import { ClipboardList, Images, Library } from "lucide-react";
 import Link from "next/link";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
@@ -14,9 +14,10 @@ type MobileNavDrawerProps = {
     onClose: () => void;
     onOpenMyAssets: () => void;
     onOpenPublicAssets: () => void;
+    isAdmin: boolean;
 };
 
-export function MobileNavDrawer({ open, activeToolSlug, onClose, onOpenMyAssets, onOpenPublicAssets }: MobileNavDrawerProps) {
+export function MobileNavDrawer({ open, activeToolSlug, onClose, onOpenMyAssets, onOpenPublicAssets, isAdmin }: MobileNavDrawerProps) {
     return (
         <Drawer title="导航" placement="left" size={280} open={open} onClose={onClose} className="md:hidden">
             <div className="space-y-1">
@@ -60,6 +61,16 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose, onOpenMyAssets,
                     <Library className="size-5" />
                     <span>公共素材</span>
                 </button>
+                {isAdmin ? (
+                    <Link
+                        href={appPath("/admin/operations")}
+                        onClick={onClose}
+                        className="flex items-center gap-3 rounded-lg px-3 py-3 text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
+                    >
+                        <ClipboardList className="size-5" />
+                        <span>操作记录</span>
+                    </Link>
+                ) : null}
             </div>
         </Drawer>
     );

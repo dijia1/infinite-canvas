@@ -35,3 +35,38 @@ func DeleteMedia(id string) error {
 	}
 	return db.Delete(&model.Media{}, "id = ?", id).Error
 }
+
+func ListPrivateMedia(ownerUID string) ([]model.Media, error) {
+	db, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]model.Media, 0)
+	err = db.Where("owner_uid = ?", ownerUID).
+		Where("NOT EXISTS (SELECT 1 FROM public_images WHERE public_images.media_id = media.id)").
+		Order("created_at desc").
+		Find(&items).Error
+	return items, err
+}
+
+func UpdatePrivateMedia(id, ownerUID string, title *string, folderID *string) (model.Media, bool, error) {
+	db, err := DB()
+	if err != nil {
+		return model.Media{}, false, err
+	}
+	updates := map[string]any{}
+	if title != nil {
+		updates["title"] = *title
+	}
+	if folderID != nil {
+		updates["folder_id"] = *folderID
+	}
+	if len(updates) == 0 {
+		return model.Media{}, false, nil
+	}
+	result := db.Model(&model.Media{}).Where("id = ? AND owner_uid = ?", id, ownerUID).Updates(updates)
+	if result.Error != nil || result.RowsAffected == 0 {
+		return model.Media{}, false, result.Error
+	}
+	return GetMedia(id)
+}

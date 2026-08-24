@@ -8,12 +8,14 @@ import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
 import { deleteUserImage, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
+import { createPrivateFolder, deletePrivateFolder, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
 import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, loadMediaPreview, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns } from "./material-folder-ui";
 import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload } from "./material-image-drag";
+import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
 const PAGE_SIZE = 24;
 type ContextMenu = { x: number; y: number };
@@ -27,12 +29,10 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const folders = useAssetStore((state) => state.folders);
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
-    const createFolder = useAssetStore((state) => state.createFolder);
-    const renameFolder = useAssetStore((state) => state.renameFolder);
-    const removeFolder = useAssetStore((state) => state.removeFolder);
     const moveAsset = useAssetStore((state) => state.moveAsset);
     const renameImageAsset = useAssetStore((state) => state.renameImageAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
+    const refreshFromServer = useAssetStore((state) => state.refreshFromServer);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const drawerPointerInsideRef = useRef(false);
     const [isUploading, setIsUploading] = useState(false);
@@ -81,9 +81,32 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 data: { dataUrl: persisted.url, storageKey: persisted.storageKey, width: persisted.width, height: persisted.height, bytes: persisted.bytes, mimeType: persisted.mimeType },
                 metadata: { mediaId: remote.mediaId, uploadState: "uploaded" },
             });
+            const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
+            if (asset?.kind === "image") {
+                await updatePrivateImage(remote.mediaId, { title: asset.title, ...(asset.folderId ? { folderId: asset.folderId } : {}) });
+            }
             return true;
         },
         [updateAsset],
+    );
+
+    const updateRemoteAsset = useCallback(async (asset: ImageAsset, patch: { title?: string; folderId?: string }) => {
+        const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+        if (!mediaId) return;
+        await updatePrivateImage(mediaId, patch);
+    }, []);
+
+    const moveImageToFolder = useCallback(
+        async (asset: ImageAsset, folderId?: string) => {
+            try {
+                await updateRemoteAsset(asset, { folderId: folderId || "" });
+                moveAsset(asset.id, folderId);
+                message.success("图片已移动");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "移动图片失败");
+            }
+        },
+        [message, moveAsset, updateRemoteAsset],
     );
     const saveImage = useCallback(
         async (file: File, source: string, folderId?: string) => {
@@ -179,7 +202,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         };
     }, [currentFolderId, open, saveImage]);
 
-    const submitEditor = () => {
+    const submitEditor = async () => {
         const value = editorValue.trim();
         if (!value) {
             message.error("名称不能为空");
@@ -187,12 +210,15 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         }
         try {
             if (editor?.kind === "folder") {
-                createFolder(value, currentFolderId);
+                await createPrivateFolder({ title: value, parentId: currentFolderId });
+                await refreshFromServer();
                 message.success("文件夹已创建");
             } else if (editor?.kind === "folderRename") {
-                renameFolder(editor.folder.id, value);
+                await renamePrivateFolder(editor.folder.id, value);
+                await refreshFromServer();
                 message.success("文件夹已重命名");
             } else if (editor?.kind === "rename") {
+                await updateRemoteAsset(editor.asset, { title: value });
                 renameImageAsset(editor.asset.id, value);
                 message.success("图片已重命名");
             }
@@ -201,17 +227,13 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
             message.error(error instanceof Error ? error.message : "保存失败");
         }
     };
-    const handleFolderDrop = (folderId: string, event: DragEvent<HTMLButtonElement>) => {
+    const handleFolderDrop = async (folderId: string, event: DragEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
         const payload = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_IMAGE_DRAG_TYPE));
         if (!payload?.assetId) return;
-        try {
-            moveAsset(payload.assetId, folderId);
-            message.success("图片已移动");
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "移动图片失败");
-        }
+        const asset = useAssetStore.getState().assets.find((item): item is ImageAsset => item.id === payload.assetId && item.kind === "image");
+        if (asset) await moveImageToFolder(asset, folderId);
     };
 
     return (
@@ -251,7 +273,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         onAddImage={() => fileInputRef.current?.click()}
                         onRetryImage={retryImage}
                         onPreview={setPreview}
-                        onFolderDrop={handleFolderDrop}
+                        onFolderDrop={(folderId, event) => void handleFolderDrop(folderId, event)}
                         onImageContextMenu={(asset, event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -297,7 +319,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         <button
                             type="button"
                             className="block w-full px-3 py-2 text-left hover:bg-stone-50 dark:hover:bg-stone-800"
-                            onClick={() => {
+                            onClick={async () => {
                                 setEditorValue(imageContextMenu?.asset.title || "");
                                 if (imageContextMenu) setEditor({ kind: "rename", asset: imageContextMenu.asset });
                                 setImageContextMenu(undefined);
@@ -345,10 +367,11 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         <button
                             type="button"
                             className="block w-full px-3 py-2 text-left text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
-                            onClick={() => {
+                            onClick={async () => {
                                 if (!folderContextMenu) return;
                                 try {
-                                    removeFolder(folderContextMenu.folder.id);
+                                    await deletePrivateFolder(folderContextMenu.folder.id);
+                                    await refreshFromServer();
                                     if (currentFolderId === folderContextMenu.folder.id) setCurrentFolderId(folderContextMenu.folder.parentId);
                                     message.success("文件夹已删除");
                                 } catch (error) {
@@ -381,7 +404,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                             type="button"
                             className="rounded border border-stone-200 px-3 py-2 text-left text-sm hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
                             onClick={() => {
-                                moveAsset(editor.asset.id);
+                                void moveImageToFolder(editor.asset);
                                 setEditor(undefined);
                             }}
                         >
@@ -393,7 +416,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                                 type="button"
                                 className="rounded border border-stone-200 px-3 py-2 text-left text-sm hover:bg-stone-50 dark:border-stone-700 dark:hover:bg-stone-800"
                                 onClick={() => {
-                                    moveAsset(editor.asset.id, folder.id);
+                                    void moveImageToFolder(editor.asset, folder.id);
                                     setEditor(undefined);
                                 }}
                             >
@@ -407,7 +430,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         maxLength={64}
                         value={editorValue}
                         onChange={(event) => setEditorValue(event.target.value)}
-                        onPressEnter={submitEditor}
+                        onPressEnter={() => void submitEditor()}
                         placeholder={editor?.kind === "folder" || editor?.kind === "folderRename" ? "文件夹名称" : "图片名称"}
                     />
                 )}
@@ -541,46 +564,28 @@ function PickerCard({
     const failed = uploadState === "failed";
     const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
     const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
-    const [previewURL, setPreviewURL] = useState(cover);
     const [loadFailed, setLoadFailed] = useState(false);
-    const [previewError, setPreviewError] = useState("");
-    useEffect(() => {
-        let cancelled = false;
-        if (!mediaId || uploadState === "pending" || failed) {
-            setPreviewURL(cover);
-            setLoadFailed(false);
-            setPreviewError("");
-            return () => {
-                cancelled = true;
-            };
-        }
-        void (async () => {
-            return (await loadMediaPreview(mediaId, async () => {
+    const loadPreview = useCallback(async () => {
+        return await loadMediaPreview(mediaId, async () => {
                 const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
                 return access.previewUrl || access.url;
-            })).url;
-        })()
-            .then((url) => {
-                if (!cancelled) {
-                    setPreviewURL(url || cover);
-                    setLoadFailed(false);
-                    setPreviewError("");
-                }
-            })
-            .catch((error) => {
-                if (!cancelled) {
-                    setPreviewURL(cover);
-                    setLoadFailed(!cover);
-                    setPreviewError(formatMaterialPreviewError(error));
-                }
             });
-        return () => {
-            cancelled = true;
-        };
-    }, [cover, failed, mediaId, publicImageId, uploadState]);
-    const preview = loadFailed ? "" : previewURL || cover;
+    }, [mediaId, publicImageId]);
+    const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed;
+    const { ref, url: previewURL, error: previewLoadError, loading } = useVisibleMediaPreview({
+        identity: asset.id,
+        enabled: shouldLoadPreview,
+        fallback: cover,
+        load: loadPreview,
+    });
+    useEffect(() => {
+        if (previewURL) setLoadFailed(false);
+    }, [previewURL]);
+    const previewError = previewLoadError ? formatMaterialPreviewError(previewLoadError) : "";
+    const preview = loadFailed ? "" : previewURL;
     return (
         <div
+            ref={ref}
             data-material-card
             draggable={Boolean(preview)}
             className={`group relative overflow-hidden rounded-lg border border-stone-200 bg-white dark:border-stone-700 dark:bg-stone-900 ${preview ? "cursor-grab active:cursor-grabbing" : "cursor-default"}`}
@@ -595,7 +600,7 @@ function PickerCard({
             onContextMenu={(event: MouseEvent) => onImageContextMenu(asset, event)}
             title={previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
         >
-            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : <BrokenImagePlaceholder />}
+            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder />}
             {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
             {previewError ? (
                 <div className="absolute inset-x-0 bottom-0 truncate bg-amber-100/95 px-1.5 py-1 text-[10px] leading-3 text-amber-950 dark:bg-amber-950/95 dark:text-amber-100" aria-label="缩略图加载失败" title={previewError}>

@@ -137,7 +137,7 @@ test("failed remote material previews render a broken state while retaining dele
     assert.match(privateDrawer, /setLoadFailed\(true\)/);
     assert.match(publicDrawer, /setLoadFailed\(true\)/);
     assert.match(privateDrawer, /draggable=\{Boolean\(preview\)\}/);
-    assert.match(publicDrawer, /draggable=\{Boolean\(url\) && !loadFailed\}/);
+    assert.match(publicDrawer, /draggable=\{Boolean\(url\) && !previewFailed\}/);
     assert.match(privateDrawer, /void deleteImage\(imageContextMenu\.asset\)/);
     assert.match(publicDrawer, /remove\.mutate\(imageContextMenu\.image\.id\)/);
 });
@@ -145,8 +145,8 @@ test("failed remote material previews render a broken state while retaining dele
 test("private material previews retain a local image and expose a safe remote-preview failure reason", async () => {
     const privateDrawer = await readFile(componentURL("asset-picker-modal.tsx"), "utf8");
 
-    assert.match(privateDrawer, /const \[previewError, setPreviewError\] = useState/);
-    assert.match(privateDrawer, /setPreviewURL\(cover\);[\s\S]*setPreviewError\(formatMaterialPreviewError\(error\)\)/);
+    assert.match(privateDrawer, /error: previewLoadError/);
+    assert.match(privateDrawer, /const previewError = previewLoadError \? formatMaterialPreviewError\(previewLoadError\) : ""/);
     assert.match(privateDrawer, /aria-label="缩略图加载失败"/);
     assert.match(privateDrawer, /formatMaterialPreviewError/);
 });
@@ -156,6 +156,13 @@ test("material drawers defer access URLs until their cache variants miss", async
 
     assert.match(privateDrawer, /loadMediaPreview\(mediaId, async \(\) => \{[\s\S]*getRemoteImageAccess\(mediaId\)/);
     assert.match(publicDrawer, /loadMediaPreview\(image\.mediaId, async \(\) => \{[\s\S]*fetchPublicImageAccess\(image\.id\)/);
+});
+
+test("material previews load only when their cards enter the visible prefetch range", async () => {
+    const [privateDrawer, publicDrawer] = await Promise.all([readFile(componentURL("asset-picker-modal.tsx"), "utf8"), readFile(componentURL("public-image-drawer.tsx"), "utf8")]);
+
+    assert.match(privateDrawer, /useVisibleMediaPreview/);
+    assert.match(publicDrawer, /useVisibleMediaPreview/);
 });
 
 test("private material cards retain the public access identity of saved public images", async () => {
@@ -186,8 +193,9 @@ test("material drawers provide folder navigation and admin-only public managemen
 
     assert.match(privateDrawer, /MaterialFolderBreadcrumbs/);
     assert.match(privateDrawer, /MaterialFolderTree/);
-    assert.match(privateDrawer, /createFolder\(value, currentFolderId\)/);
-    assert.match(privateDrawer, /moveAsset\(payload\.assetId, folderId\)/);
+    assert.match(privateDrawer, /createPrivateFolder\(\{ title: value, parentId: currentFolderId \}\)/);
+    assert.match(privateDrawer, /updatePrivateImage/);
+    assert.match(privateDrawer, /moveImageToFolder/);
     assert.match(privateDrawer, /renameImageAsset/);
     assert.match(privateDrawer, /effectAllowed = "copyMove"/);
     assert.match(privateDrawer, /folderPath\(folders, folder\.id\)/);
@@ -229,8 +237,25 @@ test("folder rows show an icon and use a context menu for rename and safe deleti
 
     assert.match(folderUI, /Folder/);
     assert.match(folderUI, /onFolderContextMenu/);
-    assert.match(privateDrawer, /renameFolder/);
-    assert.match(privateDrawer, /removeFolder/);
+    assert.match(privateDrawer, /renamePrivateFolder/);
+    assert.match(privateDrawer, /deletePrivateFolder/);
     assert.match(publicDrawer, /updateAdminPublicImageFolder/);
     assert.match(publicDrawer, /deleteAdminPublicImageFolder/);
+});
+
+test("my assets persist folder and image metadata through the private-media API", async () => {
+    const [privateDrawer, assetStore, privateAPI] = await Promise.all([
+        readFile(componentURL("asset-picker-modal.tsx"), "utf8"),
+        readFile(componentURL("../../../../stores/use-asset-store.ts"), "utf8"),
+        readFile(componentURL("../../../../services/api/private-images.ts"), "utf8"),
+    ]);
+
+    assert.match(privateDrawer, /updatePrivateImage/);
+    assert.match(privateDrawer, /createPrivateFolder/);
+    assert.match(privateDrawer, /renamePrivateFolder/);
+    assert.match(privateDrawer, /deletePrivateFolder/);
+    assert.match(assetStore, /fetchPrivateImages\(\), fetchPrivateFolders\(\)/);
+    assert.match(assetStore, /privateCatalogToAssetState/);
+    assert.match(privateAPI, /\/api\/v1\/private-images/);
+    assert.match(privateAPI, /\/api\/v1\/private-folders/);
 });

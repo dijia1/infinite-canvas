@@ -60,6 +60,37 @@ test("hydrates cached images and clears stale recovery errors", async () => {
     });
 });
 
+test("leaves offscreen images untouched until the canvas requests their hydration", async () => {
+    let readCount = 0;
+    const [visible, offscreen] = await hydrateCanvasImages(
+        [imageNode({ content: "blob:expired", storageKey: "media:visible", mediaId: "media-visible" }), { ...imageNode({ content: "blob:expired", storageKey: "media:offscreen", mediaId: "media-offscreen" }), id: "offscreen-image", position: { x: 6000, y: 0 } }],
+        {
+            resolveMediaUrl: async () => "",
+            readCachedImage: async (storageKey) => {
+                readCount += 1;
+                return storageKey === "media:visible" ? "blob:visible" : "";
+            },
+            resolveRemoteImage: async () => {
+                throw new Error("初始视口外图片不应请求远端");
+            },
+            fetchPublicImageAccess: async () => {
+                throw new Error("初始视口外图片不应请求公共图片");
+            },
+            loadMediaImage: async () => {
+                throw new Error("初始视口外图片不应下载");
+            },
+            uploadImage: async () => {
+                throw new Error("初始视口外图片不应上传");
+            },
+        },
+        { shouldHydrate: (node) => node.id !== "offscreen-image" },
+    );
+
+    assert.equal(readCount, 1);
+    assert.equal(visible.metadata?.content, "blob:visible");
+    assert.deepEqual(offscreen.metadata, { content: "blob:expired", storageKey: "media:offscreen", mediaId: "media-offscreen" });
+});
+
 test("uses public image access when restoring a missing cached public image", async () => {
     const [restored] = await hydrateCanvasImages([imageNode({ content: "blob:expired", storageKey: "media:missing", mediaId: "media-2", publicImageId: "public-2" })], {
         resolveMediaUrl: async () => "",

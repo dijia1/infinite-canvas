@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"io"
 	"os"
 	"reflect"
 	"strings"
@@ -20,6 +21,9 @@ type fakeImageStore struct {
 func (store *fakeImageStore) Put(_ context.Context, key string, _ []byte, _ string) error {
 	store.key = key
 	return nil
+}
+func (store *fakeImageStore) Get(_ context.Context, _ string) (io.ReadCloser, error) {
+	return io.NopCloser(strings.NewReader("")), nil
 }
 func (store *fakeImageStore) Delete(_ context.Context, key string) error {
 	store.deleted = key

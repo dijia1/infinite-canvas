@@ -1,6 +1,6 @@
 "use client";
 
-import { HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
+import { FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Typography, theme } from "antd";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -13,6 +13,7 @@ import { useAdminStore } from "@/stores/use-admin-store";
 
 const adminMenus = [
     { key: "/admin/assets", icon: <PictureOutlined />, label: "素材库" },
+    { key: "/admin/operations", icon: <FileTextOutlined />, label: "操作记录" },
     { key: "/admin/settings", icon: <SettingOutlined />, label: "系统设置" },
 ];
 
@@ -25,12 +26,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const isReady = useAdminStore((state) => state.isReady);
     const hydrateAdmin = useAdminStore((state) => state.hydrateAdmin);
     const logout = useAdminStore((state) => state.clearSession);
-    const activeKey = pathname.startsWith("/admin/settings")
-        ? "/admin/settings"
-        : pathname.startsWith("/admin/assets")
-          ? "/admin/assets"
-          : "";
-    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : "素材库管理";
+    const activeKey = pathname.startsWith("/admin/settings") ? "/admin/settings" : pathname.startsWith("/admin/operations") ? "/admin/operations" : pathname.startsWith("/admin/assets") ? "/admin/assets" : "";
+    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/operations") ? "操作记录" : "素材库管理";
 
     useEffect(() => {
         void hydrateAdmin();
@@ -56,7 +53,10 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         <Layout hasSider style={{ height: "100vh", overflow: "hidden", background: antToken.colorBgLayout }}>
             <Layout.Sider width={adminLayoutStyle.siderWidth} style={{ height: "100vh", overflow: "hidden", background: antToken.colorBgContainer, borderRight: `1px solid ${antToken.colorBorder}` }}>
                 <Flex align="center" gap={12} style={{ height: adminLayoutStyle.brandHeight, padding: "0 20px", borderBottom: `1px solid ${antToken.colorBorderSecondary}` }}>
-                    <span aria-hidden style={{ display: "inline-block", width: 30, height: 30, background: antToken.colorText, WebkitMask: `url(${appPath("/logo.svg")}) center / contain no-repeat`, mask: `url(${appPath("/logo.svg")}) center / contain no-repeat` }} />
+                    <span
+                        aria-hidden
+                        style={{ display: "inline-block", width: 30, height: 30, background: antToken.colorText, WebkitMask: `url(${appPath("/logo.svg")}) center / contain no-repeat`, mask: `url(${appPath("/logo.svg")}) center / contain no-repeat` }}
+                    />
                     <Typography.Text strong style={{ fontSize: 18, letterSpacing: 0 }}>
                         无限画布
                     </Typography.Text>

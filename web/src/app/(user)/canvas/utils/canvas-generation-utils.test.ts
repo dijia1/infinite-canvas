@@ -4,17 +4,7 @@ import test from "node:test";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
-import {
-    buildAngleLabel,
-    buildAnglePrompt,
-    buildGenerationConfig,
-    buildImageGenerationMetadata,
-    findRetrySourceNode,
-    getGenerationCount,
-    getInputSummary,
-    resetInterruptedGeneration,
-    sourceNodeReferenceImages,
-} from "./canvas-generation-utils.ts";
+import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, resetInterruptedGeneration, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
 
 const config: AiConfig = {
     model: "legacy-model",
@@ -56,11 +46,14 @@ test("clamps and truncates generation counts", () => {
 });
 
 test("summarizes text and image generation inputs", () => {
-    assert.deepEqual(getInputSummary([
-        { nodeId: "text", type: "text", title: "Text", text: "Prompt" },
-        { nodeId: "image", type: "image", title: "Image" },
-        { nodeId: "video", type: "video", title: "Video" },
-    ]), { textCount: 1, imageCount: 1 });
+    assert.deepEqual(
+        getInputSummary([
+            { nodeId: "text", type: "text", title: "Text", text: "Prompt" },
+            { nodeId: "image", type: "image", title: "Image" },
+            { nodeId: "video", type: "video", title: "Video" },
+        ]),
+        { textCount: 1, imageCount: 1 },
+    );
 });
 
 test("builds edit metadata with persisted or remote references only", () => {
@@ -93,23 +86,26 @@ test("selects each generation model and normalizes node config", () => {
         count: 3,
     });
     const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, "image", fallbackConfig);
-    assert.deepEqual({
-        model: configuredResult.model,
-        quality: configuredResult.quality,
-        size: configuredResult.size,
-        resolution: configuredResult.resolution,
-        videoSeconds: configuredResult.videoSeconds,
-        vquality: configuredResult.vquality,
-        count: configuredResult.count,
-    }, {
-        model: "node-model",
-        quality: "node-quality",
-        size: "4:3",
-        resolution: "2k",
-        videoSeconds: "12",
-        vquality: "4k",
-        count: "3",
-    });
+    assert.deepEqual(
+        {
+            model: configuredResult.model,
+            quality: configuredResult.quality,
+            size: configuredResult.size,
+            resolution: configuredResult.resolution,
+            videoSeconds: configuredResult.videoSeconds,
+            vquality: configuredResult.vquality,
+            count: configuredResult.count,
+        },
+        {
+            model: "node-model",
+            quality: "node-quality",
+            size: "4:3",
+            resolution: "2k",
+            videoSeconds: "12",
+            vquality: "4k",
+            count: "3",
+        },
+    );
 });
 
 test("falls back to supplied defaults when generation config is empty", () => {
@@ -129,11 +125,13 @@ test("falls back to supplied defaults when generation config is empty", () => {
 
 test("marks interrupted loading nodes as errors without changing other nodes", () => {
     const loading = node("loading", CanvasNodeType.Image, { status: "loading", prompt: "draw" });
+    const persistentTask = node("persistent", CanvasNodeType.Image, { status: "loading", imageTaskId: "task-1", imageTaskClientRequestId: "request-1" });
     const success = node("success", CanvasNodeType.Text, { status: "success", content: "kept" });
-    const result = resetInterruptedGeneration([loading, success]);
+    const result = resetInterruptedGeneration([loading, persistentTask, success]);
 
     assert.deepEqual(result[0]?.metadata, { status: "error", prompt: "draw", errorDetails: "页面刷新后生成已中断，请重新生成。" });
-    assert.equal(result[1], success);
+    assert.equal(result[1], persistentTask);
+    assert.equal(result[2], success);
 });
 
 test("finds the nearest upstream config node breadth-first across retry branches", () => {

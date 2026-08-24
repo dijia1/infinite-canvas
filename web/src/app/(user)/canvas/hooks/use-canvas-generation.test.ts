@@ -4,6 +4,7 @@ import test from "node:test";
 import { createCanvasGenerationController } from "./use-canvas-generation.ts";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
 import type { AiConfig } from "@/lib/ai-config";
+import type { ImageGenerationTask } from "@/services/api/image";
 
 type Ref<T> = { current: T };
 
@@ -43,6 +44,10 @@ function node(id: string, type: CanvasNodeType, metadata: CanvasNodeData["metada
     return { id, type, title: id, position: { x: 0, y: 0 }, width: 340, height: 240, metadata };
 }
 
+function completedTask(id: string, mediaId: string): ImageGenerationTask {
+    return { id: `task-${id}`, clientRequestId: `client-${id}`, status: "succeeded", progress: 100, images: [{ id, dataUrl: `data:image/png;base64,${id}`, mediaId }] };
+}
+
 function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnection[] = [], overrides: Record<string, unknown> = {}) {
     const nodesRef = ref(initialNodes);
     const connectionsRef = ref(initialConnections);
@@ -70,11 +75,17 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
         createConfigNode: (position, metadata) => ({ id: `config-${++sequence}`, type: CanvasNodeType.Config, title: "生成配置", position, width: 340, height: 240, metadata }),
         requestGeneration: async () => {
             calls.generation++;
-            return [{ id: `image-${calls.generation}`, dataUrl: `data:image/png;base64,${calls.generation}`, mediaId: `media-${calls.generation}` }];
+            return completedTask(`image-${calls.generation}`, `media-${calls.generation}`);
         },
         requestEdit: async () => {
             calls.edit++;
-            return [{ id: `edit-${calls.edit}`, dataUrl: `data:image/png;base64,edit-${calls.edit}`, mediaId: `edit-media-${calls.edit}` }];
+            return completedTask(`edit-${calls.edit}`, `edit-media-${calls.edit}`);
+        },
+        getImageTask: async () => {
+            throw new Error("unexpected task polling");
+        },
+        getImageTaskByClientRequest: async () => {
+            throw new Error("unexpected task polling");
         },
         requestImageQuestion: async () => {
             throw new Error("文本生成功能已移除");
@@ -110,7 +121,7 @@ test("creates a batch root and three children with three parallel single-image r
 test("dispatches every batch image request before completion and uses one image per request", async () => {
     const source = node("source", CanvasNodeType.Config, { count: 3 });
     const requests: AiConfig[] = [];
-    const pending = Array.from({ length: 3 }, () => deferred<Array<{ id: string; dataUrl: string; mediaId: string }>>());
+    const pending = Array.from({ length: 3 }, () => deferred<ImageGenerationTask>());
     const { controller } = setup([source], [], {
         requestGeneration: (requestConfig: AiConfig) => {
             requests.push(requestConfig);
@@ -128,7 +139,7 @@ test("dispatches every batch image request before completion and uses one image 
         ["1", "1", "1"],
     );
 
-    pending.forEach((request, index) => request.resolve([{ id: `image-${index}`, dataUrl: `data:image/png;base64,${index}`, mediaId: `media-${index}` }]));
+    pending.forEach((request, index) => request.resolve(completedTask(`image-${index}`, `media-${index}`)));
     await generation;
 });
 
@@ -158,7 +169,7 @@ test("preserves successful batch children when another child fails", async () =>
             attempts++;
             calls.generation++;
             if (attempts === 2) throw new Error("provider failed");
-            return [{ id: `image-${attempts}`, dataUrl: "data:image/png;base64,ok", mediaId: `media-${attempts}` }];
+            return completedTask(`image-${attempts}`, `media-${attempts}`);
         },
     });
 
@@ -227,7 +238,7 @@ test("retries a batch child with root metadata without changing the batch", asyn
     const { controller, nodesRef } = setup([root, child], [], {
         requestEdit: async (requestConfig: AiConfig) => {
             editRequests.push(requestConfig);
-            return [{ id: "retry-image", dataUrl: "data:image/png;base64,retry", mediaId: "retry-media" }];
+            return completedTask("retry-image", "retry-media");
         },
     });
 
@@ -242,6 +253,50 @@ test("retries a batch child with root metadata without changing the batch", asyn
     const retriedChild = nodesRef.current.find((item) => item.id === "child-b");
     assert.equal(retriedChild?.metadata?.batchRootId, "root");
     assert.equal(retriedChild?.metadata?.status, "success");
+});
+
+test("restores an in-flight image task from its persisted client request ID", async () => {
+    const pending = node("pending", CanvasNodeType.Image, { status: "loading", imageTaskClientRequestId: "client-refresh" });
+    let taskLookups = 0;
+    const { controller, nodesRef } = setup([pending], [], {
+        getImageTask: async () => {
+            taskLookups++;
+            return completedTask("unexpected", "unexpected");
+        },
+        getImageTaskByClientRequest: async (clientRequestId: string) => {
+            assert.equal(clientRequestId, "client-refresh");
+            return { ...completedTask("restored", "media-restored"), clientRequestId };
+        },
+    });
+
+    controller.resumePendingImageTasks();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(taskLookups, 0);
+    assert.equal(nodesRef.current[0].metadata?.status, "success");
+    assert.equal(nodesRef.current[0].metadata?.mediaId, "media-restored");
+    assert.equal(nodesRef.current[0].metadata?.imageTaskId, "task-restored");
+});
+
+test("recovers a task by client request ID when the create response is lost", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    let recoveredClientRequestID = "";
+    const { controller, nodesRef } = setup([source], [], {
+        requestGeneration: async () => {
+            throw new Error("网络连接中断");
+        },
+        getImageTaskByClientRequest: async (clientRequestId: string) => {
+            recoveredClientRequestID = clientRequestId;
+            return { ...completedTask("recovered-create", "media-recovered-create"), clientRequestId };
+        },
+    });
+
+    await controller.generateNode("source", "image", "a forest");
+
+    const image = nodesRef.current.find((item) => item.type === CanvasNodeType.Image);
+    assert.ok(recoveredClientRequestID);
+    assert.equal(image?.metadata?.status, "success");
+    assert.equal(image?.metadata?.mediaId, "media-recovered-create");
 });
 
 test("routes video generation through the video service", async () => {

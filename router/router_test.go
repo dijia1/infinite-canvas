@@ -9,11 +9,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
+	_ "github.com/basketikun/infinite-canvas/ai/providers"
 	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
+	"github.com/basketikun/infinite-canvas/service"
 )
 
 var mediaTestDirectory string
@@ -46,6 +50,282 @@ func TestPrivateMediaDeleteRouteIsProtected(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("private media delete route must be registered under /api/v1")
+	}
+}
+
+func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T) {
+	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+		Providers:       []model.AIProvider{{ID: "async-maizi", Name: "Maizi", Type: "maizi-image", Enabled: true, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
+		ImageProviderID: "async-maizi",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	clientRequestID := "async-create-" + time.Now().Format("20060102150405.000000000")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewBufferString(`{"clientRequestId":"`+clientRequestID+`","model":"browser-controlled-model","prompt":"生成一张测试图","n":1,"size":"1:1","resolution":"1k"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", "async-owner")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+
+	var created struct {
+		Code int `json:"code"`
+		Data struct {
+			ID              string `json:"id"`
+			ClientRequestID string `json:"clientRequestId"`
+			Status          string `json:"status"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &created) != nil || created.Code != 0 || created.Data.ID == "" || created.Data.ClientRequestID != clientRequestID || created.Data.Status != "queued" {
+		t.Fatalf("create image task = %d/%s", response.Code, response.Body.String())
+	}
+
+	lookup := httptest.NewRequest(http.MethodGet, "/api/v1/images/tasks/by-client-request/"+clientRequestID, nil)
+	lookup.Header.Set("X-Portal-User-Uid", "async-owner")
+	lookedUp := httptest.NewRecorder()
+	New().ServeHTTP(lookedUp, lookup)
+	if lookedUp.Code != http.StatusOK || !strings.Contains(lookedUp.Body.String(), `"id":"`+created.Data.ID+`"`) {
+		t.Fatalf("lookup image task = %d/%s", lookedUp.Code, lookedUp.Body.String())
+	}
+}
+
+func TestPrivateImageCatalogRestoresOwnedMediaAndExcludesPublicMedia(t *testing.T) {
+	createdAt := time.Now().Format(time.RFC3339Nano)
+	owned := model.Media{ID: "media-private-catalog-owned", OwnerUID: "catalog-owner", Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-owner/owned.png", ContentType: "image/png", Filename: "恢复素材.png", CreatedAt: createdAt}
+	generated := model.Media{ID: "media-private-catalog-generated", OwnerUID: "catalog-owner", Source: model.MediaSourceGenerated, ObjectKey: "images/private/catalog-owner/generated.png", ContentType: "image/png", Filename: "generated.png", CreatedAt: createdAt}
+	otherUser := model.Media{ID: "media-private-catalog-other", OwnerUID: "catalog-other", Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-other/other.png", ContentType: "image/png", Filename: "other.png", CreatedAt: createdAt}
+	publicMedia := model.Media{ID: "media-private-catalog-public", OwnerUID: "catalog-owner", Source: model.MediaSourceUpload, ObjectKey: "images/public/catalog-owner/public.png", ContentType: "image/png", Filename: "public.png", CreatedAt: createdAt}
+	for _, item := range []model.Media{owned, generated, otherUser, publicMedia} {
+		if _, err := repository.SaveMedia(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-private-catalog", MediaID: publicMedia.ID, UploaderUID: publicMedia.OwnerUID, Title: "公共图片", CreatedAt: createdAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/private-images", nil)
+	request.Header.Set("X-Portal-User-Uid", owned.OwnerUID)
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+
+	var payload struct {
+		Code int `json:"code"`
+		Data struct {
+			Items []model.Media `json:"items"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Code != 0 {
+		t.Fatalf("catalog status/body = %d/%s", response.Code, response.Body.String())
+	}
+	if len(payload.Data.Items) != 2 {
+		t.Fatalf("private catalog items = %+v, want owned upload and generated media", payload.Data.Items)
+	}
+	seen := map[string]bool{}
+	for _, item := range payload.Data.Items {
+		seen[item.ID] = true
+	}
+	if !seen[owned.ID] || !seen[generated.ID] || seen[otherUser.ID] || seen[publicMedia.ID] {
+		t.Fatalf("catalog ownership/public filtering = %+v", seen)
+	}
+}
+
+func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
+	owner := "private-catalog-editor"
+	item := model.Media{ID: "media-private-catalog-edit", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "images/private/private-catalog-editor/edit.png", ContentType: "image/png", Filename: "edit.png", CreatedAt: time.Now().Format(time.RFC3339Nano)}
+	if _, err := repository.SaveMedia(item); err != nil {
+		t.Fatal(err)
+	}
+
+	create := httptest.NewRequest(http.MethodPost, "/api/v1/private-folders", bytes.NewBufferString(`{"title":"项目图"}`))
+	create.Header.Set("Content-Type", "application/json")
+	create.Header.Set("X-Portal-User-Uid", owner)
+	created := httptest.NewRecorder()
+	New().ServeHTTP(created, create)
+	var folderPayload struct {
+		Data model.PrivateFolder `json:"data"`
+	}
+	if created.Code != http.StatusOK || json.Unmarshal(created.Body.Bytes(), &folderPayload) != nil || folderPayload.Data.ID == "" {
+		t.Fatalf("create private folder = %d/%s", created.Code, created.Body.String())
+	}
+
+	update := httptest.NewRequest(http.MethodPatch, "/api/v1/private-images/"+item.ID, bytes.NewBufferString(`{"title":"最终主图","folderId":"`+folderPayload.Data.ID+`"}`))
+	update.Header.Set("Content-Type", "application/json")
+	update.Header.Set("X-Portal-User-Uid", owner)
+	updated := httptest.NewRecorder()
+	New().ServeHTTP(updated, update)
+	if updated.Code != http.StatusOK {
+		t.Fatalf("update private image = %d/%s", updated.Code, updated.Body.String())
+	}
+
+	list := httptest.NewRequest(http.MethodGet, "/api/v1/private-images", nil)
+	list.Header.Set("X-Portal-User-Uid", owner)
+	listed := httptest.NewRecorder()
+	New().ServeHTTP(listed, list)
+	var imagePayload struct {
+		Data model.PrivateImageList `json:"data"`
+	}
+	if listed.Code != http.StatusOK || json.Unmarshal(listed.Body.Bytes(), &imagePayload) != nil {
+		t.Fatalf("list private images = %d/%s", listed.Code, listed.Body.String())
+	}
+	for _, candidate := range imagePayload.Data.Items {
+		if candidate.ID == item.ID {
+			if candidate.Title != "最终主图" || candidate.FolderID != folderPayload.Data.ID {
+				t.Fatalf("persisted private image = %+v", candidate)
+			}
+			return
+		}
+	}
+	t.Fatalf("updated image %q missing from private catalog", item.ID)
+}
+
+func TestOperationLogRouteIsAdminOnly(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs", nil)
+	request.Header.Set("X-Portal-User-Uid", "member")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("non-admin status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
+	}
+
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response = httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("admin status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+	}
+}
+
+func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
+	const userUID = "2b5892c4-3dd2-4f82-8644-f0d14a0b5e71"
+	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"]}`}
+	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Portal-Service-Key") != "infinite-canvas" || r.Header.Get("X-Portal-Service-Secret") != "directory-secret" {
+			t.Fatalf("directory headers = %q/%q", r.Header.Get("X-Portal-Service-Key"), r.Header.Get("X-Portal-Service-Secret"))
+		}
+		_, _ = w.Write([]byte(`{"users":[` + strings.Join(users, ",") + `]}`))
+	}))
+	defer directory.Close()
+	previous := config.Cfg
+	config.Cfg.PortalDirectoryURL = directory.URL
+	config.Cfg.PortalDirectoryAppKey = "infinite-canvas"
+	config.Cfg.PortalDirectorySecret = "directory-secret"
+	t.Cleanup(func() { config.Cfg = previous })
+
+	denied := httptest.NewRequest(http.MethodPost, "/internal/portal/directory-sync", bytes.NewBufferString(`{"userUid":"`+userUID+`"}`))
+	denied.Header.Set("Content-Type", "application/json")
+	denied.Header.Set("X-Portal-Service-Key", "infinite-canvas")
+	denied.Header.Set("X-Portal-Service-Secret", "wrong-secret")
+	deniedResponse := httptest.NewRecorder()
+	New().ServeHTTP(deniedResponse, denied)
+	if deniedResponse.Code != http.StatusUnauthorized {
+		t.Fatalf("wrong-secret status = %d, want %d", deniedResponse.Code, http.StatusUnauthorized)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/internal/portal/directory-sync", bytes.NewBufferString(`{"userUid":"`+userUID+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-Service-Key", "infinite-canvas")
+	request.Header.Set("X-Portal-Service-Secret", "directory-secret")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("callback status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	member, found, err := repository.GetPortalMember(userUID)
+	if err != nil || !found || !member.Enabled || member.DisplayName != "李小明" {
+		t.Fatalf("synchronized member = %+v, found=%t, err=%v", member, found, err)
+	}
+
+	manual := httptest.NewRequest(http.MethodPost, "/api/admin/members/sync", nil)
+	manual.Header.Set("X-Portal-User-Uid", "directory-admin")
+	manual.Header.Set("X-Portal-Roles", "portal-admin")
+	manualResponse := httptest.NewRecorder()
+	New().ServeHTTP(manualResponse, manual)
+	if manualResponse.Code != http.StatusOK {
+		t.Fatalf("manual sync status = %d, want %d; body = %s", manualResponse.Code, http.StatusOK, manualResponse.Body.String())
+	}
+
+	users = nil
+	request = httptest.NewRequest(http.MethodPost, "/internal/portal/directory-sync", bytes.NewBufferString(`{"userUid":"`+userUID+`"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-Service-Key", "infinite-canvas")
+	request.Header.Set("X-Portal-Service-Secret", "directory-secret")
+	response = httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("disable callback status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	member, found, err = repository.GetPortalMember(userUID)
+	if err != nil || !found || member.Enabled {
+		t.Fatalf("disabled member = %+v, found=%t, err=%v", member, found, err)
+	}
+}
+
+func TestPortalSessionUsesDirectoryDisplayNameAndFallsBackToUsername(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	request.Header.Set("X-Portal-User-Uid", "session-user")
+	request.Header.Set("X-Portal-Username", "fallback-name")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	var payload struct {
+		Data struct {
+			User struct {
+				DisplayName string `json:"displayName"`
+			} `json:"user"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Data.User.DisplayName != "fallback-name" {
+		t.Fatalf("fallback session = %d/%s", response.Code, response.Body.String())
+	}
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: "session-user", DisplayName: "目录姓名", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Data.User.DisplayName != "目录姓名" {
+		t.Fatalf("directory session = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/public-folders", bytes.NewBufferString(`{"title":"审计目录"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", "audit-admin")
+	request.Header.Set("X-Portal-Username", "audit-admin")
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
+	}
+
+	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=public_folder_create&actor=audit-admin", nil)
+	request.Header.Set("X-Portal-User-Uid", "audit-admin")
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response = httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	var payload struct {
+		Data model.OperationLogList `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Data.Total == 0 {
+		t.Fatalf("operation logs status/data = %d/%s", response.Code, response.Body.String())
+	}
+	item := payload.Data.Items[0]
+	if item.ActorUID != "audit-admin" || item.ActorName != "audit-admin" || item.Action != "public_folder_create" || item.Status != model.OperationStatusSuccess {
+		t.Fatalf("operation item = %+v", item)
+	}
+	if item.MediaIDs == nil {
+		t.Fatal("operation log without media must return an empty mediaIds array")
+	}
+
+	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-expired", ActorUID: "audit-admin", ActorName: "审计", Action: "expired", Status: model.OperationStatusSuccess, CreatedAt: time.Now().Add(-8 * 24 * time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CleanupExpiredOperationLogs(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	items, _, err := repository.ListOperationLogs(model.OperationLogQuery{Action: "expired"})
+	if err != nil || len(items) != 0 {
+		t.Fatalf("expired operation logs = %+v, err=%v", items, err)
 	}
 }
 

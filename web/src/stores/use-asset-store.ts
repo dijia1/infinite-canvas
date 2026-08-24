@@ -9,8 +9,10 @@ import { portalStorageScope } from "@/lib/portal-storage-scope";
 import { cleanupUnusedImages } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
+import { fetchPrivateFolders, fetchPrivateImages } from "@/services/api/private-images";
 import { hydrateStoredAssets } from "./asset-storage-hydration";
 import { loadMediaImage, resolveImageUrl, resolveRemoteImage, uploadImage } from "@/services/image-storage";
+import { privateCatalogToAssetState } from "./private-asset-sync";
 
 export type AssetKind = "text" | "image" | "video";
 export type PrivateAssetFolder = {
@@ -52,6 +54,7 @@ type AssetStore = {
     removeAsset: (id: string) => void;
     cleanupImages: (extra?: unknown) => void;
     hydrate: (uid?: string) => Promise<void>;
+    refreshFromServer: () => Promise<void>;
 };
 
 const ASSET_STORE_KEY = "infinite-canvas:asset_store";
@@ -224,8 +227,19 @@ export const useAssetStore = create<AssetStore>()(
                 }, 0);
             },
             hydrate: async (uid) => {
-                useAssetStore.persist.setOptions({ name: `${ASSET_STORE_KEY}:${portalStorageScope(uid)}` });
+                const name = `${ASSET_STORE_KEY}:${portalStorageScope(uid)}`;
+                useAssetStore.persist.setOptions({ name });
                 await useAssetStore.persist.rehydrate();
+                try {
+                    const [images, folders] = await Promise.all([fetchPrivateImages(), fetchPrivateFolders()]);
+                    if (useAssetStore.persist.getOptions().name === name) set(privateCatalogToAssetState(images, folders));
+                } catch {
+                    // The cached catalog remains available when the Portal session or API is temporarily unavailable.
+                }
+            },
+            refreshFromServer: async () => {
+                const [images, folders] = await Promise.all([fetchPrivateImages(), fetchPrivateFolders()]);
+                set(privateCatalogToAssetState(images, folders));
             },
         }),
         {

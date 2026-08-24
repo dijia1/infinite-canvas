@@ -48,13 +48,11 @@ async function hydrateStoredAsset<T extends StoredAsset>(asset: T, dependencies:
             if (cached) return withImage(asset, cached, data.storageKey, data);
 
             const mediaId = typeof imageAsset.metadata?.mediaId === "string" ? imageAsset.metadata.mediaId : "";
-            if (!mediaId) return asset;
+            if (mediaId) return asset;
 
-            const publicImageId = typeof imageAsset.metadata?.publicImageId === "string" ? imageAsset.metadata.publicImageId : "";
-            const restored = await dependencies.loadMediaImage(mediaId, async () =>
-                publicImageId && dependencies.resolvePublicImage ? dependencies.resolvePublicImage(publicImageId) : dependencies.resolveRemoteImage(mediaId),
-            );
-            return withImage(asset, restored.url, restored.storageKey, restored);
+            if (!data.dataUrl?.startsWith("data:image/")) return asset;
+            const stored = await dependencies.uploadImage(data.dataUrl);
+            return withImage(asset, stored.url, stored.storageKey, stored);
         }
 
         if (!data.dataUrl?.startsWith("data:image/")) return asset;

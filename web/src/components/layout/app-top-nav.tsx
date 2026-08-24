@@ -1,6 +1,8 @@
 "use client";
 
-import { Images, Library, Menu } from "lucide-react";
+import { Dropdown } from "antd";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronDown, Images, Library, Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
@@ -14,12 +16,14 @@ import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-
 import { appPath } from "@/lib/app-path";
 import { cn } from "@/lib/utils";
 import { toggleMaterialPanel, type MaterialPanel } from "@/components/layout/material-panel";
+import { fetchPortalSession } from "@/services/api/session";
 
 export function AppTopNav() {
     const pathname = usePathname();
     const [mobileNavOpen, setMobileNavOpen] = useState(false);
     const [materialPanel, setMaterialPanel] = useState<MaterialPanel>(null);
     const hideHeader = /^\/canvas\/[^/]+/.test(pathname);
+    const session = useQuery({ queryKey: ["portal-session"], queryFn: fetchPortalSession, enabled: !hideHeader, retry: false, staleTime: 5 * 60 * 1000 });
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
 
@@ -29,12 +33,20 @@ export function AppTopNav() {
                 <header className="sticky top-0 z-20 h-16 shrink-0 border-b border-stone-200 bg-background/90 backdrop-blur-xl dark:border-stone-800">
                     <div className="flex h-full w-full items-stretch justify-between gap-5 px-4 sm:px-6">
                         <div className="flex min-w-0 items-center">
-                            <Link href={appPath("/canvas")} className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-stone-950 transition hover:text-stone-600 dark:text-stone-100 dark:hover:text-stone-300">
-                                <span className="size-5 shrink-0 bg-current" style={{ mask: `url(${appPath("/logo.svg")}) center / contain no-repeat`, WebkitMask: `url(${appPath("/logo.svg")}) center / contain no-repeat` }} />
-                                <span className="text-base font-medium">无限画布</span>
+                            <Link
+                                href="/"
+                                className="inline-flex h-8 shrink-0 items-center justify-center rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-100 hover:text-stone-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stone-400 dark:border-stone-700 dark:text-stone-200 dark:hover:border-stone-600 dark:hover:bg-stone-800 dark:hover:text-white"
+                            >
+                                返回工作台
                             </Link>
 
-                            <button type="button" className="ml-3 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 md:hidden dark:text-stone-300 dark:hover:text-white" onClick={() => setMobileNavOpen(true)} aria-label="打开导航菜单" title="导航菜单">
+                            <button
+                                type="button"
+                                className="ml-3 inline-flex size-8 shrink-0 items-center justify-center text-stone-600 transition hover:text-stone-950 md:hidden dark:text-stone-300 dark:hover:text-white"
+                                onClick={() => setMobileNavOpen(true)}
+                                aria-label="打开导航菜单"
+                                title="导航菜单"
+                            >
                                 <Menu className="size-5" />
                             </button>
 
@@ -48,7 +60,9 @@ export function AppTopNav() {
                                             href={appPath(`/${tool.slug}`)}
                                             className={cn(
                                                 "relative flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition after:absolute after:inset-x-0 after:bottom-0 after:h-px",
-                                                active ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100" : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
+                                                active
+                                                    ? "font-medium text-stone-950 after:bg-stone-950 dark:text-stone-100 dark:after:bg-stone-100"
+                                                    : "text-stone-500 after:bg-transparent hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100",
                                             )}
                                         >
                                             <Icon className="size-4" />
@@ -64,10 +78,23 @@ export function AppTopNav() {
                                     <Library className="size-4" />
                                     公共素材
                                 </TopMaterialButton>
+                                {session.data?.isAdmin ? (
+                                    <Dropdown menu={{ items: [{ key: "operation-logs", label: <Link href={appPath("/admin/operations")}>操作记录</Link> }] }} trigger={["click"]}>
+                                        <button type="button" className="relative flex h-16 shrink-0 items-center gap-1 text-sm leading-6 text-stone-500 transition hover:text-stone-950 dark:text-stone-400 dark:hover:text-stone-100">
+                                            管理
+                                            <ChevronDown className="size-3.5" />
+                                        </button>
+                                    </Dropdown>
+                                ) : null}
                             </nav>
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                            {session.data?.user.displayName ? (
+                                <span className="max-w-32 truncate text-sm text-stone-600 dark:text-stone-300" title={session.data.user.displayName}>
+                                    {session.data.user.displayName}
+                                </span>
+                            ) : null}
                             <AppActions />
                         </div>
                     </div>
@@ -80,6 +107,7 @@ export function AppTopNav() {
                 onClose={() => setMobileNavOpen(false)}
                 onOpenMyAssets={() => setMaterialPanel("my-assets")}
                 onOpenPublicAssets={() => setMaterialPanel("public-assets")}
+                isAdmin={Boolean(session.data?.isAdmin)}
             />
             <AppConfigModal />
             <MyAssetsDrawer open={materialPanel === "my-assets"} onClose={() => setMaterialPanel(null)} />

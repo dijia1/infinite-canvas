@@ -1,24 +1,28 @@
 services:
   app:
-    build:
-      context: .
-      args:
-        NEXT_PUBLIC_BASE_PATH: /apps/infinite-canvas
-    image: infinite-canvas:oss-sso-local
-    pull_policy: never
+    image: ${INFINITE_CANVAS_IMAGE:?INFINITE_CANVAS_IMAGE is required}
     container_name: infinite-canvas
     env_file:
-      - .env
+      - ${INFINITE_CANVAS_ENV_FILE:-.env}
     expose:
       - "3000"
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/api/healthz').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     networks:
       portal_gateway:
         aliases:
           - infinite-canvas-app
       internal_tools_database: {}
+      portal_directory:
+        aliases:
+          - infinite-canvas-directory
     restart: unless-stopped
     volumes:
-      - ./data/media:/app/data/media
+      - ${INFINITE_CANVAS_MEDIA_DIR:-./data/media}:/app/data/media
 
 networks:
   portal_gateway:
@@ -27,3 +31,6 @@ networks:
   internal_tools_database:
     external: true
     name: internal_tools_database
+  portal_directory:
+    external: true
+    name: portal_directory

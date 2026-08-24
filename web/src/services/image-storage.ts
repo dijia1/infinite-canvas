@@ -28,6 +28,8 @@ export interface ImageCacheStore {
 
 type ImageMeta = { width: number; height: number; mimeType: string };
 type PreviewMetadata = { bytes: number; lastAccess: number };
+type CacheMetadata = { bytes: number; lastAccess: number; variant: "preview" | "original" | "temporary" };
+type CacheTotal = { bytes: number };
 type CachedVariant = { blob: Blob; storageKey: string; generation: number };
 export type RemoteMediaURL = string | (() => Promise<string>);
 
@@ -35,6 +37,7 @@ export type ImageStorageOperationsOptions = {
     scope: string;
     scopeVersion: number;
     store: ImageCacheStore;
+    cacheIndexStore?: ImageCacheStore;
     objectUrls: Map<string, string>;
     isActive: () => boolean;
     fetchImageBlob?: (url: string) => Promise<Blob>;
@@ -44,15 +47,25 @@ export type ImageStorageOperationsOptions = {
     readMeta?: (url: string) => Promise<ImageMeta>;
     now?: () => number;
     previewBudgetBytes?: number;
+    cacheBudgetBytes?: number;
+    cacheHighWatermarkBytes?: number;
+    cacheLowWatermarkBytes?: number;
 };
 
 const PREVIEW_METADATA_PREFIX = "preview-meta:";
+const CACHE_METADATA_PREFIX = "cache-meta:";
+const CACHE_TOTAL_KEY = "cache-total";
 const DEFAULT_PREVIEW_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
+const GIB = 1024 * 1024 * 1024;
+const DEFAULT_CACHE_BUDGET_BYTES = 2 * GIB;
+const DEFAULT_CACHE_HIGH_WATERMARK_BYTES = Math.floor(1.8 * GIB);
+const DEFAULT_CACHE_LOW_WATERMARK_BYTES = Math.floor(1.4 * GIB);
 const inFlightStorageKeyCounts = new Map<string, number>();
 const storageKeyGenerations = new Map<string, number>();
 const storageKeyWriteRevisions = new Map<string, number>();
 const storageKeyMutationTails = new Map<string, Promise<void>>();
 const previewBudgetEnforcementSchedules = new Set<string>();
+const cacheBudgetEnforcementSchedules = new Set<string>();
 
 let scopeVersion = 1;
 let activeContext = createImageStorageContext(portalStorageScope(), scopeVersion);
@@ -61,11 +74,16 @@ function createImageStore(scope: string) {
     return localforage.createInstance({ name: "infinite-canvas", storeName: `image_files_${scope.replace(/[^a-zA-Z0-9_-]/g, "_")}` });
 }
 
+function createImageCacheIndexStore(scope: string) {
+    return localforage.createInstance({ name: "infinite-canvas", storeName: `image_cache_index_${scope.replace(/[^a-zA-Z0-9_-]/g, "_")}` });
+}
+
 function createImageStorageContext(scope: string, version: number) {
     return {
         scope,
         scopeVersion: version,
         store: createImageStore(scope) as ImageCacheStore,
+        cacheIndexStore: createImageCacheIndexStore(scope) as ImageCacheStore,
         objectUrls: new Map<string, string>(),
     };
 }
@@ -94,6 +112,15 @@ export function imagePreviewStorageKey(mediaId: string) {
 
 function previewMetadataKey(storageKey: string) {
     return `${PREVIEW_METADATA_PREFIX}${storageKey.slice("preview:".length)}`;
+}
+
+function cacheMetadataKey(storageKey: string) {
+    return `${CACHE_METADATA_PREFIX}${storageKey}`;
+}
+
+function cacheVariant(storageKey: string): CacheMetadata["variant"] {
+    if (storageKey.startsWith("preview:")) return "preview";
+    return storageKey.startsWith("image:") ? "temporary" : "original";
 }
 
 function expandExplicitDeletionKeys(keys: Iterable<string>) {
@@ -134,8 +161,13 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     const revokeObjectURL = options.revokeObjectURL || ((url: string) => URL.revokeObjectURL(url));
     const readMeta = options.readMeta || readImageMeta;
     const now = options.now || Date.now;
+    const cacheIndexStore = options.cacheIndexStore || options.store;
     const previewBudgetBytes = options.previewBudgetBytes ?? DEFAULT_PREVIEW_CACHE_BUDGET_BYTES;
+    const cacheBudgetBytes = options.cacheBudgetBytes ?? DEFAULT_CACHE_BUDGET_BYTES;
+    const cacheHighWatermarkBytes = Math.min(options.cacheHighWatermarkBytes ?? DEFAULT_CACHE_HIGH_WATERMARK_BYTES, cacheBudgetBytes);
+    const cacheLowWatermarkBytes = Math.min(options.cacheLowWatermarkBytes ?? DEFAULT_CACHE_LOW_WATERMARK_BYTES, cacheHighWatermarkBytes);
     const previewBudgetScheduleKey = `${options.scope}@${options.scopeVersion}`;
+    const cacheBudgetScheduleKey = `${options.scope}@${options.scopeVersion}`;
 
     const generationKey = (storageKey: string) => physicalStorageKey(options, storageKey);
     const currentGeneration = (storageKey: string) => storageKeyGenerations.get(generationKey(storageKey)) || 0;
@@ -210,6 +242,34 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             }
         });
     const touchPreview = async (storageKey: string, blob: Blob, generation: number) => touchPreviewMetadata(storageKey, blob.size, generation);
+    const writeCacheMetadata = async (storageKey: string, blob: Blob, generation: number) =>
+        withStorageMutations([CACHE_TOTAL_KEY, cacheMetadataKey(storageKey)], async () => {
+            ensureActive(options);
+            ensureGeneration(storageKey, generation);
+            const metadataKey = cacheMetadataKey(storageKey);
+            const previous = await cacheIndexStore.getItem<CacheMetadata>(metadataKey);
+            const total = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
+            const bytes = Math.max(0, blob.size);
+            await cacheIndexStore.setItem<CacheMetadata>(metadataKey, { bytes, lastAccess: now(), variant: cacheVariant(storageKey) });
+            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, { bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0) + bytes) });
+            ensureActive(options);
+            ensureGeneration(storageKey, generation);
+        });
+    const deleteCacheMetadata = async (storageKey: string) =>
+        withStorageMutations([CACHE_TOTAL_KEY, cacheMetadataKey(storageKey)], async () => {
+            const metadataKey = cacheMetadataKey(storageKey);
+            const previous = await cacheIndexStore.getItem<CacheMetadata>(metadataKey);
+            const total = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
+            await cacheIndexStore.removeItem(metadataKey);
+            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, { bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0)) });
+        });
+    const touchCacheMetadataWithoutBlockingDisplay = async (storageKey: string, blob: Blob, generation: number) => {
+        try {
+            await writeCacheMetadata(storageKey, blob, generation);
+        } catch (error) {
+            if (options.isActive() && currentGeneration(storageKey) === generation) console.warn("更新图片缓存元数据失败", error instanceof Error ? error.message : String(error));
+        }
+    };
     const touchPreviewWithoutBlockingDisplay = async (storageKey: string, blob: Blob, generation: number) => {
         try {
             await touchPreview(storageKey, blob, generation);
@@ -239,6 +299,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         ensureActive(options);
         ensureGeneration(storageKey, generation);
         if (blob && storageKey.startsWith("preview:")) void touchPreviewWithoutBlockingDisplay(storageKey, blob, generation);
+        if (blob) void touchCacheMetadataWithoutBlockingDisplay(storageKey, blob, generation);
         ensureActive(options);
         return blob || undefined;
     };
@@ -248,6 +309,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         options.objectUrls.delete(storageKey);
         await options.store.removeItem(storageKey);
         if (storageKey.startsWith("preview:")) await options.store.removeItem(previewMetadataKey(storageKey));
+        await deleteCacheMetadata(storageKey);
         bumpWriteRevision(storageKey);
     };
     const writeBlobUnlocked = async (storageKey: string, blob: Blob, generation: number) => {
@@ -255,6 +317,9 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         ensureGeneration(storageKey, generation);
         await options.store.setItem(storageKey, blob);
         try {
+            ensureActive(options);
+            ensureGeneration(storageKey, generation);
+            await writeCacheMetadata(storageKey, blob, generation);
             ensureActive(options);
             ensureGeneration(storageKey, generation);
         } catch (error) {
@@ -270,6 +335,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         if (storageKey.startsWith("preview:")) {
             void touchPreviewWithoutBlockingDisplay(storageKey, blob, generation);
         }
+        void scheduleCacheBudgetEnforcement();
         ensureActive(options);
         ensureGeneration(storageKey, generation);
         return blob;
@@ -385,6 +451,12 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         const blob = await readBlob(storageKey);
         return blob ? resolveBlobURL(storageKey, blob) : fallback;
     };
+    const releaseObjectURL = (storageKey: string) => {
+        const url = options.objectUrls.get(storageKey);
+        if (!url) return;
+        options.objectUrls.delete(storageKey);
+        revokeObjectURL(url);
+    };
     const getImageBlob = async (storageKey: string) => (await readBlob(storageKey)) || null;
     const setImageBlob = async (storageKey: string, blob: Blob) => {
         const generation = currentGeneration(storageKey);
@@ -431,6 +503,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                     options.objectUrls.set(targetKey, sourceURL);
                 }
                 await options.store.removeItem(image.storageKey);
+                await deleteCacheMetadata(image.storageKey);
                 invalidateKey(image.storageKey);
                 bumpWriteRevision(image.storageKey);
                 ensureActive(options);
@@ -447,6 +520,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         options.objectUrls.delete(key);
         await options.store.removeItem(key);
         if (!key.startsWith(PREVIEW_METADATA_PREFIX)) bumpWriteRevision(key);
+        if (!key.startsWith(PREVIEW_METADATA_PREFIX)) await deleteCacheMetadata(key);
     };
     const deleteExactKeys = async (keys: Iterable<string>, shouldDelete?: (key: string) => boolean) => {
         await Promise.all(
@@ -490,9 +564,9 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         if (previewBytes <= previewBudgetBytes) return;
 
         const evicted: Array<{ storageKey: string; revision: number }> = [];
-        for (const preview of previews.filter((candidate) => !isInFlight(candidate.storageKey)).sort((left, right) => left.lastAccess - right.lastAccess)) {
+        for (const preview of previews.filter((candidate) => !options.objectUrls.has(candidate.storageKey) && !isInFlight(candidate.storageKey)).sort((left, right) => left.lastAccess - right.lastAccess)) {
             if (previewBytes <= previewBudgetBytes) break;
-            if (isInFlight(preview.storageKey)) continue;
+            if (options.objectUrls.has(preview.storageKey) || isInFlight(preview.storageKey)) continue;
             previewBytes -= preview.bytes;
             evicted.push(preview);
         }
@@ -501,7 +575,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             Array.from(evictedRevisions.keys()).flatMap((storageKey) => [storageKey, previewMetadataKey(storageKey)]),
             (storageKey) => {
                 const previewKey = storageKey.startsWith(PREVIEW_METADATA_PREFIX) ? `preview:${storageKey.slice(PREVIEW_METADATA_PREFIX.length)}` : storageKey;
-                return options.isActive() && !isInFlight(previewKey) && currentWriteRevision(previewKey) === evictedRevisions.get(previewKey);
+                return options.isActive() && !options.objectUrls.has(previewKey) && !isInFlight(previewKey) && currentWriteRevision(previewKey) === evictedRevisions.get(previewKey);
             },
         );
     };
@@ -518,11 +592,69 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         else setTimeout(run, 0);
     };
 
+    const enforceCacheBudget = async () => {
+        const recordedTotal = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
+        if ((recordedTotal?.bytes || 0) <= cacheHighWatermarkBytes) return;
+        const entries: Array<{ storageKey: string; metadata: CacheMetadata; revision: number }> = [];
+        ensureActive(options);
+        await cacheIndexStore.iterate<unknown, void>((value, key) => {
+            if (!key.startsWith(CACHE_METADATA_PREFIX) || !value || typeof value !== "object") return;
+            const metadata = value as Partial<CacheMetadata>;
+            if (!Number.isFinite(metadata.bytes) || typeof metadata.lastAccess !== "number" || (metadata.variant !== "preview" && metadata.variant !== "original" && metadata.variant !== "temporary")) return;
+            const storageKey = key.slice(CACHE_METADATA_PREFIX.length);
+            entries.push({ storageKey, metadata: metadata as CacheMetadata, revision: currentWriteRevision(storageKey) });
+        });
+        ensureActive(options);
+        let totalBytes = Math.max(0, recordedTotal?.bytes || entries.reduce((total, entry) => total + Math.max(0, entry.metadata.bytes), 0));
+        if (totalBytes <= cacheHighWatermarkBytes) return;
+
+        const candidates = entries
+            .filter((entry) => entry.metadata.variant !== "temporary" && !options.objectUrls.has(entry.storageKey) && !isInFlight(entry.storageKey))
+            .sort((left, right) => {
+                const priority = (entry: (typeof entries)[number]) => (entry.metadata.variant === "preview" ? 0 : 1);
+                return priority(left) - priority(right) || left.metadata.lastAccess - right.metadata.lastAccess;
+            });
+        const evicted = new Map<string, number>();
+        for (const entry of candidates) {
+            if (totalBytes <= cacheLowWatermarkBytes) break;
+            if (options.objectUrls.has(entry.storageKey) || isInFlight(entry.storageKey)) continue;
+            totalBytes -= Math.max(0, entry.metadata.bytes);
+            evicted.set(entry.storageKey, entry.revision);
+        }
+        await deleteExactKeys(
+            Array.from(evicted.keys()).flatMap((storageKey) => (storageKey.startsWith("preview:") ? [storageKey, previewMetadataKey(storageKey)] : [storageKey])),
+            (key) => {
+                const storageKey = key.startsWith(PREVIEW_METADATA_PREFIX) ? `preview:${key.slice(PREVIEW_METADATA_PREFIX.length)}` : key;
+                return options.isActive() && !options.objectUrls.has(storageKey) && !isInFlight(storageKey) && currentWriteRevision(storageKey) === evicted.get(storageKey);
+            },
+        );
+    };
+    const scheduleCacheBudgetEnforcement = () => {
+        if (cacheBudgetEnforcementSchedules.has(cacheBudgetScheduleKey)) return;
+        cacheBudgetEnforcementSchedules.add(cacheBudgetScheduleKey);
+        void cacheIndexStore
+            .getItem<CacheTotal>(CACHE_TOTAL_KEY)
+            .then((total) => {
+                if ((total?.bytes || 0) <= cacheHighWatermarkBytes) return;
+                const run = () => {
+                    void enforceCacheBudget().catch((error) => {
+                        console.warn("清理图片缓存失败", error instanceof Error ? error.message : String(error));
+                    });
+                };
+                if (typeof requestIdleCallback === "function") requestIdleCallback(run);
+                else setTimeout(run, 0);
+            })
+            .catch((error) => {
+                console.warn("检查图片缓存预算失败", error instanceof Error ? error.message : String(error));
+            })
+            .finally(() => cacheBudgetEnforcementSchedules.delete(cacheBudgetScheduleKey));
+    };
+
     const cleanupUnusedImages = async (usedData: unknown) => {
         const usedKeys = collectImageStorageKeys(usedData);
         const unusedOriginals: Array<{ storageKey: string; revision: number }> = [];
         await options.store.iterate<unknown, void>((value, key) => {
-            if (key.startsWith(PREVIEW_METADATA_PREFIX) || key.startsWith("preview:")) return;
+            if (key === CACHE_TOTAL_KEY || key.startsWith(CACHE_METADATA_PREFIX) || key.startsWith(PREVIEW_METADATA_PREFIX) || key.startsWith("preview:")) return;
             if (!usedKeys.has(key) && !isInFlight(key)) unusedOriginals.push({ storageKey: key, revision: currentWriteRevision(key) });
         });
         const unusedOriginalRevisions = new Map(unusedOriginals.map(({ storageKey, revision }) => [storageKey, revision]));
@@ -531,9 +663,10 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             (storageKey) => !isInFlight(storageKey) && currentWriteRevision(storageKey) === unusedOriginalRevisions.get(storageKey),
         );
         await enforcePreviewCacheBudget();
+        await enforceCacheBudget();
     };
 
-    return { loadMediaImage, loadMediaPreview, storeImage, resolveImageUrl, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforcePreviewCacheBudget };
+    return { loadMediaImage, loadMediaPreview, storeImage, resolveImageUrl, releaseObjectURL, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforcePreviewCacheBudget, enforceCacheBudget };
 }
 
 export async function createImagePreview(blob: Blob) {
@@ -607,6 +740,10 @@ export async function resolveRemoteImage(mediaId: string) {
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
     return currentOperations().resolveImageUrl(storageKey, fallback);
+}
+
+export function releaseImageObjectURL(storageKey: string) {
+    return currentOperations().releaseObjectURL(storageKey);
 }
 
 export async function getImageBlob(storageKey: string) {
