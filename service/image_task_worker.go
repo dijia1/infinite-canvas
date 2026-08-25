@@ -105,7 +105,7 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 		failImageTask(ctx, item, err)
 		return
 	}
-	provider, err := imageTaskProvider(item)
+	provider, summarizer, err := imageTaskProvider(item)
 	if err != nil {
 		failImageTask(ctx, item, err)
 		return
@@ -117,9 +117,35 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			failImageTask(ctx, item, readErr)
 			return
 		}
-		created, createErr := provider.CreateImageTask(ctx, ai.ImageTaskRequest{Request: imageTaskRequest(item), References: loaded.References, Mask: loaded.Mask})
+		providerRequest := ai.ImageTaskRequest{Request: imageTaskRequest(item), References: loaded.References, Mask: loaded.Mask}
+		if strings.TrimSpace(item.RequestSummary) == "" {
+			summary, summaryErr := summarizer.SummarizeImageTaskRequest(providerRequest)
+			if summaryErr != nil {
+				failImageTask(ctx, item, summaryErr)
+				return
+			}
+			encoded, encodeErr := json.Marshal(summary)
+			if encodeErr != nil {
+				failImageTask(ctx, item, encodeErr)
+				return
+			}
+			item.RequestSummary = string(encoded)
+			if err := repository.UpdateImageGenerationTask(item.ID, map[string]any{"request_summary": item.RequestSummary, "updated_at": now()}); err != nil {
+				failImageTask(ctx, item, err)
+				return
+			}
+		}
+		created, createErr := provider.CreateImageTask(ctx, providerRequest)
 		if createErr != nil {
 			failImageTask(ctx, item, createErr)
+			return
+		}
+		if urls, failure, terminal := imageTaskTerminalResult(created); terminal {
+			if failure != nil {
+				failImageTask(ctx, item, failure)
+				return
+			}
+			completeImageTask(ctx, item, inputs, urls)
 			return
 		}
 		providerTaskID = strings.TrimSpace(created.ID)
@@ -146,31 +172,46 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			failImageTask(ctx, item, pollErr)
 			return
 		}
-		status := strings.ToLower(strings.TrimSpace(remote.Status))
-		switch status {
-		case "completed", "succeeded", "success":
-			if len(remote.ResultURLs) == 0 {
-				failImageTask(ctx, item, errors.New("供应商任务完成但未返回图片"))
+		if urls, failure, terminal := imageTaskTerminalResult(remote); terminal {
+			if failure != nil {
+				failImageTask(ctx, item, failure)
 				return
 			}
-			completeImageTask(ctx, item, inputs, remote.ResultURLs)
+			completeImageTask(ctx, item, inputs, urls)
 			return
-		case "failed", "error", "cancelled", "canceled":
-			message := strings.TrimSpace(remote.Error)
-			if message == "" {
-				message = "供应商任务失败"
-			}
-			failImageTask(ctx, item, safeMessageError{message: message})
+		}
+		if err := repository.UpdateImageGenerationTask(item.ID, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "updated_at": now()}); err != nil {
+			log.Printf("image task %s progress update failed: %v", item.ID, err)
 			return
-		default:
-			if err := repository.UpdateImageGenerationTask(item.ID, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "updated_at": now()}); err != nil {
-				log.Printf("image task %s progress update failed: %v", item.ID, err)
-				return
-			}
-			if !waitForImageTask(ctx, imageTaskPollInterval) {
-				return
+		}
+		if !waitForImageTask(ctx, imageTaskPollInterval) {
+			return
+		}
+	}
+}
+
+func imageTaskTerminalResult(task ai.ImageTask) ([]string, error, bool) {
+	status := strings.ToLower(strings.TrimSpace(task.Status))
+	switch status {
+	case "completed", "succeeded", "success":
+		urls := make([]string, 0, len(task.ResultURLs))
+		for _, url := range task.ResultURLs {
+			if url = strings.TrimSpace(url); url != "" {
+				urls = append(urls, url)
 			}
 		}
+		if len(urls) == 0 {
+			return nil, errors.New("供应商任务完成但未返回图片"), true
+		}
+		return urls, nil, true
+	case "failed", "error", "cancelled", "canceled", "violated", "rejected":
+		message := strings.TrimSpace(task.Error)
+		if message == "" {
+			message = "供应商任务失败"
+		}
+		return nil, safeMessageError{message: message}, true
+	default:
+		return nil, nil, false
 	}
 }
 
@@ -205,7 +246,7 @@ func completeImageTask(ctx context.Context, item model.ImageGenerationTask, inpu
 	if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
 		log.Printf("image task %s input cleanup failed: %v", item.ID, err)
 	}
-	RecordOperation(userContext, OperationLogInput{Action: imageTaskAction(item), TargetType: "image_generation", TargetID: item.ID, Prompt: item.Prompt, MediaIDs: mediaIDs})
+	updateImageTaskOperationLog(item, model.OperationStatusSuccess, mediaIDs, "")
 }
 
 func providerImageResults(urls []string) []ai.ImageResult {
@@ -232,7 +273,20 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 			log.Printf("image task %s input cleanup failed: %v", item.ID, err)
 		}
 	}
-	RecordOperation(WithPortalUser(ctx, PortalUser{UID: item.OwnerUID}), OperationLogInput{Action: imageTaskAction(item), Status: model.OperationStatusFailure, TargetType: "image_generation", TargetID: item.ID, Prompt: item.Prompt, ErrorMessage: message})
+	updateImageTaskOperationLog(item, model.OperationStatusFailure, nil, message)
+}
+
+func updateImageTaskOperationLog(item model.ImageGenerationTask, status model.OperationStatus, mediaIDs []string, errorMessage string) {
+	if strings.TrimSpace(item.OperationLogID) == "" {
+		return
+	}
+	if err := repository.UpdateOperationLog(item.OperationLogID, map[string]any{
+		"status":        status,
+		"media_ids":     append([]string{}, mediaIDs...),
+		"error_message": safeAuditError(errorMessage),
+	}); err != nil {
+		log.Printf("image task %s operation log update failed: %v", item.ID, err)
+	}
 }
 
 func imageTaskFailureMessage(err error) string {

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -13,6 +14,29 @@ func SaveOperationLog(item model.OperationLog) error {
 		return err
 	}
 	return db.Create(&item).Error
+}
+
+func UpdateOperationLog(id string, updates map[string]any) error {
+	if len(updates) == 0 {
+		return nil
+	}
+	if mediaIDs, ok := updates["media_ids"].([]string); ok {
+		encoded, err := json.Marshal(mediaIDs)
+		if err != nil {
+			return err
+		}
+		copied := make(map[string]any, len(updates))
+		for key, value := range updates {
+			copied[key] = value
+		}
+		updates = copied
+		updates["media_ids"] = string(encoded)
+	}
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Model(&model.OperationLog{}).Where("id = ?", id).Updates(updates).Error
 }
 
 func ListOperationLogs(q model.OperationLogQuery) ([]model.OperationLog, int64, error) {

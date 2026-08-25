@@ -526,6 +526,21 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 	if item.MediaIDs == nil {
 		t.Fatal("operation log without media must return an empty mediaIds array")
 	}
+	requestSummary := `{"method":"POST","endpoint":"https://www.maizitech.xyz/v1/images/generations","contentType":"application/json","jsonBody":{"images":["data:image/png;base64,<base64>"]}}`
+	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-request-summary", ActorUID: "audit-admin", ActorName: "审计", Action: "image_edit", Status: model.OperationStatusSuccess, RequestSummary: requestSummary, CreatedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=image_edit&actor=audit-admin", nil)
+	request.Header.Set("X-Portal-User-Uid", "audit-admin")
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response = httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	var summaryPayload struct {
+		Data model.OperationLogList `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &summaryPayload) != nil || len(summaryPayload.Data.Items) != 1 || summaryPayload.Data.Items[0].RequestSummary != requestSummary {
+		t.Fatalf("operation request summary = %d/%s", response.Code, response.Body.String())
+	}
 
 	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-expired", ActorUID: "audit-admin", ActorName: "审计", Action: "expired", Status: model.OperationStatusSuccess, CreatedAt: time.Now().Add(-8 * 24 * time.Hour)}); err != nil {
 		t.Fatal(err)

@@ -24,6 +24,40 @@ func CreateImageGenerationTask(item model.ImageGenerationTask) (model.ImageGener
 	return existing, false, firstImageTaskLookupError(found, err)
 }
 
+// CreateImageGenerationTaskWithOperationLog commits the new task and its
+// submitted audit record together. A duplicate client request returns the
+// existing task without creating a second operation log.
+func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, operation model.OperationLog) (model.ImageGenerationTask, bool, error) {
+	database, err := DB()
+	if err != nil {
+		return model.ImageGenerationTask{}, false, err
+	}
+	created := model.ImageGenerationTask{}
+	inserted := false
+	err = database.Transaction(func(transaction *gorm.DB) error {
+		result := transaction.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "client_request_id"}}, DoNothing: true}).Create(&item)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			if err := transaction.Create(&operation).Error; err != nil {
+				return err
+			}
+			created = item
+			inserted = true
+			return nil
+		}
+		if err := transaction.Where("owner_uid = ? AND client_request_id = ?", item.OwnerUID, item.ClientRequestID).First(&created).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return model.ImageGenerationTask{}, false, err
+	}
+	return created, inserted, nil
+}
+
 func GetImageGenerationTask(id string) (model.ImageGenerationTask, bool, error) {
 	database, err := DB()
 	if err != nil {

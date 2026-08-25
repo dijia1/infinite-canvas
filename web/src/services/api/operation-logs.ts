@@ -6,13 +6,14 @@ export type OperationLog = {
     actorName: string;
     actorRoles: string[];
     action: string;
-    status: "success" | "failure";
+    status: "submitted" | "success" | "failure";
     targetType: string;
     targetId: string;
     targetName: string;
     prompt: string;
     mediaIds: string[];
     errorMessage: string;
+    requestSummary?: string;
     createdAt: string;
 };
 

@@ -145,6 +145,30 @@ type ImageTaskProvider interface {
 	GetImageTask(context.Context, string) (ImageTask, error)
 }
 
+// ImageTaskRequestSummary is a redacted, provider-specific audit snapshot.
+// It must never contain credentials, signed URLs, or image bytes.
+type ImageTaskRequestSummary struct {
+	Method          string                         `json:"method"`
+	Endpoint        string                         `json:"endpoint"`
+	ContentType     string                         `json:"contentType"`
+	JSONBody        json.RawMessage                `json:"jsonBody,omitempty"`
+	MultipartFields []ImageTaskRequestSummaryField `json:"multipartFields,omitempty"`
+}
+
+type ImageTaskRequestSummaryField struct {
+	Name        string `json:"name"`
+	Value       string `json:"value,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+	Bytes       int    `json:"bytes,omitempty"`
+}
+
+// ImageTaskRequestSummarizer is required for async image providers so every
+// outbound image request has an auditable, redacted request snapshot.
+type ImageTaskRequestSummarizer interface {
+	SummarizeImageTaskRequest(ImageTaskRequest) (ImageTaskRequestSummary, error)
+}
+
 type VideoRequest struct {
 	Prompt     string
 	Seconds    string

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/ai"
 	"github.com/basketikun/infinite-canvas/model"
@@ -57,7 +58,12 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	if err != nil {
 		return ImageTaskView{}, err
 	}
+	requestSummary, err := summarizeImageTaskRequest(provider, ai.ImageTaskRequest{Request: request.Request, References: request.References, Mask: request.Mask})
+	if err != nil {
+		return ImageTaskView{}, err
+	}
 	taskID := newID("image-task")
+	operationLogID := newID("operation")
 	inputs, err := SaveImageTaskInputs(ctx, taskID, request.References, request.Mask)
 	if err != nil {
 		return ImageTaskView{}, err
@@ -71,9 +77,14 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Mode: request.Mode,
 		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, Count: 1,
-		ReferencesJSON: string(inputsJSON), CreatedAt: now(), UpdatedAt: now(),
+		ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
 	}
-	created, inserted, err := repository.CreateImageGenerationTask(item)
+	operation := model.OperationLog{
+		ID: operationLogID, ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...),
+		Action: imageTaskAction(item), Status: model.OperationStatusSubmitted, TargetType: "image_generation", TargetID: item.ID,
+		Prompt: item.Prompt, RequestSummary: requestSummary, CreatedAt: time.Now().UTC(),
+	}
+	created, inserted, err := repository.CreateImageGenerationTaskWithOperationLog(item, operation)
 	if err != nil {
 		_ = DeleteImageTaskInputs(ctx, inputs)
 		return ImageTaskView{}, err
@@ -82,6 +93,30 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		_ = DeleteImageTaskInputs(ctx, inputs)
 	}
 	return imageTaskView(ctx, user, created)
+}
+
+func summarizeImageTaskRequest(provider model.AIProvider, request ai.ImageTaskRequest) (string, error) {
+	typeInfo, ok := ai.Type(strings.TrimSpace(provider.Type))
+	if !ok || typeInfo.New == nil {
+		return "", errors.New("当前供应商未实现请求审计")
+	}
+	instance, err := typeInfo.New(provider.Config)
+	if err != nil {
+		return "", err
+	}
+	summarizer, ok := instance.(ai.ImageTaskRequestSummarizer)
+	if !ok {
+		return "", errors.New("当前供应商未实现请求审计")
+	}
+	summary, err := summarizer.SummarizeImageTaskRequest(request)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(summary)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskRequest, error) {
@@ -210,23 +245,30 @@ func selectedImageTaskProvider(mode string) (model.AIProvider, error) {
 	if _, ok := instance.(ai.ImageTaskProvider); !ok {
 		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现异步图片任务"}
 	}
+	if _, ok := instance.(ai.ImageTaskRequestSummarizer); !ok {
+		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现请求审计"}
+	}
 	return provider, nil
 }
 
-func imageTaskProvider(item model.ImageGenerationTask) (ai.ImageTaskProvider, error) {
+func imageTaskProvider(item model.ImageGenerationTask) (ai.ImageTaskProvider, ai.ImageTaskRequestSummarizer, error) {
 	typeInfo, ok := ai.Type(strings.TrimSpace(item.ProviderType))
 	if !ok || typeInfo.New == nil {
-		return nil, errors.New("任务绑定的供应商已不可用")
+		return nil, nil, errors.New("任务绑定的供应商已不可用")
 	}
 	provider, err := typeInfo.New(json.RawMessage(item.ProviderConfig))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result, ok := provider.(ai.ImageTaskProvider)
 	if !ok {
-		return nil, errors.New("任务绑定的供应商未实现异步图片任务")
+		return nil, nil, errors.New("任务绑定的供应商未实现异步图片任务")
 	}
-	return result, nil
+	summarizer, ok := provider.(ai.ImageTaskRequestSummarizer)
+	if !ok {
+		return nil, nil, errors.New("任务绑定的供应商未实现请求审计")
+	}
+	return result, summarizer, nil
 }
 
 func imageTaskRequest(item model.ImageGenerationTask) ai.ImageRequest {

@@ -5,7 +5,6 @@ import { Empty, Input, Pagination, Select, Spin, Tag } from "antd";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useDeferredValue, useEffect, useState } from "react";
 
-import { getRemoteImageAccess } from "@/services/image-storage";
 import { fetchOperationLogs, type OperationLog } from "@/services/api/operation-logs";
 
 const PAGE_SIZE = 20;
@@ -70,6 +69,7 @@ function AdminOperationsContent() {
                     placeholder="全部状态"
                     onChange={(value) => updateFilter(setStatus, value || "")}
                     options={[
+                        { value: "submitted", label: "已提交" },
                         { value: "success", label: "成功" },
                         { value: "failure", label: "失败" },
                     ]}
@@ -101,7 +101,7 @@ function OperationLogItem({ item }: { item: OperationLog }) {
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{item.actorName}</span>
                         <span className="text-sm text-stone-500 dark:text-stone-400">{actionLabels[item.action] || item.action}</span>
-                        <Tag color={item.status === "success" ? "green" : "red"}>{item.status === "success" ? "成功" : "失败"}</Tag>
+                        <OperationStatusTag status={item.status} />
                     </div>
                     {item.targetName ? <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{item.targetName}</p> : null}
                     {item.prompt ? (
@@ -110,23 +110,32 @@ function OperationLogItem({ item }: { item: OperationLog }) {
                             <p className="mt-2 whitespace-pre-wrap break-words rounded bg-stone-50 p-3 text-stone-700 dark:bg-stone-900 dark:text-stone-200">{item.prompt}</p>
                         </details>
                     ) : null}
+                    {item.requestSummary ? <OperationRequestSummary summary={item.requestSummary} /> : null}
                     {item.errorMessage ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{item.errorMessage}</p> : null}
                 </div>
                 <time className="shrink-0 text-xs text-stone-500 dark:text-stone-400">{new Date(item.createdAt).toLocaleString()}</time>
             </div>
-            {item.mediaIds.length ? (
-                <div className="mt-3 flex flex-wrap gap-2">
-                    {item.mediaIds.map((mediaId) => (
-                        <OperationMediaThumbnail key={mediaId} mediaId={mediaId} />
-                    ))}
-                </div>
-            ) : null}
         </article>
     );
 }
 
-function OperationMediaThumbnail({ mediaId }: { mediaId: string }) {
-    const query = useQuery({ queryKey: ["operation-media-preview", mediaId], queryFn: () => getRemoteImageAccess(mediaId), staleTime: 5 * 60 * 1000 });
-    if (!query.data?.previewUrl) return <div className="size-16 rounded bg-stone-100 dark:bg-stone-800" aria-label="图片缩略图加载失败" />;
-    return <img src={query.data.previewUrl} alt="操作关联图片" className="size-16 rounded border border-stone-200 object-cover dark:border-stone-700" loading="lazy" />;
+function OperationStatusTag({ status }: { status: OperationLog["status"] }) {
+    if (status === "submitted") return <Tag color="blue">已提交</Tag>;
+    if (status === "success") return <Tag color="green">成功</Tag>;
+    return <Tag color="red">失败</Tag>;
+}
+
+function OperationRequestSummary({ summary }: { summary: string }) {
+    let content = summary;
+    try {
+        content = JSON.stringify(JSON.parse(summary), null, 2);
+    } catch {
+        // Historical malformed audit data remains readable without breaking the record.
+    }
+    return (
+        <details className="mt-2 text-sm">
+            <summary className="cursor-pointer text-stone-500 dark:text-stone-400">查看请求参数</summary>
+            <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-stone-50 p-3 text-xs text-stone-700 dark:bg-stone-900 dark:text-stone-200">{content}</pre>
+        </details>
+    );
 }

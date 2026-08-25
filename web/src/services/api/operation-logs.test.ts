@@ -9,4 +9,5 @@ test("operation log API keeps the directory sync POST body empty", async () => {
 
     assert.match(source, /apiPost<\{ count: number; syncedAt: string \}>\("\/api\/admin\/members\/sync"\)/);
     assert.match(source, /fetchOperationLogs/);
+    assert.match(source, /requestSummary\?: string/);
 });

@@ -31,6 +31,8 @@ type ImageGenerationTask struct {
 	Background         string                    `json:"background"`
 	Count              int                       `json:"count"`
 	ReferencesJSON     string                    `json:"-"`
+	RequestSummary     string                    `json:"-" gorm:"type:text"`
+	OperationLogID     string                    `json:"-" gorm:"index"`
 	ProviderTaskID     string                    `json:"-" gorm:"index"`
 	Progress           int                       `json:"progress"`
 	ResultMediaIDsJSON string                    `json:"-"`

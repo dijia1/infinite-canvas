@@ -13,14 +13,15 @@ import (
 const auditRetention = 7 * 24 * time.Hour
 
 type OperationLogInput struct {
-	Action       string
-	Status       model.OperationStatus
-	TargetType   string
-	TargetID     string
-	TargetName   string
-	Prompt       string
-	MediaIDs     []string
-	ErrorMessage string
+	Action         string
+	Status         model.OperationStatus
+	TargetType     string
+	TargetID       string
+	TargetName     string
+	Prompt         string
+	MediaIDs       []string
+	ErrorMessage   string
+	RequestSummary string
 }
 
 func AuditErrorSummary(err error, fallback string) string {
@@ -44,7 +45,7 @@ func RecordOperation(ctx context.Context, input OperationLogInput) {
 	if err := repository.SaveOperationLog(model.OperationLog{
 		ID: newID("operation"), ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...),
 		Action: input.Action, Status: input.Status, TargetType: input.TargetType, TargetID: input.TargetID, TargetName: input.TargetName,
-		Prompt: input.Prompt, MediaIDs: append([]string{}, input.MediaIDs...), ErrorMessage: safeAuditError(input.ErrorMessage), CreatedAt: time.Now().UTC(),
+		Prompt: input.Prompt, MediaIDs: append([]string{}, input.MediaIDs...), ErrorMessage: safeAuditError(input.ErrorMessage), RequestSummary: strings.TrimSpace(input.RequestSummary), CreatedAt: time.Now().UTC(),
 	}); err != nil {
 		log.Printf("operation audit write failed: action=%s actor=%s error=%v", input.Action, user.UID, err)
 	}
