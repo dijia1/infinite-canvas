@@ -25,12 +25,13 @@ func TestProductionComposeUsesPortalNetworksAndHealthcheck(t *testing.T) {
 		"internal_tools_database:",
 		"portal_directory:",
 		"fetch('http://127.0.0.1:3000/api/healthz')",
+		"\"node\", \"-e\"",
 	} {
 		if !strings.Contains(compose, expected) {
 			t.Fatalf("production compose missing %q", expected)
 		}
 	}
-	if strings.Contains(compose, "build:") || strings.Contains(compose, "pull_policy:") || strings.Contains(compose, "ports:") {
+	if strings.Contains(compose, "build:") || strings.Contains(compose, "pull_policy:") || strings.Contains(compose, "ports:") || strings.Contains(compose, "\"bun\", \"-e\"") {
 		t.Fatal("production compose must not build locally, override pull policy, or expose host ports")
 	}
 }
