@@ -18,6 +18,7 @@ const config: AiConfig = {
     quality: "auto",
     size: "1:1",
     resolution: "1k",
+    outputFormat: "jpeg",
     count: "1",
 };
 
@@ -65,9 +66,33 @@ test("builds edit metadata with persisted or remote references only", () => {
         generationType: "edit",
         size: "3:2",
         resolution: "4k",
+        outputFormat: "jpeg",
         quality: "high",
         count: 2,
         references: ["media:reference", "https://example.test/reference.png"],
+    });
+});
+
+test("persists masks in the same order as reusable reference URLs", () => {
+    const inlineReference: ReferenceImage = { id: "inline", name: "inline.png", type: "image/png", dataUrl: "data:image/png;base64,inline" };
+    const maskedReference: ReferenceImage = {
+        id: "masked",
+        name: "masked.png",
+        type: "image/png",
+        dataUrl: "data:image/png;base64,masked",
+        storageKey: "media:masked",
+        mask: { version: 1, strokes: [{ id: "stroke", tool: "paint", radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] },
+    };
+
+    assert.deepEqual(buildImageGenerationMetadata("edit", config, 1, [inlineReference, maskedReference]), {
+        generationType: "edit",
+        size: "1:1",
+        resolution: "1k",
+        outputFormat: "jpeg",
+        quality: "auto",
+        count: 1,
+        references: ["media:masked"],
+        referenceMasks: [maskedReference.mask],
     });
 });
 
@@ -85,7 +110,7 @@ test("selects each generation model and normalizes node config", () => {
         vquality: "4k",
         count: 3,
     });
-    const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, "image", fallbackConfig);
+    const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, "image", fallbackConfig);
     assert.deepEqual(
         {
             model: configuredResult.model,
@@ -109,7 +134,7 @@ test("selects each generation model and normalizes node config", () => {
 });
 
 test("falls back to supplied defaults when generation config is empty", () => {
-    const emptyConfig: AiConfig = { ...config, model: "", imageModel: "", videoModel: "", textModel: "", quality: "", size: "", resolution: "", videoSeconds: "", vquality: "", count: "" };
+    const emptyConfig: AiConfig = { ...config, model: "", imageModel: "", videoModel: "", textModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" };
 
     assert.deepEqual(buildGenerationConfig(emptyConfig, undefined, "image", fallbackConfig), {
         ...emptyConfig,
@@ -117,6 +142,7 @@ test("falls back to supplied defaults when generation config is empty", () => {
         quality: "standard",
         size: "16:9",
         resolution: "2k",
+        outputFormat: "jpeg",
         videoSeconds: "8",
         vquality: "1080",
         count: "4",
@@ -173,6 +199,13 @@ test("creates a reference image only from image nodes with content", () => {
     assert.deepEqual(sourceNodeReferenceImages(node("text", CanvasNodeType.Text, { content: "text" })), []);
     assert.deepEqual(sourceNodeReferenceImages(node("empty", CanvasNodeType.Image)), []);
     assert.deepEqual(sourceNodeReferenceImages(null), []);
+});
+
+test("carries an image node's hand-drawn mask into image editing", () => {
+    const mask = { version: 1 as const, strokes: [{ id: "paint", tool: "paint" as const, radius: 0.05, points: [{ x: 0.2, y: 0.3 }] }] };
+    const image = node("image-id", CanvasNodeType.Image, { content: "data:image/png;base64,content", imageMask: mask });
+
+    assert.deepEqual(sourceNodeReferenceImages(image)[0]?.mask, mask);
 });
 
 test("formats positive and negative angle labels and includes them in prompts", () => {

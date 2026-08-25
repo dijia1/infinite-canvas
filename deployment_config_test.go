@@ -35,6 +35,21 @@ func TestProductionComposeUsesPortalNetworksAndHealthcheck(t *testing.T) {
 	}
 }
 
+func TestLocalComposeJoinsPortalNetworks(t *testing.T) {
+	compose := readDeploymentFile(t, "docker-compose.local.yml")
+	for _, expected := range []string{
+		"infinite-canvas-app",
+		"infinite-canvas-directory",
+		"portal_gateway:",
+		"internal_tools_database:",
+		"portal_directory:",
+	} {
+		if !strings.Contains(compose, expected) {
+			t.Fatalf("local compose missing %q", expected)
+		}
+	}
+}
+
 func TestReleaseWorkflowBuildsAndDeploysPrivateImageSecurely(t *testing.T) {
 	workflow := readDeploymentFile(t, ".github/workflows/docker-image.yml")
 	for _, expected := range []string{

@@ -31,11 +31,13 @@ export type CanvasNodeMetadata = {
     model?: string;
     size?: string;
     resolution?: string;
+    outputFormat?: string;
     quality?: string;
     count?: number;
     seconds?: string;
     vquality?: string;
     references?: string[];
+    referenceMasks?: Array<import("@/types/image").ImageMask | undefined>;
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;
@@ -48,12 +50,14 @@ export type CanvasNodeMetadata = {
     inputOrder?: string[];
     storageKey?: string;
     mediaId?: string;
+    mediaExpiresAt?: string;
     publicImageId?: string;
     assetId?: string;
     mimeType?: string;
     bytes?: number;
     imageTaskId?: string;
     imageTaskClientRequestId?: string;
+    imageMask?: import("@/types/image").ImageMask;
 };
 
 export type CanvasNodeData = {

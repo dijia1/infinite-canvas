@@ -2,7 +2,7 @@ import { apiDelete, apiGet, apiPatch, apiPost } from "./request";
 
 export type PrivateImage = {
     id: string;
-    source: "upload" | "generated";
+    source: "upload" | "generated" | "canvas_temporary";
     contentType: string;
     bytes: number;
     width: number;
@@ -11,6 +11,7 @@ export type PrivateImage = {
     title: string;
     folderId?: string;
     createdAt: string;
+    expiresAt?: string;
 };
 
 export type PrivateFolder = {
@@ -33,6 +34,10 @@ export function fetchPrivateFolders() {
 
 export function updatePrivateImage(id: string, patch: { title?: string; folderId?: string }) {
     return apiPatch<PrivateImage>(`/api/v1/private-images/${encodeURIComponent(id)}`, patch);
+}
+
+export function preserveTemporaryPrivateImage(id: string) {
+    return apiPost<PrivateImage>(`/api/v1/private-images/${encodeURIComponent(id)}/preserve`);
 }
 
 export function createPrivateFolder(input: { title: string; parentId?: string }) {

@@ -8,6 +8,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
+import { CanvasImageMaskOverlay } from "../image-mask/canvas-image-mask-overlay";
 import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
 
 type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -562,7 +563,7 @@ function ImageContent({
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
-            <div className="h-full w-full overflow-hidden rounded-3xl">
+            <div className="relative h-full w-full overflow-hidden rounded-3xl">
                 <img
                     src={node.metadata!.content!}
                     alt={node.title}
@@ -570,6 +571,7 @@ function ImageContent({
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />
+                {node.metadata?.imageMask?.strokes.length ? <CanvasImageMaskOverlay mask={node.metadata.imageMask} /> : null}
             </div>
             {isBatchRoot ? (
                 <button

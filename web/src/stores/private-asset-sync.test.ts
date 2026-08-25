@@ -36,12 +36,44 @@ test("maps server private media into cache-backed image assets", () => {
             title: "产品主图",
             coverUrl: "",
             tags: [],
-            source: "本地上传",
+            source: "我的上传",
             folderId: "folder-1",
-            data: { dataUrl: "", storageKey: "media:media-1", width: 1200, height: 800, bytes: 2048, mimeType: "image/png" },
-            metadata: { mediaId: "media-1", uploadState: "uploaded" },
+            data: { dataUrl: "", storageKey: "media:media-1:v1:original", width: 1200, height: 800, bytes: 2048, mimeType: "image/png" },
+            metadata: { mediaId: "media-1", mediaSource: "upload", uploadState: "uploaded" },
             createdAt: "2026-08-24T00:00:00Z",
             updatedAt: "2026-08-24T00:00:00Z",
         },
     ]);
+});
+
+test("preserves temporary media source and expiration for the system asset folders", () => {
+    const state = privateCatalogToAssetState(
+        {
+            items: [
+                {
+                    id: "media-canvas",
+                    source: "canvas_temporary",
+                    contentType: "image/png",
+                    bytes: 1024,
+                    width: 800,
+                    height: 600,
+                    filename: "canvas.png",
+                    title: "画板输入图",
+                    createdAt: "2026-08-25T00:00:00Z",
+                    expiresAt: "2026-09-01T00:00:00Z",
+                },
+            ],
+            total: 1,
+        },
+        { items: [], total: 0 },
+    );
+
+    const asset = state.assets[0];
+    assert.equal(asset?.source, "画板临时素材");
+    assert.deepEqual(asset?.metadata, {
+        mediaId: "media-canvas",
+        mediaSource: "canvas_temporary",
+        expiresAt: "2026-09-01T00:00:00Z",
+        uploadState: "uploaded",
+    });
 });

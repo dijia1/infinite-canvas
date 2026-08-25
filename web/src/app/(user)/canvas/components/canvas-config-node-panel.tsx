@@ -8,7 +8,9 @@ import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
+import { normalizeImageOutputFormat } from "@/lib/image-output-config";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { hasImageMask } from "../image-mask/mask-utils";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { NodeGenerationInput } from "./canvas-node-generation";
@@ -272,11 +274,13 @@ function ImageSortCard({
     onMove: (input: NodeGenerationInput, offset: number) => void;
 }) {
     if (!input.image) return null;
+    const masked = hasImageMask(input.image.mask);
+    const inputLabel = imageIndex === 0 ? (masked ? "主图 A · 遮罩目标" : "主图 A") : masked ? "遮罩必须置于主图 A" : `参考图 ${String.fromCharCode("B".charCodeAt(0) + imageIndex - 1)}`;
     return (
         <div className="w-24 shrink-0 overflow-hidden rounded-lg border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
             <div className="relative">
                 <img src={input.image.dataUrl} alt={input.title} className="aspect-square w-full object-cover" />
-                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{`图 ${imageIndex + 1}`}</span>
+                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{inputLabel}</span>
                 <HorizontalOrderButtons index={imageIndex} total={imageTotal} onMove={(offset) => onMove(input, offset)} />
             </div>
             <div className="truncate px-1.5 py-1 text-[10px] opacity-60">{input.title || `图 ${imageIndex + 1}`}</div>
@@ -318,6 +322,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         resolution: normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
+        outputFormat: normalizeImageOutputFormat(node.metadata?.outputFormat || globalConfig.outputFormat || defaultConfig.outputFormat),
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

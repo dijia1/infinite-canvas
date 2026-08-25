@@ -25,6 +25,7 @@ const config: AiConfig = {
     quality: "auto",
     size: "1:1",
     resolution: "1k",
+    outputFormat: "jpeg",
     count: "1",
 };
 
@@ -159,6 +160,38 @@ test("uses image edit only when references exist", async () => {
 
     assert.equal(calls.edit, 1);
     assert.equal(calls.generation, 0);
+});
+
+test("submits an ordered masked main image with additional reference images", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    const maskedReference = { id: "masked", name: "masked.png", type: "image/png", dataUrl: "data:image/png;base64,masked", mask: { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] } };
+    const extraReference = { id: "extra", name: "extra.png", type: "image/png", dataUrl: "data:image/png;base64,extra" };
+    const { controller, nodesRef, calls } = setup([source], [], {
+        hydrateGenerationContext: async (_nodeId: string, prompt: string) => ({ prompt, referenceImages: [maskedReference, extraReference], textCount: 0, imageCount: 2 }),
+    });
+
+    await controller.generateNode("source", "image", "只编辑遮罩区域");
+
+    assert.equal(calls.edit, 1);
+    assert.equal(calls.generation, 0);
+    assert.deepEqual(calls.errors, []);
+    assert.equal(nodesRef.current.filter((item) => item.type === CanvasNodeType.Image).length, 1);
+});
+
+test("rejects a masked image when it is not the first ordered reference", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    const primaryReference = { id: "primary", name: "primary.png", type: "image/png", dataUrl: "data:image/png;base64,primary" };
+    const maskedReference = { id: "masked", name: "masked.png", type: "image/png", dataUrl: "data:image/png;base64,masked", mask: { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] } };
+    const { controller, nodesRef, calls } = setup([source], [], {
+        hydrateGenerationContext: async (_nodeId: string, prompt: string) => ({ prompt, referenceImages: [primaryReference, maskedReference], textCount: 0, imageCount: 2 }),
+    });
+
+    await controller.generateNode("source", "image", "只编辑遮罩区域");
+
+    assert.equal(calls.edit, 0);
+    assert.equal(calls.generation, 0);
+    assert.deepEqual(calls.errors, ["带遮罩的主图必须位于第一张参考图"]);
+    assert.equal(nodesRef.current.length, 1);
 });
 
 test("preserves successful batch children when another child fails", async () => {

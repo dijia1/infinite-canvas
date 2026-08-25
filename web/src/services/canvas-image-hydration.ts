@@ -1,12 +1,13 @@
 import { recoverPersistedImage } from "./image-recovery.ts";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/app/(user)/canvas/types";
 
-export type CanvasImageMetadata = Pick<CanvasNodeMetadata, "content" | "storageKey" | "mediaId" | "publicImageId" | "naturalWidth" | "naturalHeight" | "bytes" | "mimeType" | "status" | "errorDetails">;
+export type CanvasImageMetadata = Pick<CanvasNodeMetadata, "content" | "storageKey" | "mediaId" | "mediaExpiresAt" | "publicImageId" | "naturalWidth" | "naturalHeight" | "bytes" | "mimeType" | "status" | "errorDetails">;
 
 export type StoredCanvasImage = {
     url: string;
     storageKey: string;
     mediaId?: string;
+    mediaExpiresAt?: string;
     width: number;
     height: number;
     bytes: number;
@@ -17,6 +18,7 @@ type RestoredCanvasImageMetadata = {
     content: string;
     storageKey: string;
     mediaId?: string;
+    mediaExpiresAt?: string;
     naturalWidth: number;
     naturalHeight: number;
     bytes: number;
@@ -44,6 +46,7 @@ function restoredImageMetadata(image: StoredCanvasImage): RestoredCanvasImageMet
         content: image.url,
         storageKey: image.storageKey,
         mediaId: image.mediaId,
+        ...(image.mediaExpiresAt ? { mediaExpiresAt: image.mediaExpiresAt } : {}),
         naturalWidth: image.width,
         naturalHeight: image.height,
         bytes: image.bytes,

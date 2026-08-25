@@ -2,14 +2,14 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { App, Empty, Input, Modal, Pagination } from "antd";
-import { ImageOff, RefreshCw } from "lucide-react";
+import { Folder, ImageOff, RefreshCw } from "lucide-react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
 import { deleteUserImage, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
-import { createPrivateFolder, deletePrivateFolder, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
-import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imagePreviewStorageKey, loadMediaPreview, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { createPrivateFolder, deletePrivateFolder, preserveTemporaryPrivateImage, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
+import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailStorageKey, loadMediaImage, loadMediaThumbnail, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
@@ -18,6 +18,12 @@ import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPay
 import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
 const PAGE_SIZE = 24;
+type PrivateMediaSource = "canvas_temporary" | "upload" | "generated";
+const PRIVATE_SYSTEM_FOLDERS: Array<{ source: PrivateMediaSource; title: string }> = [
+    { source: "canvas_temporary", title: "画板临时素材" },
+    { source: "upload", title: "我的上传" },
+    { source: "generated", title: "AI 生成" },
+];
 type ContextMenu = { x: number; y: number };
 type ImageContextMenu = ContextMenu & { asset: ImageAsset };
 type FolderContextMenu = ContextMenu & { folder: PrivateAssetFolder };
@@ -40,6 +46,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const [preview, setPreview] = useState<{ title: string; url: string }>();
     const [thumbnailStage, setThumbnailStage] = useState(DEFAULT_MATERIAL_THUMBNAIL_STAGE);
     const [currentFolderId, setCurrentFolderId] = useState<string>();
+    const [currentSystemSource, setCurrentSystemSource] = useState<PrivateMediaSource>();
     const [contextMenu, setContextMenu] = useState<ContextMenu>();
     const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenu>();
     const [imageContextMenu, setImageContextMenu] = useState<ImageContextMenu>();
@@ -50,9 +57,13 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         if (currentFolderId && !folders.some((folder) => folder.id === currentFolderId)) setCurrentFolderId(undefined);
     }, [currentFolderId, folders]);
 
+    useEffect(() => {
+        if (open) void refreshFromServer().catch(() => undefined);
+    }, [open, refreshFromServer]);
+
     const uploadStoredImage = useCallback(
         async (assetId: string, image: UploadedImage, file: File) => {
-            const remote = await uploadUserImage(file);
+            const remote = await uploadUserImage(file, "library");
             const assetExists = () => useAssetStore.getState().assets.some((asset) => asset.id === assetId);
             if (!assetExists()) {
                 await deleteUserImage(remote.mediaId);
@@ -79,7 +90,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
             updateAsset(assetId, {
                 coverUrl: persisted.url,
                 data: { dataUrl: persisted.url, storageKey: persisted.storageKey, width: persisted.width, height: persisted.height, bytes: persisted.bytes, mimeType: persisted.mimeType },
-                metadata: { mediaId: remote.mediaId, uploadState: "uploaded" },
+                metadata: { mediaId: remote.mediaId, mediaSource: "upload", uploadState: "uploaded" },
             });
             const asset = useAssetStore.getState().assets.find((item) => item.id === assetId);
             if (asset?.kind === "image") {
@@ -123,7 +134,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                     source,
                     folderId,
                     data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType },
-                    metadata: { uploadState: "pending" },
+                    metadata: { mediaSource: "upload", uploadState: "pending" },
                 });
                 if (await uploadStoredImage(assetId, image, file)) message.success("图片已加入我的素材");
             } catch (error) {
@@ -170,7 +181,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
             try {
                 if (mediaId && !publicImageId) await deleteUserImage(mediaId);
                 removeAsset(asset.id);
-                if (!publicImageId) await deleteStoredImages([asset.data.storageKey, ...(mediaId ? [imagePreviewStorageKey(mediaId)] : [])].filter((key): key is string => Boolean(key)));
+                if (!publicImageId) await deleteStoredImages([asset.data.storageKey, ...(mediaId ? [imageThumbnailStorageKey(mediaId)] : [])].filter((key): key is string => Boolean(key)));
                 message.success("图片已永久删除");
             } catch (error) {
                 message.error(error instanceof Error ? `删除图片失败：${error.message}` : "删除图片失败");
@@ -179,6 +190,21 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
             }
         },
         [deletingAssetId, message, removeAsset],
+    );
+
+    const preserveTemporaryImage = useCallback(
+        async (asset: ImageAsset) => {
+            const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+            if (!mediaId) return;
+            try {
+                await preserveTemporaryPrivateImage(mediaId);
+                await refreshFromServer();
+                message.success("图片已永久保存");
+            } catch (error) {
+                message.error(error instanceof Error ? error.message : "永久保存失败");
+            }
+        },
+        [message, refreshFromServer],
     );
 
     useEffect(() => {
@@ -253,7 +279,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 <div
                     className="thin-scrollbar min-h-0 flex-1 overflow-y-auto p-4"
                     onContextMenu={(event) => {
-                        if ((event.target as Element).closest("[data-material-card], [data-folder-id]")) return;
+                        if ((event.target as Element).closest("[data-material-card], [data-folder-id], [data-system-folder]")) return;
                         event.preventDefault();
                         setContextMenu({ x: event.clientX, y: event.clientY });
                     }}
@@ -267,11 +293,20 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         assets={assets}
                         folders={folders}
                         currentFolderId={currentFolderId}
+                        currentSystemSource={currentSystemSource}
                         thumbnailStage={thumbnailStage}
                         isUploading={isUploading}
-                        onNavigate={setCurrentFolderId}
+                        onNavigate={(folderId) => {
+                            setCurrentSystemSource(undefined);
+                            setCurrentFolderId(folderId);
+                        }}
+                        onSystemNavigate={(source) => {
+                            setCurrentFolderId(undefined);
+                            setCurrentSystemSource(source);
+                        }}
                         onAddImage={() => fileInputRef.current?.click()}
                         onRetryImage={retryImage}
+                        onPreserveImage={preserveTemporaryImage}
                         onPreview={setPreview}
                         onFolderDrop={(folderId, event) => void handleFolderDrop(folderId, event)}
                         onImageContextMenu={(asset, event) => {
@@ -443,11 +478,14 @@ function MyAssetsTab({
     assets,
     folders,
     currentFolderId,
+    currentSystemSource,
     thumbnailStage,
     isUploading,
     onNavigate,
+    onSystemNavigate,
     onAddImage,
     onRetryImage,
+    onPreserveImage,
     onPreview,
     onFolderDrop,
     onImageContextMenu,
@@ -456,11 +494,14 @@ function MyAssetsTab({
     assets: Asset[];
     folders: PrivateAssetFolder[];
     currentFolderId?: string;
+    currentSystemSource?: PrivateMediaSource;
     thumbnailStage: number;
     isUploading: boolean;
     onNavigate: (folderId?: string) => void;
+    onSystemNavigate: (source?: PrivateMediaSource) => void;
     onAddImage: () => void;
     onRetryImage: (asset: ImageAsset) => void;
+    onPreserveImage: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
     onFolderDrop: (folderId: string, event: DragEvent<HTMLButtonElement>) => void;
     onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
@@ -472,9 +513,10 @@ function MyAssetsTab({
         const query = keyword.trim().toLowerCase();
         return assets
             .filter((asset): asset is ImageAsset => asset.kind === "image")
+            .filter((asset) => !currentSystemSource || privateMediaSource(asset) === currentSystemSource)
             .filter((asset) => (asset.folderId || undefined) === currentFolderId)
             .filter((asset) => !query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query));
-    }, [assets, currentFolderId, keyword]);
+    }, [assets, currentFolderId, currentSystemSource, keyword]);
     const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
     useEffect(() => {
         setPage((value) => Math.min(value, Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))));
@@ -484,7 +526,7 @@ function MyAssetsTab({
         <div className="space-y-4">
             <MaterialDrawerToolbar
                 keyword={keyword}
-                placeholder="搜索当前文件夹"
+                placeholder="搜索当前素材范围"
                 onKeywordChange={(value) => {
                     setPage(1);
                     setKeyword(value);
@@ -492,11 +534,19 @@ function MyAssetsTab({
                 onAddImage={onAddImage}
                 isUploading={isUploading}
             />
+            <PrivateSystemFolderTree
+                currentSource={currentSystemSource}
+                onNavigate={(source) => {
+                    setPage(1);
+                    onSystemNavigate(source);
+                }}
+            />
             <MaterialFolderBreadcrumbs
                 folders={folders}
                 currentFolderId={currentFolderId}
                 onNavigate={(folderId) => {
                     setPage(1);
+                    onSystemNavigate(undefined);
                     onNavigate(folderId);
                 }}
             />
@@ -505,6 +555,7 @@ function MyAssetsTab({
                 currentFolderId={currentFolderId}
                 onNavigate={(folderId) => {
                     setPage(1);
+                    onSystemNavigate(undefined);
                     onNavigate(folderId);
                 }}
                 onDropImage={onFolderDrop}
@@ -513,7 +564,7 @@ function MyAssetsTab({
             {visible.length ? (
                 <div className={gridClass}>
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
+                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreserve={onPreserveImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
                     ))}
                 </div>
             ) : (
@@ -524,6 +575,32 @@ function MyAssetsTab({
                     <Pagination size="small" current={page} pageSize={PAGE_SIZE} total={filtered.length} onChange={setPage} showSizeChanger={false} />
                 </div>
             ) : null}
+        </div>
+    );
+}
+
+function privateMediaSource(asset: ImageAsset): PrivateMediaSource {
+    const source = asset.metadata?.mediaSource;
+    return source === "canvas_temporary" || source === "generated" ? source : "upload";
+}
+
+function PrivateSystemFolderTree({ currentSource, onNavigate }: { currentSource?: PrivateMediaSource; onNavigate: (source?: PrivateMediaSource) => void }) {
+    return (
+        <div className="space-y-0.5" aria-label="我的素材系统分类">
+            {PRIVATE_SYSTEM_FOLDERS.map((folder) => (
+                <button
+                    key={folder.source}
+                    type="button"
+                    data-system-folder={folder.source}
+                    aria-current={currentSource === folder.source ? "page" : undefined}
+                    className={`flex min-h-9 w-full items-center rounded-md px-2 text-left text-sm transition hover:bg-stone-100 dark:hover:bg-stone-800 ${currentSource === folder.source ? "bg-stone-100 text-stone-950 dark:bg-stone-800 dark:text-stone-50" : "text-stone-700 dark:text-stone-200"}`}
+                    onClick={() => onNavigate(currentSource === folder.source ? undefined : folder.source)}
+                    onContextMenu={(event) => event.preventDefault()}
+                >
+                    <Folder className="mr-2 size-4 shrink-0 text-stone-400" aria-hidden />
+                    <span className="truncate">{folder.title}</span>
+                </button>
+            ))}
         </div>
     );
 }
@@ -551,11 +628,13 @@ function formatMaterialPreviewError(error: unknown) {
 function PickerCard({
     asset,
     onRetry,
+    onPreserve,
     onPreview,
     onImageContextMenu,
 }: {
     asset: ImageAsset;
     onRetry: (asset: ImageAsset) => void;
+    onPreserve: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
     onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
 }) {
@@ -564,14 +643,17 @@ function PickerCard({
     const failed = uploadState === "failed";
     const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
     const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
+    const temporary = privateMediaSource(asset) === "canvas_temporary";
+    const expiresAt = typeof asset.metadata?.expiresAt === "string" ? Date.parse(asset.metadata.expiresAt) : NaN;
+    const expired = temporary && Number.isFinite(expiresAt) && expiresAt <= Date.now();
     const [loadFailed, setLoadFailed] = useState(false);
     const loadPreview = useCallback(async () => {
-        return await loadMediaPreview(mediaId, async () => {
+        return await loadMediaThumbnail(mediaId, async () => {
                 const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
                 return access.previewUrl || access.url;
             });
     }, [mediaId, publicImageId]);
-    const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed;
+    const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed && !expired;
     const { ref, url: previewURL, error: previewLoadError, loading } = useVisibleMediaPreview({
         identity: asset.id,
         enabled: shouldLoadPreview,
@@ -595,12 +677,22 @@ function PickerCard({
                 event.dataTransfer.setData(PRIVATE_IMAGE_DRAG_TYPE, JSON.stringify({ assetId: asset.id } satisfies PrivateImageDropPayload));
             }}
             onClick={() => {
-                if (preview) onPreview({ title: asset.title, url: preview });
+                if (!preview) return;
+                if (!mediaId) {
+                    onPreview({ title: asset.title, url: preview });
+                    return;
+                }
+                void loadMediaImage(mediaId, async () => {
+                    const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
+                    return access.url;
+                })
+                    .then((image) => onPreview({ title: asset.title, url: image.url }))
+                    .catch(() => onPreview({ title: asset.title, url: preview }));
             }}
             onContextMenu={(event: MouseEvent) => onImageContextMenu(asset, event)}
-            title={previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
+            title={expired ? "画板临时素材已到期，可右键删除" : previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
         >
-            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder />}
+            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder expired={expired} />}
             {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
             {previewError ? (
                 <div className="absolute inset-x-0 bottom-0 truncate bg-amber-100/95 px-1.5 py-1 text-[10px] leading-3 text-amber-950 dark:bg-amber-950/95 dark:text-amber-100" aria-label="缩略图加载失败" title={previewError}>
@@ -621,14 +713,35 @@ function PickerCard({
                     <RefreshCw className="size-3.5" />
                 </button>
             ) : null}
+            {temporary && !expired ? (
+                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-black/65 px-1.5 py-1 text-[10px] text-white">
+                    <span className="truncate">{temporaryExpiryLabel(expiresAt)}</span>
+                    <button
+                        type="button"
+                        className="shrink-0 rounded bg-white/20 px-1.5 py-0.5 transition hover:bg-white/30"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            onPreserve(asset);
+                        }}
+                    >
+                        永久保存
+                    </button>
+                </div>
+            ) : null}
         </div>
     );
 }
-function BrokenImagePlaceholder() {
+function temporaryExpiryLabel(expiresAt: number) {
+    if (!Number.isFinite(expiresAt)) return "七天后到期";
+    const remaining = Math.max(0, expiresAt - Date.now());
+    const days = Math.ceil(remaining / (24 * 60 * 60 * 1000));
+    return days > 0 ? `${days} 天后到期` : "即将到期";
+}
+function BrokenImagePlaceholder({ expired = false }: { expired?: boolean }) {
     return (
         <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 bg-stone-100 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
             <ImageOff className="size-5" aria-hidden />
-            <span>图片已损坏</span>
+            <span>{expired ? "临时素材已到期" : "图片已损坏"}</span>
         </div>
     );
 }

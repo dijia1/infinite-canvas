@@ -27,9 +27,10 @@ export interface ImageCacheStore {
 }
 
 type ImageMeta = { width: number; height: number; mimeType: string };
-type PreviewMetadata = { bytes: number; lastAccess: number };
-type CacheMetadata = { bytes: number; lastAccess: number; variant: "preview" | "original" | "temporary" };
-type CacheTotal = { bytes: number };
+type CacheVariant = "thumbnail" | "original" | "temporary";
+type CacheMetadata = { bytes: number; cachedAt: number; lastAccessedAt: number; variant: CacheVariant };
+type LegacyCacheMetadata = Omit<Partial<CacheMetadata>, "variant"> & { lastAccess?: number; variant?: "preview" | CacheVariant };
+type CacheTotal = { bytes: number; entries: number };
 type CachedVariant = { blob: Blob; storageKey: string; generation: number };
 export type RemoteMediaURL = string | (() => Promise<string>);
 
@@ -46,25 +47,28 @@ export type ImageStorageOperationsOptions = {
     revokeObjectURL?: (url: string) => void;
     readMeta?: (url: string) => Promise<ImageMeta>;
     now?: () => number;
-    previewBudgetBytes?: number;
     cacheBudgetBytes?: number;
     cacheHighWatermarkBytes?: number;
     cacheLowWatermarkBytes?: number;
+    cacheMaxEntries?: number;
+    cacheHighWatermarkEntries?: number;
+    cacheLowWatermarkEntries?: number;
 };
 
-const PREVIEW_METADATA_PREFIX = "preview-meta:";
 const CACHE_METADATA_PREFIX = "cache-meta:";
 const CACHE_TOTAL_KEY = "cache-total";
-const DEFAULT_PREVIEW_CACHE_BUDGET_BYTES = 64 * 1024 * 1024;
 const GIB = 1024 * 1024 * 1024;
 const DEFAULT_CACHE_BUDGET_BYTES = 2 * GIB;
 const DEFAULT_CACHE_HIGH_WATERMARK_BYTES = Math.floor(1.8 * GIB);
 const DEFAULT_CACHE_LOW_WATERMARK_BYTES = Math.floor(1.4 * GIB);
+const DEFAULT_CACHE_MAX_ENTRIES = 10_000;
+const DEFAULT_CACHE_HIGH_WATERMARK_ENTRIES = 9_000;
+const DEFAULT_CACHE_LOW_WATERMARK_ENTRIES = 8_000;
+const MEDIA_CACHE_VERSION = 1;
 const inFlightStorageKeyCounts = new Map<string, number>();
 const storageKeyGenerations = new Map<string, number>();
 const storageKeyWriteRevisions = new Map<string, number>();
 const storageKeyMutationTails = new Map<string, Promise<void>>();
-const previewBudgetEnforcementSchedules = new Set<string>();
 const cacheBudgetEnforcementSchedules = new Set<string>();
 
 let scopeVersion = 1;
@@ -103,36 +107,72 @@ export function setImageStorageScope(uid?: string) {
 }
 
 export function imageStorageKeyForMedia(mediaId: string) {
-    return `media:${mediaId}`;
+    return mediaCacheStorageKey(mediaId, "original");
 }
 
-export function imagePreviewStorageKey(mediaId: string) {
-    return `preview:${mediaId}`;
+export function imageThumbnailStorageKey(mediaId: string) {
+    return mediaCacheStorageKey(mediaId, "thumbnail");
 }
 
-function previewMetadataKey(storageKey: string) {
-    return `${PREVIEW_METADATA_PREFIX}${storageKey.slice("preview:".length)}`;
+function mediaCacheStorageKey(mediaId: string, variant: "thumbnail" | "original") {
+    return `media:${mediaId}:v${MEDIA_CACHE_VERSION}:${variant}`;
 }
 
 function cacheMetadataKey(storageKey: string) {
     return `${CACHE_METADATA_PREFIX}${storageKey}`;
 }
 
-function cacheVariant(storageKey: string): CacheMetadata["variant"] {
-    if (storageKey.startsWith("preview:")) return "preview";
+function cacheVariant(storageKey: string): CacheVariant {
+    if (storageKey.endsWith(":thumbnail")) return "thumbnail";
     return storageKey.startsWith("image:") ? "temporary" : "original";
+}
+
+function normalizeCacheMetadata(value: LegacyCacheMetadata | null): CacheMetadata | undefined {
+    if (!value) return undefined;
+    const bytes = Number(value.bytes);
+    if (!Number.isFinite(bytes)) return undefined;
+    const variant = value.variant === "preview" ? "thumbnail" : value.variant;
+    if (variant !== "thumbnail" && variant !== "original" && variant !== "temporary") return undefined;
+    const lastAccessedAt = Number.isFinite(value.lastAccessedAt) ? Number(value.lastAccessedAt) : Number.isFinite(value.lastAccess) ? Number(value.lastAccess) : 0;
+    const cachedAt = Number.isFinite(value.cachedAt) ? Number(value.cachedAt) : lastAccessedAt;
+    return {
+        bytes: Math.max(0, bytes),
+        cachedAt,
+        lastAccessedAt,
+        variant,
+    };
+}
+
+function legacyStorageKey(storageKey: string) {
+    const match = /^media:(.+):v1:(original|thumbnail)$/.exec(storageKey);
+    if (!match) return undefined;
+    return match[2] === "thumbnail" ? `preview:${match[1]}` : `media:${match[1]}`;
+}
+
+function mediaIDFromStorageKey(storageKey: string) {
+    const versioned = /^media:(.+):v1:(?:original|thumbnail)$/.exec(storageKey);
+    if (versioned) return versioned[1];
+    if (storageKey.startsWith("media:")) return storageKey.slice("media:".length);
+    if (storageKey.startsWith("preview:")) return storageKey.slice("preview:".length);
+    return undefined;
+}
+
+function canonicalStorageKey(storageKey: string) {
+    const mediaId = mediaIDFromStorageKey(storageKey);
+    if (!mediaId) return storageKey;
+    return storageKey.startsWith("preview:") || storageKey.endsWith(":thumbnail") ? imageThumbnailStorageKey(mediaId) : imageStorageKeyForMedia(mediaId);
 }
 
 function expandExplicitDeletionKeys(keys: Iterable<string>) {
     const expanded = new Set<string>();
     for (const key of keys) {
         expanded.add(key);
-        if (key.startsWith("media:")) {
-            const previewKey = imagePreviewStorageKey(key.slice("media:".length));
-            expanded.add(previewKey);
-            expanded.add(previewMetadataKey(previewKey));
-        } else if (key.startsWith("preview:")) {
-            expanded.add(previewMetadataKey(key));
+        const mediaId = mediaIDFromStorageKey(key);
+        if (mediaId) {
+            expanded.add(imageStorageKeyForMedia(mediaId));
+            expanded.add(imageThumbnailStorageKey(mediaId));
+            expanded.add(`media:${mediaId}`);
+            expanded.add(`preview:${mediaId}`);
         }
     }
     return expanded;
@@ -154,6 +194,12 @@ async function resolveRemoteURL(value: RemoteMediaURL) {
     return typeof value === "string" ? value : value();
 }
 
+function imageFetchStatus(error: unknown) {
+    if (!error || typeof error !== "object" || !("status" in error)) return undefined;
+    const status = (error as { status?: unknown }).status;
+    return typeof status === "number" ? status : undefined;
+}
+
 export function createImageStorageOperations(options: ImageStorageOperationsOptions) {
     const fetchImageBlob = options.fetchImageBlob || (async (url: string) => imageBlobFromResponse(await fetch(appApiPath(url))));
     const createPreviewBlob = options.createPreviewBlob || createImagePreview;
@@ -162,11 +208,12 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     const readMeta = options.readMeta || readImageMeta;
     const now = options.now || Date.now;
     const cacheIndexStore = options.cacheIndexStore || options.store;
-    const previewBudgetBytes = options.previewBudgetBytes ?? DEFAULT_PREVIEW_CACHE_BUDGET_BYTES;
     const cacheBudgetBytes = options.cacheBudgetBytes ?? DEFAULT_CACHE_BUDGET_BYTES;
     const cacheHighWatermarkBytes = Math.min(options.cacheHighWatermarkBytes ?? DEFAULT_CACHE_HIGH_WATERMARK_BYTES, cacheBudgetBytes);
     const cacheLowWatermarkBytes = Math.min(options.cacheLowWatermarkBytes ?? DEFAULT_CACHE_LOW_WATERMARK_BYTES, cacheHighWatermarkBytes);
-    const previewBudgetScheduleKey = `${options.scope}@${options.scopeVersion}`;
+    const cacheMaxEntries = Math.max(1, options.cacheMaxEntries ?? DEFAULT_CACHE_MAX_ENTRIES);
+    const cacheHighWatermarkEntries = Math.min(Math.max(1, options.cacheHighWatermarkEntries ?? DEFAULT_CACHE_HIGH_WATERMARK_ENTRIES), cacheMaxEntries);
+    const cacheLowWatermarkEntries = Math.min(Math.max(0, options.cacheLowWatermarkEntries ?? DEFAULT_CACHE_LOW_WATERMARK_ENTRIES), cacheHighWatermarkEntries);
     const cacheBudgetScheduleKey = `${options.scope}@${options.scopeVersion}`;
 
     const generationKey = (storageKey: string) => physicalStorageKey(options, storageKey);
@@ -228,40 +275,33 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     };
     const resolveBlobURL = (storageKey: string, blob: Blob) => options.objectUrls.get(storageKey) || replaceObjectURL(storageKey, blob);
 
-    const touchPreviewMetadata = async (storageKey: string, bytes: number, generation: number) =>
-        withStorageMutation(previewMetadataKey(storageKey), async () => {
-            ensureActive(options);
-            ensureGeneration(storageKey, generation);
-            await options.store.setItem<PreviewMetadata>(previewMetadataKey(storageKey), { bytes, lastAccess: now() });
-            try {
-                ensureActive(options);
-                ensureGeneration(storageKey, generation);
-            } catch (error) {
-                await options.store.removeItem(previewMetadataKey(storageKey));
-                throw error;
-            }
-        });
-    const touchPreview = async (storageKey: string, blob: Blob, generation: number) => touchPreviewMetadata(storageKey, blob.size, generation);
     const writeCacheMetadata = async (storageKey: string, blob: Blob, generation: number) =>
         withStorageMutations([CACHE_TOTAL_KEY, cacheMetadataKey(storageKey)], async () => {
             ensureActive(options);
             ensureGeneration(storageKey, generation);
             const metadataKey = cacheMetadataKey(storageKey);
-            const previous = await cacheIndexStore.getItem<CacheMetadata>(metadataKey);
+            const previous = normalizeCacheMetadata(await cacheIndexStore.getItem<LegacyCacheMetadata>(metadataKey));
             const total = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
             const bytes = Math.max(0, blob.size);
-            await cacheIndexStore.setItem<CacheMetadata>(metadataKey, { bytes, lastAccess: now(), variant: cacheVariant(storageKey) });
-            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, { bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0) + bytes) });
+            const timestamp = now();
+            await cacheIndexStore.setItem<CacheMetadata>(metadataKey, { bytes, cachedAt: previous?.cachedAt || timestamp, lastAccessedAt: timestamp, variant: cacheVariant(storageKey) });
+            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, {
+                bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0) + bytes),
+                entries: Math.max(0, (total?.entries || 0) - (previous ? 1 : 0) + 1),
+            });
             ensureActive(options);
             ensureGeneration(storageKey, generation);
         });
     const deleteCacheMetadata = async (storageKey: string) =>
         withStorageMutations([CACHE_TOTAL_KEY, cacheMetadataKey(storageKey)], async () => {
             const metadataKey = cacheMetadataKey(storageKey);
-            const previous = await cacheIndexStore.getItem<CacheMetadata>(metadataKey);
+            const previous = normalizeCacheMetadata(await cacheIndexStore.getItem<LegacyCacheMetadata>(metadataKey));
             const total = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
             await cacheIndexStore.removeItem(metadataKey);
-            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, { bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0)) });
+            await cacheIndexStore.setItem<CacheTotal>(CACHE_TOTAL_KEY, {
+                bytes: Math.max(0, (total?.bytes || 0) - Math.max(0, previous?.bytes || 0)),
+                entries: Math.max(0, (total?.entries || 0) - (previous ? 1 : 0)),
+            });
         });
     const touchCacheMetadataWithoutBlockingDisplay = async (storageKey: string, blob: Blob, generation: number) => {
         try {
@@ -270,35 +310,47 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             if (options.isActive() && currentGeneration(storageKey) === generation) console.warn("更新图片缓存元数据失败", error instanceof Error ? error.message : String(error));
         }
     };
-    const touchPreviewWithoutBlockingDisplay = async (storageKey: string, blob: Blob, generation: number) => {
+    const touchCachedMetadataWithoutBlockingDisplay = async (storageKey: string, generation: number) => {
         try {
-            await touchPreview(storageKey, blob, generation);
+            await withStorageMutation(cacheMetadataKey(storageKey), async () => {
+                ensureActive(options);
+                ensureGeneration(storageKey, generation);
+                const metadataKey = cacheMetadataKey(storageKey);
+                const metadata = normalizeCacheMetadata(await cacheIndexStore.getItem<LegacyCacheMetadata>(metadataKey));
+                if (!metadata) return;
+                await cacheIndexStore.setItem<CacheMetadata>(metadataKey, { ...metadata, lastAccessedAt: now() });
+            });
         } catch (error) {
-            if (currentGeneration(storageKey) === generation) console.warn("更新图片预览缓存元数据失败", error instanceof Error ? error.message : String(error));
+            if (options.isActive() && currentGeneration(storageKey) === generation) console.warn("更新图片缓存元数据失败", error instanceof Error ? error.message : String(error));
         }
     };
-    const touchCachedPreviewWithoutBlockingDisplay = async (storageKey: string, generation: number) => {
-        try {
+    async function migrateLegacyBlob(storageKey: string, generation: number) {
+        const legacyKey = legacyStorageKey(storageKey);
+        if (!legacyKey) return undefined;
+        return withStorageMutations([storageKey, legacyKey], async () => {
             ensureActive(options);
             ensureGeneration(storageKey, generation);
-            const metadata = await options.store.getItem<PreviewMetadata>(previewMetadataKey(storageKey));
-            ensureActive(options);
-            ensureGeneration(storageKey, generation);
-            if (metadata && Number.isFinite(metadata.bytes)) {
-                await touchPreviewMetadata(storageKey, metadata.bytes, generation);
-                return;
+            const current = await options.store.getItem<Blob>(storageKey);
+            if (current) return current;
+            const legacy = await options.store.getItem<Blob>(legacyKey);
+            if (!legacy) return undefined;
+            await writeBlobUnlocked(storageKey, legacy, generation);
+            const legacyURL = options.objectUrls.get(legacyKey);
+            if (legacyURL) {
+                options.objectUrls.delete(legacyKey);
+                options.objectUrls.set(storageKey, legacyURL);
             }
-            const blob = await options.store.getItem<Blob>(storageKey);
-            if (blob) await touchPreview(storageKey, blob, generation);
-        } catch (error) {
-            if (options.isActive() && currentGeneration(storageKey) === generation) console.warn("更新图片预览缓存元数据失败", error instanceof Error ? error.message : String(error));
-        }
-    };
+            await options.store.removeItem(legacyKey);
+            await deleteCacheMetadata(legacyKey);
+            invalidateKey(legacyKey);
+            bumpWriteRevision(legacyKey);
+            return legacy;
+        });
+    }
     const readBlob = async (storageKey: string, generation = currentGeneration(storageKey)) => {
-        const blob = await options.store.getItem<Blob>(storageKey);
+        const blob = (await options.store.getItem<Blob>(storageKey)) || (await migrateLegacyBlob(storageKey, generation));
         ensureActive(options);
         ensureGeneration(storageKey, generation);
-        if (blob && storageKey.startsWith("preview:")) void touchPreviewWithoutBlockingDisplay(storageKey, blob, generation);
         if (blob) void touchCacheMetadataWithoutBlockingDisplay(storageKey, blob, generation);
         ensureActive(options);
         return blob || undefined;
@@ -308,7 +360,6 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         if (url) revokeObjectURL(url);
         options.objectUrls.delete(storageKey);
         await options.store.removeItem(storageKey);
-        if (storageKey.startsWith("preview:")) await options.store.removeItem(previewMetadataKey(storageKey));
         await deleteCacheMetadata(storageKey);
         bumpWriteRevision(storageKey);
     };
@@ -332,9 +383,6 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             revokeObjectURL(previousURL);
         }
         bumpWriteRevision(storageKey);
-        if (storageKey.startsWith("preview:")) {
-            void touchPreviewWithoutBlockingDisplay(storageKey, blob, generation);
-        }
         void scheduleCacheBudgetEnforcement();
         ensureActive(options);
         ensureGeneration(storageKey, generation);
@@ -342,6 +390,19 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     };
     const writeBlob = async (storageKey: string, blob: Blob, generation = currentGeneration(storageKey)) =>
         withStorageMutation(storageKey, () => writeBlobUnlocked(storageKey, blob, generation));
+    const fetchRemoteBlob = async (remoteURL: RemoteMediaURL) => {
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            try {
+                return await fetchImageBlob(await resolveRemoteURL(remoteURL));
+            } catch (error) {
+                lastError = error;
+                if (attempt === 0 && imageFetchStatus(error) === 403) continue;
+                throw error;
+            }
+        }
+        throw lastError instanceof Error ? lastError : new Error("下载图片失败");
+    };
     const toUploadedImage = async (variant: CachedVariant, mediaId?: string): Promise<UploadedImage> => {
         ensureActive(options);
         ensureGeneration(variant.storageKey, variant.generation);
@@ -380,7 +441,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                         return blob ? { blob, storageKey, generation } : undefined;
                     },
                     loadRemoteOriginal: async () => {
-                        const blob = await fetchImageBlob(await resolveRemoteURL(remoteURL));
+                        const blob = await fetchRemoteBlob(remoteURL);
                         ensureActive(options);
                         await writeBlob(storageKey, blob, generation);
                         return { blob, storageKey, generation };
@@ -393,8 +454,8 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         });
     };
 
-    const loadMediaPreview = (mediaId: string, remotePreviewURL: RemoteMediaURL) => {
-        const previewKey = imagePreviewStorageKey(mediaId);
+    const loadMediaThumbnail = (mediaId: string, remoteThumbnailURL: RemoteMediaURL) => {
+        const previewKey = imageThumbnailStorageKey(mediaId);
         const originalKey = imageStorageKeyForMedia(mediaId);
         const previewGeneration = currentGeneration(previewKey);
         const originalGeneration = currentGeneration(originalKey);
@@ -416,7 +477,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                         return { blob, storageKey: previewKey, generation: previewGeneration };
                     },
                     loadRemotePreview: async () => {
-                        const blob = await fetchImageBlob(await resolveRemoteURL(remotePreviewURL));
+                        const blob = await fetchRemoteBlob(remoteThumbnailURL);
                         ensureActive(options);
                         await writeBlob(previewKey, blob, previewGeneration);
                         return { blob, storageKey: previewKey, generation: previewGeneration };
@@ -425,7 +486,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                 return await toUploadedImage(variant, mediaId);
             } finally {
                 finish();
-                schedulePreviewCacheBudgetEnforcement();
+                scheduleCacheBudgetEnforcement();
             }
         });
     };
@@ -445,7 +506,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         if (!storageKey) return fallback;
         const cached = options.objectUrls.get(storageKey);
         if (cached) {
-            if (storageKey.startsWith("preview:")) void touchCachedPreviewWithoutBlockingDisplay(storageKey, currentGeneration(storageKey));
+            void touchCachedMetadataWithoutBlockingDisplay(storageKey, currentGeneration(storageKey));
             return cached;
         }
         const blob = await readBlob(storageKey);
@@ -519,8 +580,8 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         if (url) revokeObjectURL(url);
         options.objectUrls.delete(key);
         await options.store.removeItem(key);
-        if (!key.startsWith(PREVIEW_METADATA_PREFIX)) bumpWriteRevision(key);
-        if (!key.startsWith(PREVIEW_METADATA_PREFIX)) await deleteCacheMetadata(key);
+        bumpWriteRevision(key);
+        await deleteCacheMetadata(key);
     };
     const deleteExactKeys = async (keys: Iterable<string>, shouldDelete?: (key: string) => boolean) => {
         await Promise.all(
@@ -535,126 +596,60 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     const deleteStoredImages = async (keys: Iterable<string>) => {
         const expanded = expandExplicitDeletionKeys(keys);
         expanded.forEach((key) => {
-            if (!key.startsWith(PREVIEW_METADATA_PREFIX)) invalidateKey(key);
+            invalidateKey(key);
         });
         await deleteExactKeys(expanded);
     };
 
-    const enforcePreviewCacheBudget = async () => {
-        const previews: Array<{ storageKey: string; bytes: number; lastAccess: number; revision: number }> = [];
-        const previewMetadata = new Map<string, PreviewMetadata>();
+    const enforceCacheBudget = async () => {
+        const entries: Array<{ storageKey: string; metadata: CacheMetadata; revision: number }> = [];
         ensureActive(options);
-        await options.store.iterate<unknown, void>((value, key) => {
-            if (key.startsWith(PREVIEW_METADATA_PREFIX)) {
-                previewMetadata.set(`preview:${key.slice(PREVIEW_METADATA_PREFIX.length)}`, value as PreviewMetadata);
-                return;
-            }
-            if (key.startsWith("preview:")) {
-                const blob = value as Blob;
-                previews.push({ storageKey: key, bytes: blob.size || 0, lastAccess: 0, revision: currentWriteRevision(key) });
-            }
+        await cacheIndexStore.iterate<unknown, void>((value, key) => {
+            if (!key.startsWith(CACHE_METADATA_PREFIX) || !value || typeof value !== "object") return;
+            const metadata = normalizeCacheMetadata(value as LegacyCacheMetadata);
+            if (!metadata) return;
+            const storageKey = key.slice(CACHE_METADATA_PREFIX.length);
+            entries.push({ storageKey, metadata, revision: currentWriteRevision(storageKey) });
         });
         ensureActive(options);
+        let totalBytes = entries.reduce((total, entry) => total + Math.max(0, entry.metadata.bytes), 0);
+        let totalEntries = entries.length;
+        if (totalBytes <= cacheHighWatermarkBytes && totalEntries <= cacheHighWatermarkEntries) return;
 
-        for (const preview of previews) {
-            const metadata = previewMetadata.get(preview.storageKey);
-            if (metadata) Object.assign(preview, metadata);
+        const candidates = entries
+            .filter((entry) => entry.metadata.variant !== "temporary" && !options.objectUrls.has(entry.storageKey) && !isInFlight(entry.storageKey))
+            .sort((left, right) => left.metadata.lastAccessedAt - right.metadata.lastAccessedAt);
+        const evicted = new Map<string, number>();
+        for (const entry of candidates) {
+            if (totalBytes <= cacheLowWatermarkBytes && totalEntries <= cacheLowWatermarkEntries) break;
+            if (options.objectUrls.has(entry.storageKey) || isInFlight(entry.storageKey)) continue;
+            totalBytes -= Math.max(0, entry.metadata.bytes);
+            totalEntries -= 1;
+            evicted.set(entry.storageKey, entry.revision);
         }
-        let previewBytes = previews.reduce((total, preview) => total + preview.bytes, 0);
-        if (previewBytes <= previewBudgetBytes) return;
-
-        const evicted: Array<{ storageKey: string; revision: number }> = [];
-        for (const preview of previews.filter((candidate) => !options.objectUrls.has(candidate.storageKey) && !isInFlight(candidate.storageKey)).sort((left, right) => left.lastAccess - right.lastAccess)) {
-            if (previewBytes <= previewBudgetBytes) break;
-            if (options.objectUrls.has(preview.storageKey) || isInFlight(preview.storageKey)) continue;
-            previewBytes -= preview.bytes;
-            evicted.push(preview);
-        }
-        const evictedRevisions = new Map(evicted.map(({ storageKey, revision }) => [storageKey, revision]));
         await deleteExactKeys(
-            Array.from(evictedRevisions.keys()).flatMap((storageKey) => [storageKey, previewMetadataKey(storageKey)]),
-            (storageKey) => {
-                const previewKey = storageKey.startsWith(PREVIEW_METADATA_PREFIX) ? `preview:${storageKey.slice(PREVIEW_METADATA_PREFIX.length)}` : storageKey;
-                return options.isActive() && !options.objectUrls.has(previewKey) && !isInFlight(previewKey) && currentWriteRevision(previewKey) === evictedRevisions.get(previewKey);
-            },
+            evicted.keys(),
+            (storageKey) => options.isActive() && !options.objectUrls.has(storageKey) && !isInFlight(storageKey) && currentWriteRevision(storageKey) === evicted.get(storageKey),
         );
     };
-    const schedulePreviewCacheBudgetEnforcement = () => {
-        if (previewBudgetEnforcementSchedules.has(previewBudgetScheduleKey)) return;
-        previewBudgetEnforcementSchedules.add(previewBudgetScheduleKey);
+    const scheduleCacheBudgetEnforcement = () => {
+        if (cacheBudgetEnforcementSchedules.has(cacheBudgetScheduleKey)) return;
+        cacheBudgetEnforcementSchedules.add(cacheBudgetScheduleKey);
         const run = () => {
-            previewBudgetEnforcementSchedules.delete(previewBudgetScheduleKey);
-            void enforcePreviewCacheBudget().catch((error) => {
-                console.warn("清理图片预览缓存失败", error instanceof Error ? error.message : String(error));
+            cacheBudgetEnforcementSchedules.delete(cacheBudgetScheduleKey);
+            void enforceCacheBudget().catch((error) => {
+                console.warn("清理图片缓存失败", error instanceof Error ? error.message : String(error));
             });
         };
         if (typeof requestIdleCallback === "function") requestIdleCallback(run);
         else setTimeout(run, 0);
     };
 
-    const enforceCacheBudget = async () => {
-        const recordedTotal = await cacheIndexStore.getItem<CacheTotal>(CACHE_TOTAL_KEY);
-        if ((recordedTotal?.bytes || 0) <= cacheHighWatermarkBytes) return;
-        const entries: Array<{ storageKey: string; metadata: CacheMetadata; revision: number }> = [];
-        ensureActive(options);
-        await cacheIndexStore.iterate<unknown, void>((value, key) => {
-            if (!key.startsWith(CACHE_METADATA_PREFIX) || !value || typeof value !== "object") return;
-            const metadata = value as Partial<CacheMetadata>;
-            if (!Number.isFinite(metadata.bytes) || typeof metadata.lastAccess !== "number" || (metadata.variant !== "preview" && metadata.variant !== "original" && metadata.variant !== "temporary")) return;
-            const storageKey = key.slice(CACHE_METADATA_PREFIX.length);
-            entries.push({ storageKey, metadata: metadata as CacheMetadata, revision: currentWriteRevision(storageKey) });
-        });
-        ensureActive(options);
-        let totalBytes = Math.max(0, recordedTotal?.bytes || entries.reduce((total, entry) => total + Math.max(0, entry.metadata.bytes), 0));
-        if (totalBytes <= cacheHighWatermarkBytes) return;
-
-        const candidates = entries
-            .filter((entry) => entry.metadata.variant !== "temporary" && !options.objectUrls.has(entry.storageKey) && !isInFlight(entry.storageKey))
-            .sort((left, right) => {
-                const priority = (entry: (typeof entries)[number]) => (entry.metadata.variant === "preview" ? 0 : 1);
-                return priority(left) - priority(right) || left.metadata.lastAccess - right.metadata.lastAccess;
-            });
-        const evicted = new Map<string, number>();
-        for (const entry of candidates) {
-            if (totalBytes <= cacheLowWatermarkBytes) break;
-            if (options.objectUrls.has(entry.storageKey) || isInFlight(entry.storageKey)) continue;
-            totalBytes -= Math.max(0, entry.metadata.bytes);
-            evicted.set(entry.storageKey, entry.revision);
-        }
-        await deleteExactKeys(
-            Array.from(evicted.keys()).flatMap((storageKey) => (storageKey.startsWith("preview:") ? [storageKey, previewMetadataKey(storageKey)] : [storageKey])),
-            (key) => {
-                const storageKey = key.startsWith(PREVIEW_METADATA_PREFIX) ? `preview:${key.slice(PREVIEW_METADATA_PREFIX.length)}` : key;
-                return options.isActive() && !options.objectUrls.has(storageKey) && !isInFlight(storageKey) && currentWriteRevision(storageKey) === evicted.get(storageKey);
-            },
-        );
-    };
-    const scheduleCacheBudgetEnforcement = () => {
-        if (cacheBudgetEnforcementSchedules.has(cacheBudgetScheduleKey)) return;
-        cacheBudgetEnforcementSchedules.add(cacheBudgetScheduleKey);
-        void cacheIndexStore
-            .getItem<CacheTotal>(CACHE_TOTAL_KEY)
-            .then((total) => {
-                if ((total?.bytes || 0) <= cacheHighWatermarkBytes) return;
-                const run = () => {
-                    void enforceCacheBudget().catch((error) => {
-                        console.warn("清理图片缓存失败", error instanceof Error ? error.message : String(error));
-                    });
-                };
-                if (typeof requestIdleCallback === "function") requestIdleCallback(run);
-                else setTimeout(run, 0);
-            })
-            .catch((error) => {
-                console.warn("检查图片缓存预算失败", error instanceof Error ? error.message : String(error));
-            })
-            .finally(() => cacheBudgetEnforcementSchedules.delete(cacheBudgetScheduleKey));
-    };
-
     const cleanupUnusedImages = async (usedData: unknown) => {
         const usedKeys = collectImageStorageKeys(usedData);
         const unusedOriginals: Array<{ storageKey: string; revision: number }> = [];
         await options.store.iterate<unknown, void>((value, key) => {
-            if (key === CACHE_TOTAL_KEY || key.startsWith(CACHE_METADATA_PREFIX) || key.startsWith(PREVIEW_METADATA_PREFIX) || key.startsWith("preview:")) return;
+            if (key === CACHE_TOTAL_KEY || key.startsWith(CACHE_METADATA_PREFIX) || key.endsWith(":thumbnail") || key.startsWith("preview:")) return;
             if (!usedKeys.has(key) && !isInFlight(key)) unusedOriginals.push({ storageKey: key, revision: currentWriteRevision(key) });
         });
         const unusedOriginalRevisions = new Map(unusedOriginals.map(({ storageKey, revision }) => [storageKey, revision]));
@@ -662,11 +657,10 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             unusedOriginalRevisions.keys(),
             (storageKey) => !isInFlight(storageKey) && currentWriteRevision(storageKey) === unusedOriginalRevisions.get(storageKey),
         );
-        await enforcePreviewCacheBudget();
         await enforceCacheBudget();
     };
 
-    return { loadMediaImage, loadMediaPreview, storeImage, resolveImageUrl, releaseObjectURL, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforcePreviewCacheBudget, enforceCacheBudget };
+    return { loadMediaImage, loadMediaThumbnail, storeImage, resolveImageUrl, releaseObjectURL, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforceCacheBudget };
 }
 
 export async function createImagePreview(blob: Blob) {
@@ -717,8 +711,8 @@ export async function loadMediaImage(mediaId: string, remoteURL: RemoteMediaURL)
     return currentOperations().loadMediaImage(mediaId, remoteURL);
 }
 
-export async function loadMediaPreview(mediaId: string, remotePreviewURL: RemoteMediaURL): Promise<UploadedImage> {
-    return currentOperations().loadMediaPreview(mediaId, remotePreviewURL);
+export async function loadMediaThumbnail(mediaId: string, remoteThumbnailURL: RemoteMediaURL): Promise<UploadedImage> {
+    return currentOperations().loadMediaThumbnail(mediaId, remoteThumbnailURL);
 }
 
 export async function promoteImageStorageKey(image: UploadedImage, mediaId: string): Promise<UploadedImage> {
@@ -728,7 +722,7 @@ export async function promoteImageStorageKey(image: UploadedImage, mediaId: stri
 export type RemoteImageAccess = { url: string; previewUrl?: string };
 
 export async function getRemoteImageAccess(mediaId: string): Promise<RemoteImageAccess> {
-    const response = await fetch(appApiPath(`/api/v1/media/${encodeURIComponent(mediaId)}/access`));
+    const response = await fetch(appApiPath(`/api/v1/media/${encodeURIComponent(mediaId)}/access`), { cache: "no-store" });
     const payload = (await response.json()) as { code: number; data?: RemoteImageAccess; msg?: string };
     if (!response.ok || payload.code !== 0 || !payload.data?.url) throw new Error(payload.msg || "获取图片访问地址失败");
     return payload.data;
@@ -739,15 +733,15 @@ export async function resolveRemoteImage(mediaId: string) {
 }
 
 export async function resolveImageUrl(storageKey?: string, fallback = "") {
-    return currentOperations().resolveImageUrl(storageKey, fallback);
+    return currentOperations().resolveImageUrl(storageKey ? canonicalStorageKey(storageKey) : undefined, fallback);
 }
 
 export function releaseImageObjectURL(storageKey: string) {
-    return currentOperations().releaseObjectURL(storageKey);
+    return currentOperations().releaseObjectURL(canonicalStorageKey(storageKey));
 }
 
 export async function getImageBlob(storageKey: string) {
-    return currentOperations().getImageBlob(storageKey);
+    return currentOperations().getImageBlob(canonicalStorageKey(storageKey));
 }
 
 export async function setImageBlob(storageKey: string, blob: Blob) {
@@ -755,8 +749,7 @@ export async function setImageBlob(storageKey: string, blob: Blob) {
 }
 
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
-    const operations = currentOperations();
-    const cachedBlob = image.storageKey ? await operations.getImageBlob(image.storageKey) : null;
+    const cachedBlob = image.storageKey ? await getImageBlob(image.storageKey) : null;
     if (cachedBlob) return blobToDataUrl(cachedBlob);
     const url = image.dataUrl || image.url || "";
     if (!url || url.startsWith("data:")) return url;
@@ -771,18 +764,15 @@ export async function cleanupUnusedImages(usedData: unknown) {
     return currentOperations().cleanupUnusedImages(usedData);
 }
 
-export async function enforcePreviewCacheBudget() {
-    return currentOperations().enforcePreviewCacheBudget();
-}
-
 export function collectImageStorageKeys(value: unknown, keys = new Set<string>()) {
     if (!value || typeof value !== "object") return keys;
     if ("storageKey" in value && typeof value.storageKey === "string") {
         const storageKey = value.storageKey;
         if (storageKey.startsWith("image:")) keys.add(storageKey);
-        if (storageKey.startsWith("media:")) {
-            keys.add(storageKey);
-            keys.add(imagePreviewStorageKey(storageKey.slice("media:".length)));
+        const mediaId = mediaIDFromStorageKey(storageKey);
+        if (mediaId) {
+            keys.add(imageStorageKeyForMedia(mediaId));
+            keys.add(imageThumbnailStorageKey(mediaId));
         }
     }
     Object.values(value).forEach((item) => (Array.isArray(item) ? item.forEach((child) => collectImageStorageKeys(child, keys)) : collectImageStorageKeys(item, keys)));

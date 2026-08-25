@@ -10,11 +10,13 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
@@ -27,6 +29,7 @@ import (
 
 const maxMediaBytes = 50 << 20
 const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
+const canvasTemporaryMediaRetention = 7 * 24 * time.Hour
 
 type imageStore interface {
 	Put(context.Context, string, []byte, string) error
@@ -36,22 +39,34 @@ type imageStore interface {
 }
 
 type MediaAccess struct {
-	MediaID     string    `json:"mediaId"`
-	URL         string    `json:"url"`
-	PreviewURL  string    `json:"previewUrl"`
-	ExpiresAt   time.Time `json:"expiresAt"`
-	ContentType string    `json:"contentType"`
-	Bytes       int64     `json:"bytes"`
-	Width       int       `json:"width"`
-	Height      int       `json:"height"`
+	MediaID        string     `json:"mediaId"`
+	URL            string     `json:"url"`
+	PreviewURL     string     `json:"previewUrl"`
+	ExpiresAt      time.Time  `json:"expiresAt"`
+	MediaExpiresAt *time.Time `json:"mediaExpiresAt,omitempty"`
+	ContentType    string     `json:"contentType"`
+	Bytes          int64      `json:"bytes"`
+	Width          int        `json:"width"`
+	Height         int        `json:"height"`
 }
 
 func imageObjectKey(userUID, extension string, now time.Time) string {
+	return privateImageObjectKey(userUID, model.MediaSourceUpload, extension, now)
+}
+
+func privateImageObjectKey(userUID string, source model.MediaSource, extension string, now time.Time) string {
 	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
 	if prefix == "" {
 		prefix = "images"
 	}
-	return fmt.Sprintf("%s/private/%s/%04d/%02d/%s.%s", prefix, userUID, now.Year(), now.Month(), uuid.NewString(), extension)
+	category := "library"
+	switch source {
+	case model.MediaSourceCanvasTemporary:
+		category = "canvas"
+	case model.MediaSourceGenerated:
+		category = "generated"
+	}
+	return fmt.Sprintf("%s/private/%s/%s/%04d/%02d/%s.%s", prefix, category, userUID, now.Year(), now.Month(), uuid.NewString(), extension)
 }
 
 func publicImageObjectKey(extension string, now time.Time) string {
@@ -70,8 +85,27 @@ func canAccessMedia(user PortalUser, item model.Media) bool {
 	return user.UID == item.OwnerUID || user.HasRole(role)
 }
 
-func SaveUploadedImage(ctx context.Context, user PortalUser, filename, contentType string, data []byte) (MediaAccess, error) {
-	return saveImage(ctx, user, model.MediaSourceUpload, filename, contentType, data, false)
+func SaveUploadedImage(ctx context.Context, user PortalUser, filename, contentType string, data []byte, intent ...string) (MediaAccess, error) {
+	source, err := uploadMediaSource(intent)
+	if err != nil {
+		return MediaAccess{}, err
+	}
+	return saveImage(ctx, user, source, filename, contentType, data, false)
+}
+
+func uploadMediaSource(intent []string) (model.MediaSource, error) {
+	value := "library"
+	if len(intent) > 0 {
+		value = strings.ToLower(strings.TrimSpace(intent[0]))
+	}
+	switch value {
+	case "", "library":
+		return model.MediaSourceUpload, nil
+	case "canvas":
+		return model.MediaSourceCanvasTemporary, nil
+	default:
+		return "", safeMessageError{message: "图片上传意图无效"}
+	}
 }
 
 func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, filename, contentType string, data []byte, isPublic bool) (MediaAccess, error) {
@@ -90,7 +124,7 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 		return MediaAccess{}, err
 	}
 	createdAt := time.Now()
-	key := imageObjectKey(user.UID, extension, createdAt)
+	key := privateImageObjectKey(user.UID, source, extension, createdAt)
 	if isPublic {
 		key = publicImageObjectKey(extension, createdAt)
 	}
@@ -99,12 +133,111 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	}
 	width, height := imageDimensions(data)
 	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
+	if source == model.MediaSourceCanvasTemporary && !isPublic {
+		expiresAt := createdAt.Add(canvasTemporaryMediaRetention)
+		item.ExpiresAt = &expiresAt
+	}
 	saved, err := repository.SaveMedia(item)
 	if err != nil {
 		_ = store.Delete(ctx, key)
 		return MediaAccess{}, err
 	}
 	return mediaAccess(ctx, store, saved)
+}
+
+func PreserveTemporaryPrivateMedia(_ context.Context, user PortalUser, id string) (model.Media, error) {
+	temporaryMediaRetentionMutex.Lock()
+	defer temporaryMediaRetentionMutex.Unlock()
+	item, found, err := repository.GetMedia(id)
+	if err != nil {
+		return model.Media{}, err
+	}
+	if !found || item.OwnerUID != user.UID {
+		return model.Media{}, safeMessageError{message: "图片不存在"}
+	}
+	if item.Source != model.MediaSourceCanvasTemporary || item.ExpiresAt == nil {
+		return model.Media{}, safeMessageError{message: "该图片不是画板临时素材"}
+	}
+	if !item.ExpiresAt.After(time.Now()) {
+		return model.Media{}, safeMessageError{message: "临时素材已到期，无法永久保存"}
+	}
+	updated, found, err := repository.PreserveTemporaryMedia(id, user.UID)
+	if err != nil {
+		return model.Media{}, err
+	}
+	if !found {
+		return model.Media{}, safeMessageError{message: "图片不存在"}
+	}
+	updated.Title = privateImageTitle(updated)
+	return updated, nil
+}
+
+var (
+	temporaryMediaStoreFactory   = newImageStore
+	temporaryMediaRetentionMutex sync.Mutex
+)
+
+func CleanupExpiredTemporaryMedia(ctx context.Context, before time.Time) (int, error) {
+	temporaryMediaRetentionMutex.Lock()
+	defer temporaryMediaRetentionMutex.Unlock()
+	items, err := repository.ListExpiredTemporaryMedia(before)
+	if err != nil {
+		return 0, err
+	}
+	if len(items) == 0 {
+		return 0, nil
+	}
+	store, err := temporaryMediaStoreFactory()
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	var failures []error
+	for _, item := range items {
+		if err := deleteImageObject(ctx, store, item.ObjectKey); err != nil {
+			failures = append(failures, fmt.Errorf("删除到期素材 %s 失败: %w", item.ID, err))
+			continue
+		}
+		if err := repository.DeleteMedia(item.ID); err != nil {
+			failures = append(failures, fmt.Errorf("删除到期素材记录 %s 失败: %w", item.ID, err))
+			continue
+		}
+		deleted++
+	}
+	return deleted, errors.Join(failures...)
+}
+
+func StartTemporaryMediaRetention(parent context.Context) func() {
+	ctx, cancel := context.WithCancel(parent)
+	var waitGroup sync.WaitGroup
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		runTemporaryMediaRetention(ctx)
+	}()
+	return func() {
+		cancel()
+		waitGroup.Wait()
+	}
+}
+
+func runTemporaryMediaRetention(ctx context.Context) {
+	cleanup := func(current time.Time) {
+		if _, err := CleanupExpiredTemporaryMedia(ctx, current); err != nil && ctx.Err() == nil {
+			log.Printf("temporary media cleanup failed: %v", err)
+		}
+	}
+	cleanup(time.Now())
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case current := <-ticker.C:
+			cleanup(current)
+		}
+	}
 }
 
 func MediaAccessURL(ctx context.Context, user PortalUser, id string) (MediaAccess, error) {
@@ -117,6 +250,9 @@ func MediaAccessURL(ctx context.Context, user PortalUser, id string) (MediaAcces
 	}
 	if !canAccessMedia(user, item) {
 		return MediaAccess{}, safeMessageError{message: "无权访问该图片"}
+	}
+	if item.Source == model.MediaSourceCanvasTemporary && item.ExpiresAt != nil && !item.ExpiresAt.After(time.Now()) {
+		return MediaAccess{}, safeMessageError{message: "画板临时素材已到期"}
 	}
 	store, err := newImageStore()
 	if err != nil {
@@ -182,7 +318,7 @@ func mediaAccess(ctx context.Context, store imageStore, item model.Media) (Media
 		url = "/api/v1/media/" + item.ID + "/content"
 		previewURL = url
 	}
-	return MediaAccess{MediaID: item.ID, URL: url, PreviewURL: previewURL, ExpiresAt: expiresAt, ContentType: item.ContentType, Bytes: item.Bytes, Width: item.Width, Height: item.Height}, nil
+	return MediaAccess{MediaID: item.ID, URL: url, PreviewURL: previewURL, ExpiresAt: expiresAt, MediaExpiresAt: item.ExpiresAt, ContentType: item.ContentType, Bytes: item.Bytes, Width: item.Width, Height: item.Height}, nil
 }
 
 func OpenLocalMedia(ctx context.Context, user PortalUser, id string) (io.ReadCloser, string, error) {
@@ -195,6 +331,9 @@ func OpenLocalMedia(ctx context.Context, user PortalUser, id string) (io.ReadClo
 	}
 	if !canAccessMedia(user, item) {
 		return nil, "", safeMessageError{message: "无权访问该图片"}
+	}
+	if item.Source == model.MediaSourceCanvasTemporary && item.ExpiresAt != nil && !item.ExpiresAt.After(time.Now()) {
+		return nil, "", safeMessageError{message: "画板临时素材已到期"}
 	}
 	store, err := newImageStore()
 	if err != nil {

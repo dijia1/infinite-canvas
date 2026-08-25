@@ -99,6 +99,55 @@ func TestMaiziProviderCreatesAsyncTaskWithoutPolling(t *testing.T) {
 	}
 }
 
+func TestMaiziProviderCreatesAsyncTaskWithTransparentPNGMaskAndOrderedReferences(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path != "/v1/images/generations" {
+			t.Errorf("unexpected request: %s", request.URL)
+		}
+		body, _ := io.ReadAll(request.Body)
+		var payload struct {
+			OutputFormat string   `json:"output_format"`
+			Background   string   `json:"background"`
+			Images       []string `json:"images"`
+			Mask         struct {
+				ImageURL string `json:"image_url"`
+			} `json:"mask"`
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		if payload.OutputFormat != "png" || payload.Background != "transparent" {
+			t.Errorf("output = %q/%q, want png/transparent", payload.OutputFormat, payload.Background)
+		}
+		if len(payload.Images) != 2 || payload.Images[0] != "data:image/png;base64,aW1hZ2U=" || payload.Images[1] != "data:image/png;base64,cmVmZXJlbmNl" {
+			t.Errorf("images = %#v", payload.Images)
+		}
+		if payload.Mask.ImageURL != "data:image/png;base64,bWFzaw==" {
+			t.Errorf("mask.image_url = %q", payload.Mask.ImageURL)
+		}
+		return jsonResponse(`{"data":[{"task_id":"task-masked","status":"pending"}]}`), nil
+	})
+
+	typeInfo, _ := ai.Type("maizi-image")
+	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	task, err := provider.(ai.ImageTaskProvider).CreateImageTask(context.Background(), ai.ImageTaskRequest{
+		Request:    ai.ImageRequest{Prompt: "只修改遮罩区域", Size: "1:1", Resolution: "1k", OutputFormat: "png", Background: "transparent"},
+		References: []ai.ImageReference{{ContentType: "image/png", Data: []byte("image")}, {ContentType: "image/png", Data: []byte("reference")}},
+		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", Data: []byte("mask")},
+	})
+	if err != nil {
+		t.Fatalf("CreateImageTask() error = %v", err)
+	}
+	if task.ID != "task-masked" || task.Status != "pending" {
+		t.Fatalf("CreateImageTask() = %#v", task)
+	}
+}
+
 func TestMaiziProviderGetsAsyncTaskStatus(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })

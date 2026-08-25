@@ -27,6 +27,8 @@ type ImageGenerationTask struct {
 	Quality            string                    `json:"quality"`
 	Size               string                    `json:"size"`
 	Resolution         string                    `json:"resolution"`
+	OutputFormat       string                    `json:"outputFormat"`
+	Background         string                    `json:"background"`
 	Count              int                       `json:"count"`
 	ReferencesJSON     string                    `json:"-"`
 	ProviderTaskID     string                    `json:"-" gorm:"index"`

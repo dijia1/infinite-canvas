@@ -95,11 +95,13 @@ func Types() []ProviderType               { return providers.Types() }
 func Type(id string) (ProviderType, bool) { return providers.Type(id) }
 
 type ImageRequest struct {
-	Prompt     string
-	Count      int
-	Quality    string
-	Size       string
-	Resolution string
+	Prompt       string
+	Count        int
+	Quality      string
+	Size         string
+	Resolution   string
+	OutputFormat string
+	Background   string
 }
 
 type ImageReference struct {
@@ -127,6 +129,7 @@ type ImageEditor interface {
 type ImageTaskRequest struct {
 	Request    ImageRequest
 	References []ImageReference
+	Mask       *ImageReference
 }
 
 type ImageTask struct {

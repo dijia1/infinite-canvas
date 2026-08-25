@@ -32,13 +32,14 @@ import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
 import { buildNodeChatMessages, buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
-import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "../components/canvas-node-hover-toolbar";
+import { CanvasNodeHoverToolbar } from "../components/canvas-node-hover-toolbar";
 import { InfiniteCanvas } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
+import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
@@ -250,7 +251,7 @@ function InfiniteCanvasPage() {
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
     const [editRequestNonce, setEditRequestNonce] = useState(0);
-    const [infoNodeId, setInfoNodeId] = useState<string | null>(null);
+    const [maskNodeId, setMaskNodeId] = useState<string | null>(null);
     const [cropNodeId, setCropNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
@@ -559,7 +560,7 @@ function InfiniteCanvasPage() {
     );
     const loadingNodeCount = useMemo(() => nodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING).length, [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
-    const infoNode = infoNodeId ? nodeById.get(infoNodeId) || null : null;
+    const maskNode = maskNodeId ? nodeById.get(maskNodeId) || null : null;
     const cropNode = cropNodeId ? nodeById.get(cropNodeId) || null : null;
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
@@ -723,7 +724,7 @@ function InfiniteCanvasPage() {
             setToolbarNodeId((current) => (current && allIds.has(current) ? null : current));
             setDialogNodeId((current) => (current && allIds.has(current) ? null : current));
             setEditingNodeId((current) => (current && allIds.has(current) ? null : current));
-            setInfoNodeId((current) => (current && allIds.has(current) ? null : current));
+            setMaskNodeId((current) => (current && allIds.has(current) ? null : current));
             setCropNodeId((current) => (current && allIds.has(current) ? null : current));
             setAngleNodeId((current) => (current && allIds.has(current) ? null : current));
             setPreviewNodeId((current) => (current && allIds.has(current) ? null : current));
@@ -748,7 +749,7 @@ function InfiniteCanvasPage() {
     const clearCanvas = useCallback(() => {
         setNodes([]);
         setConnections([]);
-        setInfoNodeId(null);
+        setMaskNodeId(null);
         setCropNodeId(null);
         setAngleNodeId(null);
         setPreviewNodeId(null);
@@ -881,7 +882,7 @@ function InfiniteCanvasPage() {
     }, [cleanupAssetImages, deleteProjects, projectId, router]);
 
     const createImageFileNode = useCallback(async (file: File, position: Position) => {
-        const remote = await uploadUserImage(file);
+        const remote = await uploadUserImage(file, "canvas");
         const image = await uploadImage(file, remote.mediaId);
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -892,13 +893,14 @@ function InfiniteCanvasPage() {
             position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: imageMetadata(image),
+            metadata: { ...imageMetadata(image), mediaExpiresAt: remote.mediaExpiresAt },
         };
 
         setNodes((prev) => [...prev, newNode]);
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
+        void useAssetStore.getState().refreshFromServer().catch(() => undefined);
     }, []);
 
     const createImageAssetNode = useCallback(async (asset: ImageAsset, position: Position) => {
@@ -928,7 +930,7 @@ function InfiniteCanvasPage() {
             position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: { ...imageMetadata(image), assetId: asset.id, publicImageId: publicImageId || undefined },
+            metadata: { ...imageMetadata(image), assetId: asset.id, publicImageId: publicImageId || undefined, mediaExpiresAt: typeof asset.metadata?.expiresAt === "string" ? asset.metadata.expiresAt : undefined },
         };
 
         setNodes((prev) => [...prev, newNode]);
@@ -1076,7 +1078,7 @@ function InfiniteCanvasPage() {
                 setToolbarNodeId(null);
                 setDialogNodeId(null);
                 setEditingNodeId(null);
-                setInfoNodeId(null);
+                setMaskNodeId(null);
                 setCropNodeId(null);
             }
         };
@@ -1089,21 +1091,12 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
     }, []);
 
-    const toggleNodeFreeResize = useCallback((nodeId: string) => {
-        setNodes((prev) =>
-            prev.map((node) => {
-                if (node.id !== nodeId) return node;
-                const freeResize = !node.metadata?.freeResize;
-                if (freeResize || node.type !== CanvasNodeType.Image) return { ...node, metadata: { ...node.metadata, freeResize } };
-                const ratio = (node.metadata?.naturalWidth || node.width) / (node.metadata?.naturalHeight || node.height || 1);
-                const height = node.width / ratio;
-                return { ...node, height, position: { x: node.position.x, y: node.position.y + node.height / 2 - height / 2 }, metadata: { ...node.metadata, freeResize } };
-            }),
-        );
-    }, []);
-
     const handleNodeContentChange = useCallback((nodeId: string, content: string) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, content } } : node)));
+    }, []);
+
+    const saveNodeMask = useCallback((nodeId: string, imageMask: CanvasNodeMetadata["imageMask"]) => {
+        setNodes((previous) => previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, imageMask } } : node)));
     }, []);
 
     const toggleBatchExpanded = useCallback((nodeId: string) => {
@@ -1300,7 +1293,7 @@ function InfiniteCanvasPage() {
                     event.target.value = "";
                     return;
                 }
-                const remote = await uploadUserImage(file);
+                const remote = await uploadUserImage(file, "canvas");
                 const image = await uploadImage(file, remote.mediaId);
                 const size = fitNodeSize(image.width, image.height);
                 setNodes((prev) =>
@@ -1315,6 +1308,7 @@ function InfiniteCanvasPage() {
                                   metadata: {
                                       ...node.metadata,
                                       ...imageMetadata(image),
+                                      mediaExpiresAt: remote.mediaExpiresAt,
                                       errorDetails: undefined,
                                       freeResize: false,
                                       isBatchRoot: undefined,
@@ -1337,6 +1331,7 @@ function InfiniteCanvasPage() {
                 setSelectedNodeIds(new Set([target.nodeId]));
                 setSelectedConnectionId(null);
                 setDialogNodeId(target.nodeId);
+                void useAssetStore.getState().refreshFromServer().catch(() => undefined);
             } else {
                 const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
                 void (file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
@@ -1442,14 +1437,24 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         return useAssetStore.subscribe(({ assets }) => {
-            const imagesById = new Map(assets.filter((asset): asset is ImageAsset => asset.kind === "image").map((asset) => [asset.id, asset]));
+            const imageAssets = assets.filter((asset): asset is ImageAsset => asset.kind === "image");
+            const imagesById = new Map(imageAssets.map((asset) => [asset.id, asset]));
+            const imagesByMediaID = new Map(imageAssets.flatMap((asset) => (typeof asset.metadata?.mediaId === "string" ? [[asset.metadata.mediaId, asset] as const] : [])));
             setNodes((previous) => {
                 let changed = false;
                 const next = previous.map((node) => {
                     const assetId = node.metadata?.assetId;
                     const asset = assetId ? imagesById.get(assetId) : undefined;
+                    const mediaAsset = !asset && typeof node.metadata?.mediaId === "string" ? imagesByMediaID.get(node.metadata.mediaId) : undefined;
+                    if (!asset && mediaAsset) {
+                        const mediaExpiresAt = typeof mediaAsset.metadata?.expiresAt === "string" ? mediaAsset.metadata.expiresAt : undefined;
+                        if (node.metadata?.mediaExpiresAt === mediaExpiresAt) return node;
+                        changed = true;
+                        return { ...node, metadata: { ...node.metadata, mediaExpiresAt } };
+                    }
                     const mediaId = asset?.metadata?.mediaId;
-                    if (!asset || typeof mediaId !== "string" || node.metadata?.mediaId === mediaId) return node;
+                    const mediaExpiresAt = typeof asset?.metadata?.expiresAt === "string" ? asset.metadata.expiresAt : undefined;
+                    if (!asset || typeof mediaId !== "string" || (node.metadata?.mediaId === mediaId && node.metadata?.mediaExpiresAt === mediaExpiresAt)) return node;
                     changed = true;
                     return {
                         ...node,
@@ -1463,6 +1468,7 @@ function InfiniteCanvasPage() {
                                 bytes: asset.data.bytes,
                                 mimeType: asset.data.mimeType,
                                 mediaId,
+                                mediaExpiresAt,
                             }),
                         },
                     };
@@ -1627,7 +1633,6 @@ function InfiniteCanvasPage() {
                     viewport={viewport}
                     onKeep={keepNodeToolbar}
                     onLeave={hideNodeToolbar}
-                    onInfo={(node) => setInfoNodeId(node.id)}
                     onEditText={openTextEditor}
                     onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
                     onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
@@ -1639,9 +1644,8 @@ function InfiniteCanvasPage() {
                     onCrop={(node) => setCropNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={(node) => setPreviewNodeId(node.id)}
+                    onMask={(node) => setMaskNodeId(node.id)}
                     onRetry={(node) => void handleRetryNode(node)}
-                    onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
-                    onDelete={(node) => deleteNodes(new Set([node.id]))}
                 />
 
                 <CanvasToolbar
@@ -1685,7 +1689,18 @@ function InfiniteCanvasPage() {
 
                 <input ref={imageInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleImageInputChange} />
 
-                <CanvasNodeInfoModal node={infoNode} open={Boolean(infoNode)} onClose={() => setInfoNodeId(null)} />
+                {maskNode?.metadata?.content ? (
+                    <CanvasImageMaskDialog
+                        image={maskNode.metadata.content}
+                        initialMask={maskNode.metadata.imageMask}
+                        open={Boolean(maskNode)}
+                        onClose={() => setMaskNodeId(null)}
+                        onSave={(imageMask) => {
+                            saveNodeMask(maskNode.id, imageMask);
+                            setMaskNodeId(null);
+                        }}
+                    />
+                ) : null}
 
                 {cropNode?.metadata?.content ? <CanvasNodeCropDialog dataUrl={cropNode.metadata.content} open={Boolean(cropNode)} onClose={() => setCropNodeId(null)} onConfirm={(crop) => void cropImageNode(cropNode!, crop)} /> : null}
 

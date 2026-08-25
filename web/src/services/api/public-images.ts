@@ -38,7 +38,10 @@ export async function fetchPublicImageFolders() {
 }
 
 export async function fetchPublicImageAccess(id: string) {
-    return apiGet<{ mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number }>(`/api/v1/public-images/${encodeURIComponent(id)}/access`);
+    const response = await fetch(appApiPath(`/api/v1/public-images/${encodeURIComponent(id)}/access`), { cache: "no-store" });
+    const payload = (await response.json()) as { code?: number; data?: { mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number }; msg?: string };
+    if (!response.ok || payload.code !== 0 || !payload.data?.url) throw new Error(payload.msg || "获取公共图片访问地址失败");
+    return payload.data;
 }
 
 export async function uploadAdminPublicImage(file: File, title: string, folderId?: string) {

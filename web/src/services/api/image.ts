@@ -7,6 +7,9 @@ import { imageToDataUrl } from "@/services/image-storage";
 import { apiDelete } from "@/services/api/request";
 import type { ReferenceImage } from "@/types/image";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
+import { imageOutputSettings } from "@/lib/image-output-config";
+import { imageEditReferenceError } from "@/lib/image-edit-validation";
+import { createImageMaskFile } from "@/app/(user)/canvas/image-mask/mask-raster";
 
 type ImageApiResponse = {
     data?: Record<string, unknown> | Array<Record<string, unknown>>;
@@ -78,12 +81,13 @@ function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
     };
 }
 
-export async function uploadUserImage(file: File) {
+export async function uploadUserImage(file: File, intent: "canvas" | "library" = "library") {
     const form = new FormData();
     form.set("image", file);
-    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string } }>(aiApiUrl("/media/images"), form);
+    form.set("intent", intent);
+    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string; mediaExpiresAt?: string } }>(aiApiUrl("/media/images"), form);
     if (response.data.code !== 0 || !response.data.data?.mediaId || !response.data.data.url) throw new Error(response.data.msg || "上传图片失败");
-    return { mediaId: response.data.data.mediaId, url: response.data.data.url };
+    return { mediaId: response.data.data.mediaId, url: response.data.data.url, mediaExpiresAt: response.data.data.mediaExpiresAt };
 }
 
 export async function deleteUserImage(mediaId: string) {
@@ -110,6 +114,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
+    const output = imageOutputSettings(config.outputFormat);
     const body = {
         clientRequestId,
         prompt,
@@ -117,6 +122,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
         ...(quality ? { quality } : {}),
         ...(size && size !== "auto" ? { size } : {}),
         ...(resolution ? { resolution } : {}),
+        output_format: output.outputFormat,
+        background: output.background,
         response_format: "b64_json",
     };
     debugCanvasRequest("image generation", {
@@ -137,11 +144,14 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
+    const output = imageOutputSettings(config.outputFormat);
     const formData = new FormData();
     formData.set("clientRequestId", clientRequestId);
     formData.set("prompt", prompt);
     formData.set("n", "1");
     formData.set("response_format", "b64_json");
+    formData.set("output_format", output.outputFormat);
+    formData.set("background", output.background);
     if (quality) {
         formData.set("quality", quality);
     }
@@ -151,8 +161,16 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (resolution) {
         formData.set("resolution", resolution);
     }
-    const files = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const hydratedReferences = await Promise.all(references.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) })));
+    const referenceError = imageEditReferenceError(hydratedReferences);
+    if (referenceError) throw new Error(referenceError);
+    const maskedReferences = hydratedReferences.filter((image) => image.mask?.strokes.length);
+    const files = await Promise.all(hydratedReferences.map((image) => dataUrlToFile(image)));
     files.forEach((file) => formData.append("image", file));
+    const mask = maskedReferences[0];
+    if (mask?.mask) {
+        formData.set("mask", await createImageMaskFile(mask.mask, mask));
+    }
     debugCanvasRequest("image edit", {
         url: aiApiUrl("/images/edits"),
         body: {
@@ -162,9 +180,12 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             ...(quality ? { quality } : {}),
             ...(size && size !== "auto" ? { size } : {}),
             ...(resolution ? { resolution } : {}),
+            output_format: output.outputFormat,
+            background: output.background,
             response_format: "b64_json",
         },
         references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+        mask: mask ? { name: "mask.png", type: "image/png" } : undefined,
     });
 
     try {

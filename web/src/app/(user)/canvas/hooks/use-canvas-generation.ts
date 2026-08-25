@@ -8,6 +8,7 @@ import type { ChatCompletionMessage, ImageGenerationTask } from "@/services/api/
 import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
 import type { UploadedFile } from "@/services/file-storage";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
+import { imageEditReferenceError } from "@/lib/image-edit-validation";
 import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, referenceUrl, sourceNodeReferenceImages, type CanvasAngleParameters } from "../utils/canvas-generation-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -91,7 +92,16 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const references = await Promise.all(
             metadata.references.map(async (url, index) => {
                 const dataUrl = url.startsWith("image:") ? await options.resolveImageUrl!(url, "") : url;
-                return dataUrl ? { id: `${index}`, name: `reference-${index}.png`, type: "image/png", dataUrl, storageKey: url.startsWith("image:") ? url : undefined } : null;
+                return dataUrl
+                    ? {
+                          id: `${index}`,
+                          name: `reference-${index}.png`,
+                          type: "image/png",
+                          dataUrl,
+                          storageKey: url.startsWith("image:") ? url : undefined,
+                          ...(metadata.referenceMasks?.[index] ? { mask: metadata.referenceMasks[index] } : {}),
+                      }
+                    : null;
             }),
         );
         return references.every(Boolean) ? (references as ReferenceImage[]) : null;
@@ -272,6 +282,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
                 const sourceReference = isImageNode && sourceNode?.metadata?.content ? sourceNodeReferenceImages(sourceNode) : [];
                 const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+                const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages) : undefined;
+                if (referenceError) {
+                    options.message.error(referenceError);
+                    return;
+                }
                 const generationMetadata = buildImageGenerationMetadata(referenceImages.length ? "edit" : "generation", generationConfig, count, referenceImages);
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
@@ -483,6 +498,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       quality: savedImageMetadata.quality || options.effectiveConfig.quality || options.defaultConfig.quality,
                       size: savedImageMetadata.size || options.effectiveConfig.size || options.defaultConfig.size,
                       resolution: savedImageMetadata.resolution || options.effectiveConfig.resolution || options.defaultConfig.resolution,
+                      outputFormat: savedImageMetadata.outputFormat || options.effectiveConfig.outputFormat || options.defaultConfig.outputFormat,
                       count: "1",
                   }
                 : { ...buildGenerationConfig(options.effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", options.defaultConfig), count: "1" };
@@ -543,6 +559,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       quality: generationConfig.quality,
                       count: savedImageMetadata.count || 1,
                       references: savedImageMetadata.references,
+                      referenceMasks: savedImageMetadata.referenceMasks,
                   }
                 : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
             options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, metadata: { ...item.metadata, prompt, ...generationMetadata } } : item)));

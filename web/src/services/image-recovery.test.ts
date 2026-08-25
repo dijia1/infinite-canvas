@@ -21,6 +21,25 @@ test("uses the IndexedDB image without requesting the media service", async () =
     assert.equal(remoteRequests, 0);
 });
 
+test("does not revive an expired temporary canvas image from IndexedDB", async () => {
+    let cachedReads = 0;
+    const result = await recoverPersistedImage(
+        { content: "blob:cached", storageKey: "media:temporary:v1:original", mediaId: "media-temporary", mediaExpiresAt: "2020-01-01T00:00:00Z" },
+        {
+            readCachedImage: async () => {
+                cachedReads += 1;
+                return "blob:cached";
+            },
+            downloadMediaImage: async () => {
+                throw new Error("到期素材不应下载");
+            },
+        },
+    );
+
+    assert.deepEqual(result, { status: "error", error: "画板临时素材已到期" });
+    assert.equal(cachedReads, 0);
+});
+
 test("downloads and caches a media image when the IndexedDB entry is missing", async () => {
     let requestedMediaId = "";
 

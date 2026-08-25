@@ -21,5 +21,7 @@ func main() {
 	defer stopImageTasks()
 	stopAuditRetention := service.StartOperationLogRetention(context.Background())
 	defer stopAuditRetention()
+	stopTemporaryMediaRetention := service.StartTemporaryMediaRetention(context.Background())
+	defer stopTemporaryMediaRetention()
 	log.Fatal(router.New().Run(":" + config.Cfg.Port))
 }

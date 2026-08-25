@@ -1,5 +1,6 @@
 import type { ChatCompletionMessage } from "@/services/api/image";
 import type { ReferenceImage } from "@/types/image";
+import { normalizeImageMask } from "../image-mask/mask-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
 export type NodeGenerationContext = {
@@ -68,12 +69,15 @@ function readNodeTextInput(node: CanvasNodeData) {
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
     if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
+    const mask = normalizeImageMask(node.metadata.imageMask);
     return {
         id: node.id,
         name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
         dataUrl: node.metadata.content,
         storageKey: node.metadata.storageKey,
+        ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
+        ...(mask ? { mask } : {}),
     };
 }
 

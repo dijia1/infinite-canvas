@@ -5,6 +5,7 @@ import { ConfigProvider } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
 import { imageResolutionOptions, normalizeImageResolution } from "@/lib/image-generation-config";
+import { normalizeImageOutputFormat } from "@/lib/image-output-config";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -26,7 +27,7 @@ const aspectOptions = [
 
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "resolution" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "resolution" | "outputFormat" | "count", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -38,6 +39,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const count = Math.max(1, Math.min(maxCount, Math.floor(Math.abs(Number(config.count)) || 1)));
     const activeSize = config.size || "auto";
     const resolution = normalizeImageResolution(config.resolution);
+    const outputFormat = normalizeImageOutputFormat(config.outputFormat);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -88,6 +90,17 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                     </div>
                 </div>
                 <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
+                    <div className="grid grid-cols-2 gap-2.5">
+                        <OptionPill selected={outputFormat === "jpeg"} theme={theme} onClick={() => onConfigChange("outputFormat", "jpeg")}>
+                            JPEG
+                        </OptionPill>
+                        <OptionPill selected={outputFormat === "png"} theme={theme} onClick={() => onConfigChange("outputFormat", "png")}>
+                            PNG
+                        </OptionPill>
+                    </div>
+                </div>
+                <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>生成张数</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
                         {[1, 3, 5].map((value) => (
@@ -126,6 +139,10 @@ export function imageSizeLabel(size: string) {
 
 export function imageResolutionLabel(resolution: string) {
     return imageResolutionOptions.find((item) => item.value === normalizeImageResolution(resolution))?.label || "1K";
+}
+
+export function imageOutputFormatLabel(value: string) {
+    return normalizeImageOutputFormat(value).toUpperCase();
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

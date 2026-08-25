@@ -2,11 +2,14 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/textproto"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +56,101 @@ func TestPrivateMediaDeleteRouteIsProtected(t *testing.T) {
 	}
 }
 
+func TestCanvasUploadCreatesSevenDayTemporaryMediaAndPreserveKeepsTheObject(t *testing.T) {
+	owner := "canvas-upload-owner-" + time.Now().Format("20060102150405.000000000")
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("intent", "canvas"); err != nil {
+		t.Fatal(err)
+	}
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", `form-data; name="image"; filename="canvas.png"`)
+	header.Set("Content-Type", "image/png")
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/media/images", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-Portal-User-Uid", owner)
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("canvas upload = %d/%s", response.Code, response.Body.String())
+	}
+	var payload struct {
+		Data struct {
+			MediaID string `json:"mediaId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil || payload.Data.MediaID == "" {
+		t.Fatalf("canvas upload payload = %s, err = %v", response.Body.String(), err)
+	}
+	item, found, err := repository.GetMedia(payload.Data.MediaID)
+	if err != nil || !found {
+		t.Fatalf("saved canvas media = %#v, found=%t, err=%v", item, found, err)
+	}
+	if item.Source != model.MediaSourceCanvasTemporary || item.ExpiresAt == nil {
+		t.Fatalf("canvas media = %#v, want temporary source with expiration", item)
+	}
+	if remaining := time.Until(*item.ExpiresAt); remaining < 6*24*time.Hour || remaining > 7*24*time.Hour+time.Minute {
+		t.Fatalf("temporary expiration has %s remaining, want about seven days", remaining)
+	}
+	if !strings.Contains(item.ObjectKey, "/private/canvas/"+owner+"/") {
+		t.Fatalf("canvas object key = %q", item.ObjectKey)
+	}
+
+	preserve := httptest.NewRequest(http.MethodPost, "/api/v1/private-images/"+item.ID+"/preserve", nil)
+	preserve.Header.Set("X-Portal-User-Uid", owner)
+	preservedResponse := httptest.NewRecorder()
+	New().ServeHTTP(preservedResponse, preserve)
+	if preservedResponse.Code != http.StatusOK {
+		t.Fatalf("preserve temporary media = %d/%s", preservedResponse.Code, preservedResponse.Body.String())
+	}
+	preserved, found, err := repository.GetMedia(item.ID)
+	if err != nil || !found || preserved.Source != model.MediaSourceUpload || preserved.ExpiresAt != nil || preserved.ObjectKey != item.ObjectKey {
+		t.Fatalf("preserved media = %#v, found=%t, err=%v", preserved, found, err)
+	}
+}
+
+func TestExpiredTemporaryMediaCleanupDeletesRecordsAfterMissingOrExistingObjects(t *testing.T) {
+	now := time.Now().UTC()
+	expiresAt := now.Add(-time.Minute)
+	existing := model.Media{ID: "media-expired-existing-" + now.Format("20060102150405.000000000"), OwnerUID: "expired-owner", Source: model.MediaSourceCanvasTemporary, ObjectKey: "images/private/canvas/expired-owner/2026/08/existing.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
+	missing := model.Media{ID: "media-expired-missing-" + now.Format("20060102150405.000000000"), OwnerUID: "expired-owner", Source: model.MediaSourceCanvasTemporary, ObjectKey: "images/private/canvas/expired-owner/2026/08/missing.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
+	for _, item := range []model.Media{existing, missing} {
+		if _, err := repository.SaveMedia(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	existingPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(existing.ObjectKey))
+	if err := os.MkdirAll(filepath.Dir(existingPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(existingPath, []byte("png"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := service.CleanupExpiredTemporaryMedia(context.Background(), now)
+	if err != nil || deleted < 2 {
+		t.Fatalf("CleanupExpiredTemporaryMedia() = %d, %v", deleted, err)
+	}
+	if _, found, err := repository.GetMedia(existing.ID); err != nil || found {
+		t.Fatalf("existing expired record found=%t err=%v", found, err)
+	}
+	if _, found, err := repository.GetMedia(missing.ID); err != nil || found {
+		t.Fatalf("missing expired record found=%t err=%v", found, err)
+	}
+	if _, err := os.Stat(existingPath); !os.IsNotExist(err) {
+		t.Fatalf("expired local object should be deleted, stat error=%v", err)
+	}
+}
+
 func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T) {
 	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
 		Providers:       []model.AIProvider{{ID: "async-maizi", Name: "Maizi", Type: "maizi-image", Enabled: true, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
@@ -85,6 +183,75 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	New().ServeHTTP(lookedUp, lookup)
 	if lookedUp.Code != http.StatusOK || !strings.Contains(lookedUp.Body.String(), `"id":"`+created.Data.ID+`"`) {
 		t.Fatalf("lookup image task = %d/%s", lookedUp.Code, lookedUp.Body.String())
+	}
+}
+
+func TestImageEditPersistsPNGMaskAndOutputSnapshot(t *testing.T) {
+	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+		Providers:       []model.AIProvider{{ID: "async-maizi-mask", Name: "Maizi", Type: "maizi-image", Enabled: true, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
+		ImageProviderID: "async-maizi-mask",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	clientRequestID := "async-mask-" + time.Now().Format("20060102150405.000000000")
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	_ = writer.WriteField("clientRequestId", clientRequestID)
+	_ = writer.WriteField("prompt", "只替换白色遮罩区域")
+	_ = writer.WriteField("n", "1")
+	_ = writer.WriteField("output_format", "png")
+	_ = writer.WriteField("background", "transparent")
+	for index := 0; index < 7; index++ {
+		referenceHeader := textproto.MIMEHeader{}
+		referenceHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="image"; filename="reference-%d.png"`, index))
+		referenceHeader.Set("Content-Type", "image/png")
+		reference, err := writer.CreatePart(referenceHeader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := reference.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	maskHeader := textproto.MIMEHeader{}
+	maskHeader.Set("Content-Disposition", `form-data; name="mask"; filename="mask.png"`)
+	maskHeader.Set("Content-Type", "image/png")
+	mask, err := writer.CreatePart(maskHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mask.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/edits", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("X-Portal-User-Uid", "async-mask-owner")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("create masked image task = %d/%s", response.Code, response.Body.String())
+	}
+	task, found, err := repository.GetImageGenerationTaskByClientRequest("async-mask-owner", clientRequestID)
+	if err != nil || !found {
+		t.Fatalf("saved masked task = %#v, found=%t, err=%v", task, found, err)
+	}
+	if task.OutputFormat != "png" || task.Background != "transparent" {
+		t.Fatalf("task output = %q/%q, want png/transparent", task.OutputFormat, task.Background)
+	}
+	var inputs []service.ImageTaskInput
+	if err := json.Unmarshal([]byte(task.ReferencesJSON), &inputs); err != nil {
+		t.Fatal(err)
+	}
+	if len(inputs) != 8 || inputs[7].Purpose != "mask" {
+		t.Fatalf("task inputs = %#v, want seven images and one mask", inputs)
+	}
+	for index := 0; index < 7; index++ {
+		if inputs[index].Purpose != "image" || inputs[index].Name != fmt.Sprintf("reference-%d.png", index) {
+			t.Fatalf("task image %d = %#v, want ordered reference", index, inputs[index])
+		}
 	}
 }
 

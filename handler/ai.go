@@ -17,6 +17,8 @@ type imageRequest struct {
 	Quality         string `json:"quality"`
 	Size            string `json:"size"`
 	Resolution      string `json:"resolution"`
+	OutputFormat    string `json:"output_format"`
+	Background      string `json:"background"`
 }
 
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +30,7 @@ func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
 		ClientRequestID: payload.ClientRequestID,
 		Mode:            service.ImageTaskModeGeneration,
-		Request:         ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution},
+		Request:         ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution, OutputFormat: payload.OutputFormat, Background: payload.Background},
 	})
 	if err != nil {
 		FailError(w, err)
@@ -44,31 +46,64 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 	}
 	files := r.MultipartForm.File["image"]
 	references := make([]ai.ImageReference, 0, len(files))
+	totalBytes := int64(0)
 	for _, file := range files {
 		input, err := file.Open()
 		if err != nil {
 			Fail(w, "读取参考图失败")
 			return
 		}
-		data, readErr := io.ReadAll(input)
+		data, readErr := io.ReadAll(io.LimitReader(input, 50<<20+1))
 		_ = input.Close()
-		if readErr != nil {
+		if readErr != nil || len(data) > 50<<20 {
 			Fail(w, "读取参考图失败")
+			return
+		}
+		totalBytes += int64(len(data))
+		if totalBytes > 50<<20 {
+			Fail(w, "参考图总大小无效")
 			return
 		}
 		references = append(references, ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data})
 	}
+	mask, err := imageMaskFromForm(r)
+	if err != nil {
+		Fail(w, "遮罩文件无效")
+		return
+	}
 	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
 		ClientRequestID: r.FormValue("clientRequestId"),
 		Mode:            service.ImageTaskModeEdit,
-		Request:         ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution")},
+		Request:         ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution"), OutputFormat: r.FormValue("output_format"), Background: r.FormValue("background")},
 		References:      references,
+		Mask:            mask,
 	})
 	if err != nil {
 		FailError(w, err)
 		return
 	}
 	OK(w, task)
+}
+
+func imageMaskFromForm(r *http.Request) (*ai.ImageReference, error) {
+	files := r.MultipartForm.File["mask"]
+	if len(files) == 0 {
+		return nil, nil
+	}
+	if len(files) != 1 {
+		return nil, fmt.Errorf("multiple masks")
+	}
+	file := files[0]
+	input, err := file.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer input.Close()
+	data, err := io.ReadAll(io.LimitReader(input, 50<<20+1))
+	if err != nil || len(data) > 50<<20 {
+		return nil, err
+	}
+	return &ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data}, nil
 }
 
 func AIImageTask(w http.ResponseWriter, r *http.Request, id string) {

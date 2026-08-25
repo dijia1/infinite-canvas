@@ -6,7 +6,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 import { nanoid } from "nanoid";
 import { localForageStorage } from "@/lib/localforage-storage";
 import { portalStorageScope } from "@/lib/portal-storage-scope";
-import { cleanupUnusedImages } from "@/services/image-storage";
+import { cleanupUnusedImages, deleteStoredImages, imageStorageKeyForMedia, imageThumbnailStorageKey } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { fetchPrivateFolders, fetchPrivateImages } from "@/services/api/private-images";
@@ -94,6 +94,22 @@ function parseStoredFolders(value: unknown): PrivateAssetFolder[] {
     });
     const folderIds = new Set(folders.map((folder) => folder.id));
     return folders.map((folder) => ({ ...folder, parentId: folder.parentId && folderIds.has(folder.parentId) ? folder.parentId : undefined }));
+}
+
+function mediaIDs(assets: Asset[]) {
+    return new Set(
+        assets.flatMap((asset) => {
+            if (asset.kind !== "image" || typeof asset.metadata?.mediaId !== "string" || !asset.metadata.mediaId) return [];
+            return [asset.metadata.mediaId];
+        }),
+    );
+}
+
+async function discardMissingPrivateMediaCache(previousAssets: Asset[], nextAssets: Asset[]) {
+    const nextMediaIDs = mediaIDs(nextAssets);
+    const removed = [...mediaIDs(previousAssets)].filter((mediaID) => !nextMediaIDs.has(mediaID));
+    if (!removed.length) return;
+    await deleteStoredImages(removed.flatMap((mediaID) => [imageStorageKeyForMedia(mediaID), imageThumbnailStorageKey(mediaID)]));
 }
 
 const assetStorage: PersistStorage<AssetStore> = {
@@ -232,14 +248,22 @@ export const useAssetStore = create<AssetStore>()(
                 await useAssetStore.persist.rehydrate();
                 try {
                     const [images, folders] = await Promise.all([fetchPrivateImages(), fetchPrivateFolders()]);
-                    if (useAssetStore.persist.getOptions().name === name) set(privateCatalogToAssetState(images, folders));
+                    if (useAssetStore.persist.getOptions().name === name) {
+                        const next = privateCatalogToAssetState(images, folders);
+                        const previous = get().assets;
+                        set(next);
+                        await discardMissingPrivateMediaCache(previous, next.assets);
+                    }
                 } catch {
                     // The cached catalog remains available when the Portal session or API is temporarily unavailable.
                 }
             },
             refreshFromServer: async () => {
                 const [images, folders] = await Promise.all([fetchPrivateImages(), fetchPrivateFolders()]);
-                set(privateCatalogToAssetState(images, folders));
+                const next = privateCatalogToAssetState(images, folders);
+                const previous = get().assets;
+                set(next);
+                await discardMissingPrivateMediaCache(previous, next.assets);
             },
         }),
         {

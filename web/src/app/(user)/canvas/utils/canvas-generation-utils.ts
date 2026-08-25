@@ -1,6 +1,8 @@
 import { normalizeImageResolution } from "../../../../lib/image-generation-config.ts";
+import { normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
 import type { AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
+import { normalizeImageMask } from "../image-mask/mask-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
 
 type NodeGenerationInput = {
@@ -19,13 +21,18 @@ export type CanvasAngleParameters = {
 };
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
+    const persistedReferences = references
+        .map((reference) => ({ url: referenceUrl(reference), mask: normalizeImageMask(reference.mask) }))
+        .filter((reference): reference is { url: string; mask: ReturnType<typeof normalizeImageMask> } => Boolean(reference.url));
     return {
         generationType: type,
         size: config.size,
         resolution: config.resolution,
+        outputFormat: normalizeImageOutputFormat(config.outputFormat),
         quality: config.quality,
         count,
-        references: references.map(referenceUrl).filter((url): url is string => Boolean(url)),
+        references: persistedReferences.map((reference) => reference.url),
+        ...(persistedReferences.some((reference) => Boolean(reference.mask)) ? { referenceMasks: persistedReferences.map((reference) => reference.mask) } : {}),
     };
 }
 
@@ -52,6 +59,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         quality: node?.metadata?.quality || config.quality || fallbackConfig.quality,
         size: node?.metadata?.size || config.size || fallbackConfig.size,
         resolution: normalizeImageResolution(node?.metadata?.resolution || config.resolution || fallbackConfig.resolution),
+        outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || fallbackConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || fallbackConfig.vquality,
         count: String(node?.metadata?.count || config.count || fallbackConfig.count),
@@ -82,6 +90,7 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
 
 export function sourceNodeReferenceImages(node: CanvasNodeData | null): ReferenceImage[] {
     if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
+    const mask = normalizeImageMask(node.metadata.imageMask);
     return [
         {
             id: node.id,
@@ -89,6 +98,8 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null): Referenc
             type: node.metadata.mimeType || "image/png",
             dataUrl: node.metadata.content,
             storageKey: node.metadata.storageKey,
+            ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
+            ...(mask ? { mask } : {}),
         },
     ];
 }

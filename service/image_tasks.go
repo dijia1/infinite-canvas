@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/basketikun/infinite-canvas/ai"
@@ -21,6 +22,7 @@ type CreateImageTaskRequest struct {
 	Mode            string
 	Request         ai.ImageRequest
 	References      []ai.ImageReference
+	Mask            *ai.ImageReference
 }
 
 type ImageTaskView struct {
@@ -40,26 +42,9 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	if !ok || strings.TrimSpace(user.UID) == "" {
 		return ImageTaskView{}, safeMessageError{message: "未经过 Portal Gateway 身份验证"}
 	}
-	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
-	if request.ClientRequestID == "" || len(request.ClientRequestID) > 128 {
-		return ImageTaskView{}, safeMessageError{message: "客户端请求 ID 无效"}
-	}
-	request.Mode = strings.TrimSpace(request.Mode)
-	if request.Mode != ImageTaskModeGeneration && request.Mode != ImageTaskModeEdit {
-		return ImageTaskView{}, safeMessageError{message: "图片任务类型无效"}
-	}
-	request.Request.Prompt = strings.TrimSpace(request.Request.Prompt)
-	if request.Request.Prompt == "" {
-		return ImageTaskView{}, safeMessageError{message: "提示词不能为空"}
-	}
-	if request.Request.Count < 1 {
-		request.Request.Count = 1
-	}
-	if request.Request.Count != 1 {
-		return ImageTaskView{}, safeMessageError{message: "单次图片任务只能生成一张图片"}
-	}
-	if request.Mode == ImageTaskModeEdit && len(request.References) == 0 {
-		return ImageTaskView{}, safeMessageError{message: "图像编辑需要参考图"}
+	request, err := normalizeImageTaskRequest(request)
+	if err != nil {
+		return ImageTaskView{}, err
 	}
 
 	if existing, found, err := repository.GetImageGenerationTaskByClientRequest(user.UID, request.ClientRequestID); err != nil {
@@ -73,7 +58,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	}
 	taskID := newID("image-task")
-	inputs, err := SaveImageTaskInputs(ctx, taskID, request.References)
+	inputs, err := SaveImageTaskInputs(ctx, taskID, request.References, request.Mask)
 	if err != nil {
 		return ImageTaskView{}, err
 	}
@@ -85,7 +70,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	item := model.ImageGenerationTask{
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Mode: request.Mode,
 		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
-		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), Count: 1,
+		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, Count: 1,
 		ReferencesJSON: string(inputsJSON), CreatedAt: now(), UpdatedAt: now(),
 	}
 	created, inserted, err := repository.CreateImageGenerationTask(item)
@@ -97,6 +82,47 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		_ = DeleteImageTaskInputs(ctx, inputs)
 	}
 	return imageTaskView(ctx, user, created)
+}
+
+func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskRequest, error) {
+	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
+	if request.ClientRequestID == "" || len(request.ClientRequestID) > 128 {
+		return CreateImageTaskRequest{}, safeMessageError{message: "客户端请求 ID 无效"}
+	}
+	request.Mode = strings.TrimSpace(request.Mode)
+	if request.Mode != ImageTaskModeGeneration && request.Mode != ImageTaskModeEdit {
+		return CreateImageTaskRequest{}, safeMessageError{message: "图片任务类型无效"}
+	}
+	request.Request.Prompt = strings.TrimSpace(request.Request.Prompt)
+	if request.Request.Prompt == "" {
+		return CreateImageTaskRequest{}, safeMessageError{message: "提示词不能为空"}
+	}
+	if request.Request.Count < 1 {
+		request.Request.Count = 1
+	}
+	if request.Request.Count != 1 {
+		return CreateImageTaskRequest{}, safeMessageError{message: "单次图片任务只能生成一张图片"}
+	}
+	if request.Mode == ImageTaskModeEdit && (len(request.References) < 1 || len(request.References) > 7) {
+		return CreateImageTaskRequest{}, safeMessageError{message: "图像编辑需要 1–7 张参考图"}
+	}
+	if request.Mask != nil && request.Mode != ImageTaskModeEdit {
+		return CreateImageTaskRequest{}, safeMessageError{message: "遮罩只能用于图像编辑"}
+	}
+	format := strings.ToLower(strings.TrimSpace(request.Request.OutputFormat))
+	background := strings.ToLower(strings.TrimSpace(request.Request.Background))
+	if format == "" && background == "" {
+		format, background = "jpeg", "opaque"
+	}
+	if format == "jpeg" && background == "opaque" {
+		request.Request.OutputFormat, request.Request.Background = format, background
+		return request, nil
+	}
+	if format == "png" && background == "transparent" {
+		request.Request.OutputFormat, request.Request.Background = format, background
+		return request, nil
+	}
+	return CreateImageTaskRequest{}, safeMessageError{message: fmt.Sprintf("图片输出格式与背景组合无效：%s/%s", format, background)}
 }
 
 func GetImageTask(ctx context.Context, id string) (ImageTaskView, error) {
@@ -204,7 +230,12 @@ func imageTaskProvider(item model.ImageGenerationTask) (ai.ImageTaskProvider, er
 }
 
 func imageTaskRequest(item model.ImageGenerationTask) ai.ImageRequest {
-	return ai.ImageRequest{Prompt: item.Prompt, Count: item.Count, Quality: item.Quality, Size: item.Size, Resolution: item.Resolution}
+	format := strings.TrimSpace(item.OutputFormat)
+	background := strings.TrimSpace(item.Background)
+	if format == "" && background == "" {
+		format, background = "jpeg", "opaque"
+	}
+	return ai.ImageRequest{Prompt: item.Prompt, Count: item.Count, Quality: item.Quality, Size: item.Size, Resolution: item.Resolution, OutputFormat: format, Background: background}
 }
 
 func imageTaskInputs(item model.ImageGenerationTask) ([]ImageTaskInput, error) {

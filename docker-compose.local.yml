@@ -10,4 +10,23 @@ services:
       - ./data:/app/data
     ports:
       - "3000:3000"
+    networks:
+      portal_gateway:
+        aliases:
+          - infinite-canvas-app
+      internal_tools_database: {}
+      portal_directory:
+        aliases:
+          - infinite-canvas-directory
     restart: unless-stopped
+
+networks:
+  portal_gateway:
+    external: true
+    name: portal_gateway
+  internal_tools_database:
+    external: true
+    name: internal_tools_database
+  portal_directory:
+    external: true
+    name: portal_directory

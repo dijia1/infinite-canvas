@@ -20,7 +20,7 @@ import {
     type PublicImage,
 } from "@/services/api/public-images";
 import { fetchPortalSession } from "@/services/api/session";
-import { loadMediaPreview } from "@/services/image-storage";
+import { loadMediaImage, loadMediaThumbnail } from "@/services/image-storage";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns, type MaterialFolder } from "./material-folder-ui";
@@ -384,7 +384,7 @@ function gridColumnClass(stage: number) {
 function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { image: PublicImage; isAdmin: boolean; onPreview: (preview: { title: string; url: string }) => void; onImageContextMenu: (event: MouseEvent) => void }) {
     const [loadFailed, setLoadFailed] = useState(false);
     const loadPreview = useCallback(async () => {
-        return await loadMediaPreview(image.mediaId, async () => {
+        return await loadMediaThumbnail(image.mediaId, async () => {
                 const access = await fetchPublicImageAccess(image.id);
                 return access.previewUrl || access.url;
             });
@@ -406,7 +406,10 @@ function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { im
                 event.dataTransfer.setData(PUBLIC_IMAGE_DRAG_TYPE, JSON.stringify({ id: image.id, mediaId: image.mediaId, title: image.title } satisfies PublicImageDropPayload));
             }}
             onClick={() => {
-                if (url && !previewFailed) onPreview({ title: image.title, url });
+                if (!url || previewFailed) return;
+                void loadMediaImage(image.mediaId, async () => (await fetchPublicImageAccess(image.id)).url)
+                    .then((original) => onPreview({ title: image.title, url: original.url }))
+                    .catch(() => onPreview({ title: image.title, url }));
             }}
             onContextMenu={(event: MouseEvent) => {
                 event.preventDefault();

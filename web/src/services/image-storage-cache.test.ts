@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createImagePreview, createImageStorageOperations, imagePreviewStorageKey, imageStorageKeyForMedia, imageToDataUrl, type ImageCacheStore } from "./image-storage.ts";
+import { createImagePreview, createImageStorageOperations, imageStorageKeyForMedia, imageThumbnailStorageKey, imageToDataUrl, type ImageCacheStore } from "./image-storage.ts";
 
 class MemoryStore implements ImageCacheStore {
     readonly values = new Map<string, unknown>();
@@ -36,10 +36,11 @@ function createTestOperations(options: {
     isActive?: () => boolean;
     fetchImageBlob?: (url: string) => Promise<Blob>;
     createPreviewBlob?: (blob: Blob) => Promise<Blob>;
-    previewBudgetBytes?: number;
     cacheBudgetBytes?: number;
     cacheHighWatermarkBytes?: number;
     cacheLowWatermarkBytes?: number;
+    cacheHighWatermarkEntries?: number;
+    cacheLowWatermarkEntries?: number;
     objectUrls?: Map<string, string>;
     now?: () => number;
     readMeta?: (url: string) => Promise<{ width: number; height: number; mimeType: string }>;
@@ -59,10 +60,14 @@ function createTestOperations(options: {
         revokeObjectURL: (url) => revoked.push(url),
         readMeta: options.readMeta || (async () => ({ width: 640, height: 480, mimeType: "image/png" })),
         now: options.now || (() => 1234),
-        previewBudgetBytes: options.previewBudgetBytes,
         cacheBudgetBytes: options.cacheBudgetBytes,
         cacheHighWatermarkBytes: options.cacheHighWatermarkBytes,
         cacheLowWatermarkBytes: options.cacheLowWatermarkBytes,
+        cacheHighWatermarkEntries: options.cacheHighWatermarkEntries,
+        cacheLowWatermarkEntries: options.cacheLowWatermarkEntries,
+    } as Parameters<typeof createImageStorageOperations>[0] & {
+        cacheHighWatermarkEntries?: number;
+        cacheLowWatermarkEntries?: number;
     });
     return { operations, revoked, store };
 }
@@ -75,9 +80,126 @@ function deferred<T>() {
     return { promise, resolve };
 }
 
-test("original and preview variants keep the existing stable cache keys", () => {
-    assert.equal(imageStorageKeyForMedia("media-1"), "media:media-1");
-    assert.equal(imagePreviewStorageKey("media-1"), "preview:media-1");
+test("original and thumbnail variants use versioned stable cache keys", () => {
+    assert.equal(imageStorageKeyForMedia("media-1"), "media:media-1:v1:original");
+    assert.equal(imageThumbnailStorageKey("media-1"), "media:media-1:v1:thumbnail");
+});
+
+test("migrates a legacy original cache entry without fetching its signed URL", async () => {
+    const store = new MemoryStore();
+    const legacy = new Blob(["legacy"], { type: "image/png" });
+    await store.setItem("media:legacy-media", legacy);
+    let accessRequests = 0;
+    const { operations } = createTestOperations({ store, fetchImageBlob: async () => new Blob(["remote"], { type: "image/png" }) });
+
+    const image = await operations.loadMediaImage("legacy-media", async () => {
+        accessRequests += 1;
+        return "https://oss.example/original.png";
+    });
+
+    assert.equal(accessRequests, 0);
+    assert.equal(image.storageKey, "media:legacy-media:v1:original");
+    assert.equal(await store.getItem("media:legacy-media"), null);
+    assert.equal(await store.getItem("media:legacy-media:v1:original"), legacy);
+});
+
+test("migrates a legacy thumbnail cache entry without fetching its signed URL", async () => {
+    const store = new MemoryStore();
+    const legacy = new Blob(["legacy-thumbnail"], { type: "image/webp" });
+    await store.setItem("preview:legacy-media", legacy);
+    let accessRequests = 0;
+    const { operations } = createTestOperations({ store, fetchImageBlob: async () => new Blob(["remote"], { type: "image/webp" }) });
+
+    const image = await operations.loadMediaThumbnail("legacy-media", async () => {
+        accessRequests += 1;
+        return "https://oss.example/thumbnail.webp";
+    });
+
+    assert.equal(accessRequests, 0);
+    assert.equal(image.storageKey, "media:legacy-media:v1:thumbnail");
+    assert.equal(await store.getItem("preview:legacy-media"), null);
+    assert.equal(await store.getItem("media:legacy-media:v1:thumbnail"), legacy);
+});
+
+test("re-signs exactly once when an original OSS request receives 403", async () => {
+    let remoteAttempts = 0;
+    let signedURLRequests = 0;
+    const { operations } = createTestOperations({
+        fetchImageBlob: async (url) => {
+            remoteAttempts += 1;
+            if (url.endsWith("Signature=AAA")) {
+                const error = Object.assign(new Error("下载图片失败"), { status: 403 });
+                throw error;
+            }
+            return new Blob(["fresh"], { type: "image/png" });
+        },
+    });
+
+    const image = await operations.loadMediaImage("signed-media", async () => {
+        signedURLRequests += 1;
+        return signedURLRequests === 1 ? "https://oss.example/image?Signature=AAA" : "https://oss.example/image?Signature=BBB";
+    });
+
+    assert.equal(image.bytes, 5);
+    assert.equal(remoteAttempts, 2);
+    assert.equal(signedURLRequests, 2);
+});
+
+test("does not re-sign an original request for a non-403 failure", async () => {
+    let remoteAttempts = 0;
+    let signedURLRequests = 0;
+    const { operations } = createTestOperations({
+        fetchImageBlob: async () => {
+            remoteAttempts += 1;
+            throw Object.assign(new Error("下载图片失败"), { status: 404 });
+        },
+    });
+
+    await assert.rejects(
+        operations.loadMediaImage("missing-media", async () => {
+            signedURLRequests += 1;
+            return "https://oss.example/image?Signature=AAA";
+        }),
+        /下载图片失败/,
+    );
+
+    assert.equal(remoteAttempts, 1);
+    assert.equal(signedURLRequests, 1);
+});
+
+test("global LRU evicts inactive cache entries when the entry watermark is exceeded", async () => {
+    let timestamp = 0;
+    const store = new MemoryStore();
+    const options = createTestOperations({
+        store,
+        now: () => ++timestamp,
+        cacheBudgetBytes: 1024,
+        cacheHighWatermarkBytes: 1024,
+        cacheLowWatermarkBytes: 1024,
+        cacheHighWatermarkEntries: 3,
+        cacheLowWatermarkEntries: 1,
+    });
+    const operations = options.operations;
+
+    const first = imageStorageKeyForMedia("entry-first");
+    const second = imageStorageKeyForMedia("entry-second");
+    const third = imageStorageKeyForMedia("entry-third");
+    const fourth = imageStorageKeyForMedia("entry-fourth");
+    await operations.storeImage(new Blob(["first"], { type: "image/png" }), first);
+    await operations.storeImage(new Blob(["second"], { type: "image/png" }), second);
+    await operations.storeImage(new Blob(["third"], { type: "image/png" }), third);
+    await operations.storeImage(new Blob(["fourth"], { type: "image/png" }), fourth);
+    operations.releaseObjectURL(first);
+    operations.releaseObjectURL(second);
+    operations.releaseObjectURL(third);
+    operations.releaseObjectURL(fourth);
+
+    await operations.enforceCacheBudget();
+
+    assert.equal(await store.getItem(first), null);
+    assert.equal(await store.getItem(second), null);
+    assert.equal(await store.getItem(third), null);
+    assert.ok(await store.getItem(fourth));
 });
 
 test("global cache budget evicts the oldest preview before inactive originals down to the low watermark", async () => {
@@ -89,53 +211,46 @@ test("global cache budget evicts the oldest preview before inactive originals do
         now: () => ++timestamp,
     });
 
-    await operations.storeImage(new Blob(["111111"], { type: "image/png" }), "media:old-original");
-    await operations.setImageBlob("preview:old-preview", new Blob(["222222"], { type: "image/webp" }));
-    await operations.storeImage(new Blob(["333333"], { type: "image/png" }), "media:new-original");
-    operations.releaseObjectURL("media:old-original");
-    operations.releaseObjectURL("preview:old-preview");
+    const oldOriginal = imageStorageKeyForMedia("old-original");
+    const oldThumbnail = imageThumbnailStorageKey("old-thumbnail");
+    const newOriginal = imageStorageKeyForMedia("new-original");
+    await operations.storeImage(new Blob(["111111"], { type: "image/png" }), oldOriginal);
+    await operations.setImageBlob(oldThumbnail, new Blob(["222222"], { type: "image/webp" }));
+    await operations.storeImage(new Blob(["333333"], { type: "image/png" }), newOriginal);
+    operations.releaseObjectURL(oldOriginal);
+    operations.releaseObjectURL(oldThumbnail);
 
     const withBudget = operations as typeof operations & { enforceCacheBudget?: () => Promise<void> };
     assert.ok(withBudget.enforceCacheBudget, "缓存操作应提供全局预算回收");
     await withBudget.enforceCacheBudget?.();
 
-    assert.equal(await store.getItem("preview:old-preview"), null);
-    assert.equal(await store.getItem("media:old-original"), null);
-    assert.ok(await store.getItem("media:new-original"));
+    assert.equal(await store.getItem(oldThumbnail), null);
+    assert.equal(await store.getItem(oldOriginal), null);
+    assert.ok(await store.getItem(newOriginal));
 });
 
 test("global cache budget retains a blob while it has a visible Object URL", async () => {
     const { operations, store } = createTestOperations({ cacheBudgetBytes: 20, cacheHighWatermarkBytes: 12, cacheLowWatermarkBytes: 6 });
 
-    await operations.storeImage(new Blob(["visible"], { type: "image/png" }), "media:visible");
-    await operations.setImageBlob("preview:old", new Blob(["oldest"], { type: "image/webp" }));
-    await operations.setImageBlob("media:new", new Blob(["newest"], { type: "image/png" }));
-    operations.releaseObjectURL("preview:old");
-    operations.releaseObjectURL("media:new");
+    const visible = imageStorageKeyForMedia("visible");
+    const oldThumbnail = imageThumbnailStorageKey("old");
+    const newest = imageStorageKeyForMedia("new");
+    await operations.storeImage(new Blob(["visible"], { type: "image/png" }), visible);
+    await operations.setImageBlob(oldThumbnail, new Blob(["oldest"], { type: "image/webp" }));
+    await operations.setImageBlob(newest, new Blob(["newest"], { type: "image/png" }));
+    operations.releaseObjectURL(oldThumbnail);
+    operations.releaseObjectURL(newest);
 
     await operations.enforceCacheBudget();
 
-    assert.ok(await store.getItem<Blob>("media:visible"));
-    assert.equal(await store.getItem<Blob>("preview:old"), null);
-    assert.equal(await store.getItem<Blob>("media:new"), null);
-});
-
-test("preview budget does not evict an actively displayed preview", async () => {
-    const { operations, store } = createTestOperations({ previewBudgetBytes: 6 });
-
-    await operations.setImageBlob("preview:visible", new Blob(["visible"], { type: "image/webp" }));
-    await operations.setImageBlob("preview:inactive", new Blob(["inactive"], { type: "image/webp" }));
-    operations.releaseObjectURL("preview:inactive");
-
-    await operations.enforcePreviewCacheBudget();
-
-    assert.ok(await store.getItem<Blob>("preview:visible"));
-    assert.equal(await store.getItem<Blob>("preview:inactive"), null);
+    assert.ok(await store.getItem<Blob>(visible));
+    assert.equal(await store.getItem<Blob>(oldThumbnail), null);
+    assert.equal(await store.getItem<Blob>(newest), null);
 });
 
 test("loadMediaImage uses a cached original without fetching the remote URL", async () => {
     const store = new MemoryStore();
-    await store.setItem("media:media-1", new Blob(["cached"], { type: "image/png" }));
+    await store.setItem(imageStorageKeyForMedia("media-1"), new Blob(["cached"], { type: "image/png" }));
     let remoteCalls = 0;
     const { operations } = createTestOperations({
         store,
@@ -147,15 +262,15 @@ test("loadMediaImage uses a cached original without fetching the remote URL", as
 
     const image = await operations.loadMediaImage("media-1", "https://oss.example/original.png");
 
-    assert.equal(image.storageKey, "media:media-1");
+    assert.equal(image.storageKey, imageStorageKeyForMedia("media-1"));
     assert.equal(remoteCalls, 0);
 });
 
-test("loadMediaPreview derives and stores a WebP preview from the local original without a remote fetch", async () => {
+test("loadMediaThumbnail derives and stores a WebP thumbnail from the local original without a remote fetch", async () => {
     const store = new MemoryStore();
     const original = new Blob(["cached-original"], { type: "image/png" });
     const derived = new Blob(["derived-preview"], { type: "image/webp" });
-    await store.setItem("media:media-2", original);
+    await store.setItem(imageStorageKeyForMedia("media-2"), original);
     let remoteCalls = 0;
     let derivedFrom: Blob | undefined;
     const { operations } = createTestOperations({
@@ -170,18 +285,18 @@ test("loadMediaPreview derives and stores a WebP preview from the local original
         },
     });
 
-    const image = await operations.loadMediaPreview("media-2", "https://oss.example/preview.webp");
+    const image = await operations.loadMediaThumbnail("media-2", "https://oss.example/thumbnail.webp");
 
-    assert.equal(image.storageKey, "preview:media-2");
+    assert.equal(image.storageKey, imageThumbnailStorageKey("media-2"));
     assert.equal(derivedFrom, original);
-    assert.equal(await store.getItem("preview:media-2"), derived);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("media-2")), derived);
     assert.equal(remoteCalls, 0);
 });
 
-test("loadMediaPreview falls back to the cached original when browser conversion fails", async () => {
+test("loadMediaThumbnail falls back to the cached original when browser conversion fails", async () => {
     const store = new MemoryStore();
     const original = new Blob(["cached-original"], { type: "image/png" });
-    await store.setItem("media:media-3", original);
+    await store.setItem(imageStorageKeyForMedia("media-3"), original);
     let remoteCalls = 0;
     const { operations } = createTestOperations({
         store,
@@ -194,15 +309,15 @@ test("loadMediaPreview falls back to the cached original when browser conversion
         },
     });
 
-    const image = await operations.loadMediaPreview("media-3", "https://oss.example/preview.webp");
+    const image = await operations.loadMediaThumbnail("media-3", "https://oss.example/thumbnail.webp");
 
-    assert.equal(image.storageKey, "media:media-3");
+    assert.equal(image.storageKey, imageStorageKeyForMedia("media-3"));
     assert.equal(remoteCalls, 0);
 });
 
 test("cache hits do not create an access URL and cache misses create it only when downloading", async () => {
     const store = new MemoryStore();
-    await store.setItem("media:media-local", new Blob(["cached-original"], { type: "image/png" }));
+    await store.setItem(imageStorageKeyForMedia("media-local"), new Blob(["cached-original"], { type: "image/png" }));
     let accessRequests = 0;
     const receivedURLs: string[] = [];
     const { operations } = createTestOperations({
@@ -265,7 +380,7 @@ test("a request started in an old scope never writes after that scope becomes in
     resolveRemote?.(new Blob(["remote"], { type: "image/png" }));
 
     await assert.rejects(pending, /缓存作用域已切换/);
-    assert.equal(await store.getItem("media:media-stale"), null);
+    assert.equal(await store.getItem(imageStorageKeyForMedia("media-stale")), null);
 });
 
 test("explicit deletion invalidates a pending original download before it can repopulate the cache", async () => {
@@ -281,12 +396,12 @@ test("explicit deletion invalidates a pending original download before it can re
 
     const pending = operations.loadMediaImage("delete-original", "https://oss.example/original.png");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await operations.deleteStoredImages(["media:delete-original"]);
+    await operations.deleteStoredImages([imageStorageKeyForMedia("delete-original")]);
     resolveRemote?.(new Blob(["late-original"], { type: "image/png" }));
 
     await assert.rejects(pending, /缓存已删除/);
-    assert.equal(await store.getItem("media:delete-original"), null);
-    assert.equal(await store.getItem("preview:delete-original"), null);
+    assert.equal(await store.getItem(imageStorageKeyForMedia("delete-original")), null);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("delete-original")), null);
 });
 
 test("explicit deletion invalidates a pending preview download and its metadata", async () => {
@@ -300,14 +415,13 @@ test("explicit deletion invalidates a pending preview download and its metadata"
             }),
     });
 
-    const pending = operations.loadMediaPreview("delete-preview", "https://oss.example/preview.webp");
+    const pending = operations.loadMediaThumbnail("delete-preview", "https://oss.example/thumbnail.webp");
     await new Promise((resolve) => setTimeout(resolve, 0));
-    await operations.deleteStoredImages(["media:delete-preview"]);
+    await operations.deleteStoredImages([imageStorageKeyForMedia("delete-preview")]);
     resolveRemote?.(new Blob(["late-preview"], { type: "image/webp" }));
 
     await assert.rejects(pending, /缓存已删除/);
-    assert.equal(await store.getItem("preview:delete-preview"), null);
-    assert.equal(await store.getItem("preview-meta:delete-preview"), null);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("delete-preview")), null);
 });
 
 test("an invalidated partial write cannot erase a newer generation written after deletion", async () => {
@@ -317,7 +431,7 @@ test("an invalidated partial write cannot erase a newer generation written after
     let releaseFirstWrite: (() => void) | undefined;
     let mediaWrites = 0;
     store.setItem = async <T>(key: string, value: T) => {
-        if (key === "media:replace-after-delete") {
+        if (key === imageStorageKeyForMedia("replace-after-delete")) {
             mediaWrites += 1;
             if (mediaWrites === 1) {
                 firstWriteStarted?.();
@@ -338,7 +452,7 @@ test("an invalidated partial write cannot erase a newer generation written after
 
     const oldLoad = operations.loadMediaImage("replace-after-delete", "https://oss.example/old.png");
     await firstWriteReady;
-    const deletion = operations.deleteStoredImages(["media:replace-after-delete"]);
+    const deletion = operations.deleteStoredImages([imageStorageKeyForMedia("replace-after-delete")]);
     const newLoad = operations.loadMediaImage("replace-after-delete", "https://oss.example/new.png");
     await new Promise((resolve) => setTimeout(resolve, 0));
     releaseFirstWrite?.();
@@ -346,7 +460,7 @@ test("an invalidated partial write cannot erase a newer generation written after
     await deletion;
     await assert.rejects(oldLoad, /缓存已删除/);
     await newLoad;
-    const stored = await store.getItem<Blob>("media:replace-after-delete");
+    const stored = await store.getItem<Blob>(imageStorageKeyForMedia("replace-after-delete"));
     assert.equal(await stored?.text(), "new");
 });
 
@@ -356,7 +470,7 @@ test("an old A context cannot overwrite a newer A context after A → B → A", 
     const oldWriteStarted = deferred<void>();
     const releaseOldWrite = deferred<void>();
     store.setItem = async <T>(key: string, value: T) => {
-        if (key === "media:return-to-a" && value instanceof Blob && (await value.text()) === "old") {
+        if (key === imageStorageKeyForMedia("return-to-a") && value instanceof Blob && (await value.text()) === "old") {
             oldWriteStarted.resolve();
             await releaseOldWrite.promise;
         }
@@ -387,14 +501,14 @@ test("an old A context cannot overwrite a newer A context after A → B → A", 
 
     await assert.rejects(staleLoad, /缓存作用域已切换/);
     await freshLoad;
-    const stored = await store.getItem<Blob>("media:return-to-a");
+    const stored = await store.getItem<Blob>(imageStorageKeyForMedia("return-to-a"));
     assert.equal(await stored?.text(), "new");
 });
 
 test("deleting a temporary source while promote is writing never creates the target media", async () => {
     const store = new MemoryStore();
     const sourceKey = "image:temporary-source";
-    const targetKey = "media:promoted-after-delete";
+    const targetKey = imageStorageKeyForMedia("promoted-after-delete");
     const source = new Blob(["source"], { type: "image/png" });
     await store.setItem(sourceKey, source);
     const writeStoredItem = store.setItem.bind(store);
@@ -461,7 +575,7 @@ test("cleanup does not remove a storeImage write that is in progress", async () 
 
 test("cleanup does not remove a setImageBlob write that is in progress", async () => {
     const store = new MemoryStore();
-    const storageKey = "media:set-in-progress";
+    const storageKey = imageStorageKeyForMedia("set-in-progress");
     await store.setItem(storageKey, new Blob(["old"]));
     const writeStoredItem = store.setItem.bind(store);
     const removals: string[] = [];
@@ -492,7 +606,7 @@ test("cleanup does not remove a setImageBlob write that is in progress", async (
 test("cleanup does not remove a promote source while its target write is in progress", async () => {
     const store = new MemoryStore();
     const sourceKey = "image:promote-in-progress";
-    const targetKey = "media:promote-in-progress";
+    const targetKey = imageStorageKeyForMedia("promote-in-progress");
     const source = new Blob(["source"], { type: "image/png" });
     await store.setItem(sourceKey, source);
     const writeStoredItem = store.setItem.bind(store);
@@ -534,212 +648,58 @@ test("cleanup does not remove a promote source while its target write is in prog
     assert.ok(await store.getItem(targetKey));
 });
 
-test("generic cleanup retains previews, explicit media deletion removes both variants", async () => {
+test("generic cleanup retains thumbnails, explicit media deletion removes both variants", async () => {
     const store = new MemoryStore();
-    await store.setItem("media:unused", new Blob(["original"]));
-    await store.setItem("preview:unused", new Blob(["preview"]));
+    const originalKey = imageStorageKeyForMedia("unused");
+    const thumbnailKey = imageThumbnailStorageKey("unused");
+    await store.setItem(originalKey, new Blob(["original"]));
+    await store.setItem(thumbnailKey, new Blob(["thumbnail"]));
     const { operations } = createTestOperations({ store });
 
     await operations.cleanupUnusedImages({});
-    assert.equal(await store.getItem("media:unused"), null);
-    assert.ok(await store.getItem("preview:unused"));
+    assert.equal(await store.getItem(originalKey), null);
+    assert.ok(await store.getItem(thumbnailKey));
 
-    await operations.deleteStoredImages(["media:unused"]);
-    assert.equal(await store.getItem("preview:unused"), null);
+    await operations.deleteStoredImages([originalKey]);
+    assert.equal(await store.getItem(thumbnailKey), null);
 });
 
-test("generic cleanup evicts only the least-recently-used previews above the preview budget", async () => {
+test("an Object URL hit updates global LRU metadata without blocking display", async () => {
     const store = new MemoryStore();
-    await store.setItem("preview:old", new Blob(["old"]));
-    await store.setItem("preview-meta:old", { bytes: 3, lastAccess: 1 });
-    await store.setItem("preview:new", new Blob(["new"]));
-    await store.setItem("preview-meta:new", { bytes: 3, lastAccess: 2 });
-    const { operations } = createTestOperations({ store, previewBudgetBytes: 3 });
-
-    await operations.cleanupUnusedImages({});
-
-    assert.equal(await store.getItem("preview:old"), null);
-    assert.ok(await store.getItem("preview:new"));
-});
-
-test("preview budget retains an actively displayed preview even when its original is referenced", async () => {
-    const store = new MemoryStore();
-    const oldPreview = new Blob(["old"]);
-    await store.setItem("media:old", new Blob(["original"]));
-    await store.setItem("preview:old", oldPreview);
-    await store.setItem("preview-meta:old", { bytes: oldPreview.size, lastAccess: 1 });
-    await store.setItem("preview:new", new Blob(["new"]));
-    await store.setItem("preview-meta:new", { bytes: 3, lastAccess: 2 });
-    const { operations, revoked } = createTestOperations({
-        store,
-        previewBudgetBytes: 3,
-        objectUrls: new Map([["preview:old", "blob:old-preview"]]),
-    });
-
-    await operations.enforcePreviewCacheBudget();
-
-    assert.ok(await store.getItem("media:old"));
-    assert.ok(await store.getItem("preview:old"));
-    assert.ok(await store.getItem("preview-meta:old"));
-    assert.deepEqual(revoked, []);
-    assert.equal(await store.getItem("preview:new"), null);
-});
-
-test("a successful preview write schedules low-priority budget eviction", async () => {
-    const store = new MemoryStore();
-    await store.setItem("preview:old", new Blob(["old"]));
-    await store.setItem("preview-meta:old", { bytes: 3, lastAccess: 1 });
-    const { operations } = createTestOperations({
-        store,
-        previewBudgetBytes: 3,
-        now: () => 2,
-        fetchImageBlob: async () => new Blob(["new"], { type: "image/webp" }),
-    });
-
-    await operations.loadMediaPreview("new", "https://oss.example/new.webp");
-    for (let attempt = 0; attempt < 10 && (await store.getItem("preview:old")); attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    assert.equal(await store.getItem("preview:old"), null);
-    assert.ok(await store.getItem("preview:new"));
-});
-
-test("preview writes from separate operations in one scope share a single scheduled budget scan", async () => {
-    const store = new MemoryStore();
-    const iterate = store.iterate.bind(store);
-    let scans = 0;
-    store.iterate = async <T, U>(iterator: (value: T, key: string, iterationNumber: number) => U | void) => {
-        scans += 1;
-        return iterate(iterator);
-    };
-    const first = createTestOperations({ scope: "shared-preview-scope", store, fetchImageBlob: async () => new Blob(["one"], { type: "image/webp" }) });
-    const second = createTestOperations({ scope: "shared-preview-scope", store, fetchImageBlob: async () => new Blob(["two"], { type: "image/webp" }) });
-
-    await Promise.all([
-        first.operations.loadMediaPreview("preview-one", "https://oss.example/one.webp"),
-        second.operations.loadMediaPreview("preview-two", "https://oss.example/two.webp"),
-    ]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    assert.equal(scans, 1);
-});
-
-test("the final concurrent preview completion schedules budget eviction after earlier in-flight passes", async () => {
-    const store = new MemoryStore();
-    const remoteBlobs = new Map<string, ReturnType<typeof deferred<Blob>>>();
-    const secondMetadataStarted = deferred<void>();
-    const secondMetadata = deferred<{ width: number; height: number; mimeType: string }>();
-    let metadataCalls = 0;
-    let clock = 0;
-    const { operations } = createTestOperations({
-        store,
-        previewBudgetBytes: 3,
-        now: () => ++clock,
-        fetchImageBlob: (url) => {
-            const pending = deferred<Blob>();
-            remoteBlobs.set(url, pending);
-            return pending.promise;
-        },
-        readMeta: async () => {
-            metadataCalls += 1;
-            if (metadataCalls === 2) {
-                secondMetadataStarted.resolve();
-                return secondMetadata.promise;
-            }
-            return { width: 640, height: 480, mimeType: "image/webp" };
-        },
-    });
-
-    const first = operations.loadMediaPreview("first", "https://oss.example/first.webp");
-    const second = operations.loadMediaPreview("second", "https://oss.example/second.webp");
-    for (let attempt = 0; attempt < 5 && (!remoteBlobs.get("https://oss.example/first.webp") || !remoteBlobs.get("https://oss.example/second.webp")); attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    remoteBlobs.get("https://oss.example/first.webp")?.resolve(new Blob(["one"], { type: "image/webp" }));
-    await first;
-    operations.releaseObjectURL("preview:first");
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    remoteBlobs.get("https://oss.example/second.webp")?.resolve(new Blob(["two"], { type: "image/webp" }));
-    await secondMetadataStarted.promise;
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.ok(await store.getItem("preview:first"));
-    assert.ok(await store.getItem("preview:second"));
-
-    secondMetadata.resolve({ width: 640, height: 480, mimeType: "image/webp" });
-    await second;
-    for (let attempt = 0; attempt < 10 && (await store.getItem("preview:first")); attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-    }
-
-    assert.equal(await store.getItem("preview:first"), null);
-    assert.ok(await store.getItem("preview:second"));
-});
-
-test("preview budget eviction leaves a preview in flight untouched", async () => {
-    const store = new MemoryStore();
-    await store.setItem("preview:loading", new Blob(["loading"]));
-    await store.setItem("preview-meta:loading", { bytes: 7, lastAccess: 1 });
-    const metadata = deferred<{ width: number; height: number; mimeType: string }>();
-    const metadataStarted = deferred<void>();
-    const { operations } = createTestOperations({
-        store,
-        previewBudgetBytes: 0,
-        readMeta: async () => {
-            metadataStarted.resolve();
-            return metadata.promise;
-        },
-    });
-
-    const pending = operations.loadMediaPreview("loading", "https://oss.example/loading.webp");
-    await metadataStarted.promise;
-    await operations.enforcePreviewCacheBudget();
-
-    assert.ok(await store.getItem("preview:loading"));
-    metadata.resolve({ width: 640, height: 480, mimeType: "image/webp" });
-    await pending;
-});
-
-test("an Object URL preview hit updates LRU metadata without blocking display", async () => {
-    const store = new MemoryStore();
-    await store.setItem("preview:memory-hit", new Blob(["preview"], { type: "image/webp" }));
-    await store.setItem("preview-meta:memory-hit", { bytes: 7, lastAccess: 1 });
+    const key = imageThumbnailStorageKey("memory-hit");
+    await store.setItem(key, new Blob(["thumbnail"], { type: "image/webp" }));
+    await store.setItem(`cache-meta:${key}`, { bytes: 9, cachedAt: 1, lastAccessedAt: 1, variant: "thumbnail" });
     const writeStoredItem = store.setItem.bind(store);
     let releaseMetadataWrite: (() => void) | undefined;
-    store.setItem = async <T>(key: string, value: T) => {
-        if (key === "preview-meta:memory-hit") {
+    store.setItem = async <T>(storedKey: string, value: T) => {
+        if (storedKey === `cache-meta:${key}`) {
             await new Promise<void>((resolve) => {
                 releaseMetadataWrite = resolve;
             });
         }
-        return writeStoredItem(key, value);
+        return writeStoredItem(storedKey, value);
     };
-    const { operations } = createTestOperations({
-        store,
-        objectUrls: new Map([["preview:memory-hit", "blob:cached-preview"]]),
-        now: () => 999,
-    });
+    const { operations } = createTestOperations({ store, objectUrls: new Map([[key, "blob:cached-thumbnail"]]), now: () => 999 });
 
-    const result = await Promise.race([operations.resolveImageUrl("preview:memory-hit"), new Promise<string>((_, reject) => setTimeout(() => reject(new Error("预览显示被元数据写入阻塞")), 20))]);
-    assert.equal(result, "blob:cached-preview");
+    const result = await Promise.race([operations.resolveImageUrl(key), new Promise<string>((_, reject) => setTimeout(() => reject(new Error("图片显示被元数据写入阻塞")), 20))]);
+    assert.equal(result, "blob:cached-thumbnail");
 
     for (let attempt = 0; attempt < 5 && !releaseMetadataWrite; attempt += 1) await new Promise((resolve) => setTimeout(resolve, 0));
     assert.ok(releaseMetadataWrite);
     releaseMetadataWrite?.();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    assert.deepEqual(await store.getItem("preview-meta:memory-hit"), { bytes: 7, lastAccess: 999 });
+    assert.deepEqual(await store.getItem(`cache-meta:${key}`), { bytes: 9, cachedAt: 1, lastAccessedAt: 999, variant: "thumbnail" });
 });
 
 test("generic cleanup does not delete a media key while its remote load is in flight", async () => {
     const store = new MemoryStore();
-    await store.setItem("media:loading", new Blob(["stale"], { type: "image/png" }));
+    const key = imageStorageKeyForMedia("loading");
+    await store.setItem(key, new Blob(["stale"], { type: "image/png" }));
     const readStoredItem = store.getItem.bind(store);
-    let simulateCacheMiss = true;
+    let simulatedCacheMisses = 2;
     store.getItem = async <T>(key: string) => {
-        if (key === "media:loading" && simulateCacheMiss) {
-            simulateCacheMiss = false;
+        if (key === imageStorageKeyForMedia("loading") && simulatedCacheMisses > 0) {
+            simulatedCacheMisses -= 1;
             return null;
         }
         return readStoredItem<T>(key);
@@ -756,12 +716,12 @@ test("generic cleanup does not delete a media key while its remote load is in fl
     const pending = operations.loadMediaImage("loading", "https://oss.example/loading.png");
     await new Promise((resolve) => setTimeout(resolve, 0));
     await operations.cleanupUnusedImages({});
-    assert.ok(await store.getItem("media:loading"));
+    assert.ok(await store.getItem(key));
     resolveRemote?.(new Blob(["remote"], { type: "image/png" }));
     const image = await pending;
 
-    assert.equal(image.storageKey, "media:loading");
-    assert.ok(await store.getItem("media:loading"));
+    assert.equal(image.storageKey, key);
+    assert.ok(await store.getItem(key));
 });
 
 test("cleanup keeps an original protected until every overlapping original and preview load finishes", async () => {
@@ -769,7 +729,7 @@ test("cleanup keeps an original protected until every overlapping original and p
     const readStoredItem = store.getItem.bind(store);
     let mediaMissesRemaining = 2;
     store.getItem = async <T>(key: string) => {
-        if (key === "media:shared-reference" && mediaMissesRemaining > 0) {
+        if (key === imageStorageKeyForMedia("shared-reference") && mediaMissesRemaining > 0) {
             mediaMissesRemaining -= 1;
             return null;
         }
@@ -785,15 +745,15 @@ test("cleanup keeps an original protected until every overlapping original and p
     });
 
     const original = operations.loadMediaImage("shared-reference", "https://oss.example/original.png");
-    const preview = operations.loadMediaPreview("shared-reference", "https://oss.example/preview.webp");
+    const preview = operations.loadMediaThumbnail("shared-reference", "https://oss.example/thumbnail.webp");
     await new Promise((resolve) => setTimeout(resolve, 0));
     resolvers.get("https://oss.example/original.png")?.(new Blob(["original"], { type: "image/png" }));
     await original;
 
     await operations.cleanupUnusedImages({});
-    assert.ok(await store.getItem("media:shared-reference"));
+    assert.ok(await store.getItem(imageStorageKeyForMedia("shared-reference")));
 
-    resolvers.get("https://oss.example/preview.webp")?.(new Blob(["preview"], { type: "image/webp" }));
+    resolvers.get("https://oss.example/thumbnail.webp")?.(new Blob(["thumbnail"], { type: "image/webp" }));
     await preview;
 });
 
@@ -833,16 +793,17 @@ test("overwriting an image through storeImage replaces its object URL", async ()
 test("promoting an already-stable media key is idempotent and keeps the target blob", async () => {
     const store = new MemoryStore();
     const blob = new Blob(["stable"], { type: "image/png" });
-    await store.setItem("media:already-stable", blob);
+    const key = imageStorageKeyForMedia("already-stable");
+    await store.setItem(key, blob);
     const { operations } = createTestOperations({
         store,
-        objectUrls: new Map([["media:already-stable", "blob:already-stable"]]),
+        objectUrls: new Map([[key, "blob:already-stable"]]),
     });
 
     const promoted = await operations.promoteImageStorageKey(
         {
             url: "blob:already-stable",
-            storageKey: "media:already-stable",
+            storageKey: key,
             width: 640,
             height: 480,
             bytes: blob.size,
@@ -852,8 +813,8 @@ test("promoting an already-stable media key is idempotent and keeps the target b
         "already-stable",
     );
 
-    assert.equal(promoted.storageKey, "media:already-stable");
-    assert.equal(await store.getItem("media:already-stable"), blob);
+    assert.equal(promoted.storageKey, key);
+    assert.equal(await store.getItem(key), blob);
 });
 
 test("imageToDataUrl preserves an already-inline data URL", async () => {

@@ -14,7 +14,7 @@ export type AICapability = "image" | "imageEdit" | "video";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 
-export const defaultConfig: AiConfig = { model: "", imageModel: "", videoModel: "", textModel: "", models: [], systemPrompt: "", videoSeconds: "6", vquality: "720", quality: "auto", size: "1:1", resolution: "1k", count: "1" };
+export const defaultConfig: AiConfig = { model: "", imageModel: "", videoModel: "", textModel: "", models: [], systemPrompt: "", videoSeconds: "6", vquality: "720", quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", count: "1" };
 
 type ConfigStore = {
     config: AiConfig;

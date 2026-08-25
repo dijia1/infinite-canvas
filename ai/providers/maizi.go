@@ -92,7 +92,7 @@ func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.I
 	if len(request.References) > 0 && strings.TrimSpace(request.Request.Prompt) == "" {
 		return ai.ImageTask{}, maiziError{message: "提示词不能为空"}
 	}
-	return provider.createAsyncTask(ctx, request.Request, request.References)
+	return provider.createAsyncTask(ctx, request.Request, request.References, request.Mask)
 }
 
 func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.ImageTask, error) {
@@ -145,12 +145,15 @@ func (provider *maiziProvider) generate(ctx context.Context, request ai.ImageReq
 }
 
 func (provider *maiziProvider) createTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) (string, error) {
-	task, err := provider.createAsyncTask(ctx, request, references)
+	task, err := provider.createAsyncTask(ctx, request, references, nil)
 	return task.ID, err
 }
 
-func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) (ai.ImageTask, error) {
+func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference, mask *ai.ImageReference) (ai.ImageTask, error) {
 	body := map[string]any{"model": provider.config.Model, "prompt": request.Prompt}
+	outputFormat, background := maiziImageOutput(request)
+	body["output_format"] = outputFormat
+	body["background"] = background
 	if request.Size != "" {
 		body["size"] = request.Size
 	}
@@ -171,6 +174,13 @@ func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.I
 		}
 		body["images"] = images
 	}
+	if mask != nil {
+		contentType := strings.TrimSpace(mask.ContentType)
+		if contentType == "" {
+			contentType = "image/png"
+		}
+		body["mask"] = map[string]string{"image_url": "data:" + contentType + ";base64," + base64.StdEncoding.EncodeToString(mask.Data)}
+	}
 	data, err := json.Marshal(body)
 	if err != nil {
 		return ai.ImageTask{}, err
@@ -183,6 +193,14 @@ func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.I
 		return ai.ImageTask{}, maiziError{message: "MaiziAI 未返回任务 ID"}
 	}
 	return ai.ImageTask{ID: result.Data[0].TaskID, Status: strings.ToLower(strings.TrimSpace(result.Data[0].Status))}, nil
+}
+
+func maiziImageOutput(request ai.ImageRequest) (string, string) {
+	format := strings.ToLower(strings.TrimSpace(request.OutputFormat))
+	if format == "png" {
+		return "png", "transparent"
+	}
+	return "jpeg", "opaque"
 }
 
 func maiziResolution(value string) string {

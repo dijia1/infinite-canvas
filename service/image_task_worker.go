@@ -112,12 +112,12 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 	}
 	providerTaskID := strings.TrimSpace(item.ProviderTaskID)
 	if providerTaskID == "" {
-		references, readErr := ReadImageTaskInputs(ctx, inputs)
+		loaded, readErr := ReadImageTaskInputs(ctx, inputs)
 		if readErr != nil {
 			failImageTask(ctx, item, readErr)
 			return
 		}
-		created, createErr := provider.CreateImageTask(ctx, ai.ImageTaskRequest{Request: imageTaskRequest(item), References: references})
+		created, createErr := provider.CreateImageTask(ctx, ai.ImageTaskRequest{Request: imageTaskRequest(item), References: loaded.References, Mask: loaded.Mask})
 		if createErr != nil {
 			failImageTask(ctx, item, createErr)
 			return

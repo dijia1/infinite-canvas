@@ -25,7 +25,19 @@ test("my assets drawer takes image paste priority and keeps a local preview whil
     assert.match(source, /const image = await uploadImage\(file\)/);
     assert.match(source, /promoteImageStorageKey/);
     assert.match(source, /draggable/);
+    assert.match(source, /uploadUserImage\(file, "library"\)/);
     assert.match(imageStorage, /export async function promoteImageStorageKey/);
+});
+
+test("my assets drawer exposes read-only source folders and temporary media preservation", async () => {
+    const [source, privateAPI] = await Promise.all([readFile(componentURL("asset-picker-modal.tsx"), "utf8"), readFile(componentURL("../../../../services/api/private-images.ts"), "utf8")]);
+
+    assert.match(source, /画板临时素材/);
+    assert.match(source, /我的上传/);
+    assert.match(source, /AI 生成/);
+    assert.match(source, /永久保存/);
+    assert.match(source, /preserveTemporaryPrivateImage/);
+    assert.match(privateAPI, /\/private-images\/\$\{encodeURIComponent\(id\)\}\/preserve/);
 });
 
 test("public assets drawer only exposes uploads to Portal administrators", async () => {
@@ -154,8 +166,8 @@ test("private material previews retain a local image and expose a safe remote-pr
 test("material drawers defer access URLs until their cache variants miss", async () => {
     const [privateDrawer, publicDrawer] = await Promise.all([readFile(componentURL("asset-picker-modal.tsx"), "utf8"), readFile(componentURL("public-image-drawer.tsx"), "utf8")]);
 
-    assert.match(privateDrawer, /loadMediaPreview\(mediaId, async \(\) => \{[\s\S]*getRemoteImageAccess\(mediaId\)/);
-    assert.match(publicDrawer, /loadMediaPreview\(image\.mediaId, async \(\) => \{[\s\S]*fetchPublicImageAccess\(image\.id\)/);
+    assert.match(privateDrawer, /loadMediaThumbnail\(mediaId, async \(\) => \{[\s\S]*getRemoteImageAccess\(mediaId\)/);
+    assert.match(publicDrawer, /loadMediaThumbnail\(image\.mediaId, async \(\) => \{[\s\S]*fetchPublicImageAccess\(image\.id\)/);
 });
 
 test("material previews load only when their cards enter the visible prefetch range", async () => {

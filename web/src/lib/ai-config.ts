@@ -10,6 +10,7 @@ export type AiConfig = {
     vquality: string;
     quality: string;
     size: string;
-    resolution: string;
-    count: string;
+	resolution: string;
+	outputFormat: string;
+	count: string;
 };

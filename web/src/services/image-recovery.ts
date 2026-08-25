@@ -2,12 +2,14 @@ export type PersistedImage = {
     content?: string;
     storageKey?: string;
     mediaId?: string;
+    mediaExpiresAt?: string;
 };
 
 export type RestoredImage = {
     content: string;
     storageKey?: string;
     mediaId?: string;
+    mediaExpiresAt?: string;
     naturalWidth?: number;
     naturalHeight?: number;
     bytes?: number;
@@ -26,6 +28,7 @@ export type ImageRecoveryResult =
     | { status: "error"; error: string };
 
 export async function recoverPersistedImage(image: PersistedImage, dependencies: ImageRecoveryDependencies): Promise<ImageRecoveryResult> {
+    if (isExpiredCanvasMedia(image.mediaExpiresAt)) return { status: "error", error: "画板临时素材已到期" };
     if (image.storageKey) {
         try {
             const content = await dependencies.readCachedImage(image.storageKey);
@@ -42,4 +45,10 @@ export async function recoverPersistedImage(image: PersistedImage, dependencies:
     } catch (error) {
         return { status: "error", error: error instanceof Error ? error.message : "图片恢复失败" };
     }
+}
+
+function isExpiredCanvasMedia(value?: string) {
+    if (!value) return false;
+    const expiresAt = Date.parse(value);
+    return Number.isFinite(expiresAt) && expiresAt <= Date.now();
 }
