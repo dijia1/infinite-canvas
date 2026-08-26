@@ -38,9 +38,9 @@ func (store *fakeImageStore) SignedURL(_ context.Context, key, process string) (
 }
 
 func TestPrivateLibraryImageObjectKeyIsScopedToPortalUser(t *testing.T) {
-	key := imageObjectKey("7c001b0e-8a1b-4d65-a4b5-8ebd5c2d0011", "png", time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC))
+	key := privateImageObjectKey("7c001b0e-8a1b-4d65-a4b5-8ebd5c2d0011", model.MediaSourceUpload, "png", time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC))
 	if want := "images/private/library/7c001b0e-8a1b-4d65-a4b5-8ebd5c2d0011/2026/08/"; len(key) <= len(want) || key[:len(want)] != want {
-		t.Fatalf("imageObjectKey() = %q, want prefix %q", key, want)
+		t.Fatalf("privateImageObjectKey() = %q, want prefix %q", key, want)
 	}
 }
 

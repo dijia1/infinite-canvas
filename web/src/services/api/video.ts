@@ -1,23 +1,13 @@
 import axios from "axios";
 
 import { dataUrlToFile } from "@/lib/image-utils";
+import { aiApiPath, apiRequestError, debugApiRequest } from "@/services/api/request";
 import { imageToDataUrl } from "@/services/image-storage";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
 type VideoResponse = { id: string; status?: string; error?: { message?: string } };
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
-
-function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
-    if (process.env.NODE_ENV !== "development") return;
-    console.groupCollapsed(`[canvas-api] ${label}`);
-    console.log(payload);
-    console.groupEnd();
-}
-
-function aiApiUrl(path: string) {
-    return `/api/v1${path}`;
-}
 
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = []) {
     const seconds = normalizeVideoSeconds(config.videoSeconds);
@@ -31,8 +21,8 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     body.append("preset", "normal");
     const files = await Promise.all(references.slice(0, 7).map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     files.forEach((file) => body.append("input_reference[]", file));
-    debugCanvasRequest("video generation", {
-        url: aiApiUrl("/videos"),
+    debugApiRequest("video generation", {
+        url: aiApiPath("/videos"),
         body: {
             prompt,
             seconds,
@@ -43,19 +33,19 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
     });
     try {
-        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl("/videos"), body)).data);
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiPath("/videos"), body)).data);
         if (!created.id) throw new Error("视频接口没有返回任务 ID");
         for (;;) {
-            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(`/videos/${created.id}`))).data);
+            const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiPath(`/videos/${created.id}`))).data);
             if (video.status === "completed") break;
             if (video.status === "failed" || video.status === "cancelled") throw new Error(video.error?.message || "视频生成失败");
             await new Promise((resolve) => setTimeout(resolve, 2500));
         }
-        const content = await axios.get<Blob>(aiApiUrl(`/videos/${created.id}/content`), { responseType: "blob" });
+        const content = await axios.get<Blob>(aiApiPath(`/videos/${created.id}/content`), { responseType: "blob" });
         await assertVideoBlob(content.data);
         return content.data;
     } catch (error) {
-        throw new Error(readAxiosError(error, "视频生成失败"));
+        throw new Error(apiRequestError(error, "视频生成失败"));
     }
 }
 
@@ -86,14 +76,6 @@ function unwrapVideoResponse(payload: ApiVideoResponse): VideoResponse {
         return payload.data;
     }
     return payload as VideoResponse;
-}
-
-function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
-        const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback);
-    }
-    return error instanceof Error ? error.message : fallback;
 }
 
 async function assertVideoBlob(blob: Blob) {

@@ -14,13 +14,14 @@ function imageNode(id: string, x: number, y: number, metadata?: CanvasNodeData["
     return { id, type: CanvasNodeType.Image, title: id, position: { x, y }, width: 100, height: 100, metadata };
 }
 
-function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnection[] = []) {
+function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnection[] = [], options: { deferConnectionUpdates?: boolean } = {}) {
     const nodesRef = ref(initialNodes);
     const connectionsRef = ref(initialConnections);
     const selectedNodeIdsRef = ref(new Set<string>());
     const viewportRef = ref<ViewportTransform>({ x: 0, y: 0, k: 1 });
     const calls: string[] = [];
     let frame: FrameRequestCallback | null = null;
+    let deferredConnectionUpdate: ((connections: CanvasConnection[]) => CanvasConnection[]) | null = null;
 
     const controller = createCanvasInteractionController({
         nodesRef,
@@ -31,7 +32,12 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
             nodesRef.current = typeof next === "function" ? next(nodesRef.current) : next;
         },
         setConnections: (next) => {
-            connectionsRef.current = typeof next === "function" ? next(connectionsRef.current) : next;
+            const update = typeof next === "function" ? next : () => next;
+            if (options.deferConnectionUpdates) {
+                deferredConnectionUpdate = update;
+                return;
+            }
+            connectionsRef.current = update(connectionsRef.current);
         },
         setSelectedNodeIds: (next) => {
             selectedNodeIdsRef.current = typeof next === "function" ? next(selectedNodeIdsRef.current) : next;
@@ -54,7 +60,17 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
         },
     });
 
-    return { controller, nodesRef, connectionsRef, selectedNodeIdsRef, calls, flushFrame: () => frame?.(0) };
+    return {
+        controller,
+        nodesRef,
+        connectionsRef,
+        selectedNodeIdsRef,
+        calls,
+        flushFrame: () => frame?.(0),
+        flushDeferredConnectionUpdate: () => {
+            if (deferredConnectionUpdate) connectionsRef.current = deferredConnectionUpdate(connectionsRef.current);
+        },
+    };
 }
 
 test("node drag moves selected batch children and commits only after pointer release", () => {
@@ -131,6 +147,20 @@ test("cut mode ignores hidden batch endpoints and removes only intersected visib
     );
 });
 
+test("cut completion keeps matched connection IDs after React defers the connection update", () => {
+    const from = imageNode("from", 0, 0);
+    const to = imageNode("to", 300, 0);
+    const connections = [{ id: "visible", fromNodeId: "from", toNodeId: "to" }];
+    const { controller, connectionsRef, flushDeferredConnectionUpdate } = setup([from, to], connections, { deferConnectionUpdates: true });
+
+    controller.handleCanvasMouseDown({ button: 0, ctrlKey: true, clientX: 150, clientY: -20 });
+    controller.handleGlobalPointerMove({ buttons: 1, clientX: 150, clientY: 120 });
+    controller.finishCutConnection();
+
+    assert.doesNotThrow(flushDeferredConnectionUpdate);
+    assert.deepEqual(connectionsRef.current, []);
+});
+
 test("selection box supports replace and additive selection, and cleanup clears pending animation work", () => {
     const { controller, selectedNodeIdsRef } = setup([imageNode("first", 0, 0), imageNode("second", 200, 0)]);
 
@@ -142,5 +172,17 @@ test("selection box supports replace and additive selection, and cleanup clears 
     controller.handleGlobalPointerMove({ buttons: 1, clientX: 320, clientY: 120 });
     assert.deepEqual(selectedNodeIdsRef.current, new Set(["first", "second"]));
     controller.dispose();
+    assert.equal(controller.selectionBox, null);
+});
+
+test("pointer release clears an active selection box without requiring another pointer move", () => {
+    const { controller } = setup([imageNode("first", 0, 0)]);
+
+    controller.handleCanvasMouseDown({ button: 0, ctrlKey: false, shiftKey: false, clientX: -10, clientY: -10 });
+    controller.handleGlobalPointerMove({ buttons: 1, clientX: 120, clientY: 120 });
+    assert.notEqual(controller.selectionBox, null);
+
+    controller.handleGlobalPointerUp({ clientX: 120, clientY: 120 });
+
     assert.equal(controller.selectionBox, null);
 });

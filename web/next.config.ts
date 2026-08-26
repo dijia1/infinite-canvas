@@ -11,8 +11,5 @@ export default function nextConfig(phase: string): NextConfig {
             NEXT_PUBLIC_BASE_PATH: basePath,
         },
         allowedDevOrigins: isDev ? ["*.*.*.*"] : [],
-        typescript: {
-            ignoreBuildErrors: true,
-        },
     };
 }

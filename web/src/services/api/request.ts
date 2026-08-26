@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { appApiPath } from "@/lib/app-path";
+
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
 type ApiResponse<T> = {
@@ -22,9 +24,24 @@ export function serializeApiParams(params?: ApiParams) {
     return queryParams;
 }
 
-function appApiURL(url: string) {
-    const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
-    return url.startsWith("/api/") ? `${basePath}${url}` : url;
+export function aiApiPath(path: string, basePath = process.env.NEXT_PUBLIC_BASE_PATH || "") {
+    const suffix = path.startsWith("/") ? path : `/${path}`;
+    return appApiPath(`/api/v1${suffix}`, basePath);
+}
+
+export function apiRequestError(error: unknown, fallback: string) {
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+        const responseData = error.response?.data;
+        return responseData?.msg || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback);
+    }
+    return error instanceof Error ? error.message : fallback;
+}
+
+export function debugApiRequest(label: string, payload: Record<string, unknown>) {
+    if (process.env.NODE_ENV !== "development") return;
+    console.groupCollapsed(`[canvas-api] ${label}`);
+    console.log(payload);
+    console.groupEnd();
 }
 
 export function authorizationHeaders(token?: string) {
@@ -78,7 +95,7 @@ async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "PA
     let response;
     try {
         response = await axios.request<ApiResponse<T>>({
-            url: appApiURL(config.url),
+            url: appApiPath(config.url),
             method: config.method,
             params: config.params,
             paramsSerializer: { serialize: (params) => serializeApiParams(params as ApiParams).toString() },

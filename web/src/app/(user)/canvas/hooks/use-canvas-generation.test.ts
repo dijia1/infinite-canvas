@@ -162,6 +162,22 @@ test("uses image edit only when references exist", async () => {
     assert.equal(calls.generation, 0);
 });
 
+test("keeps the submitted prompt on an existing image after editing", async () => {
+    const source = node("source", CanvasNodeType.Image, { content: "data:image/png;base64,source" });
+    const { controller, nodesRef } = setup([source], [], {
+        hydrateGenerationContext: async (_nodeId: string, prompt: string) => ({
+            prompt,
+            referenceImages: [{ id: source.id, name: "source.png", type: "image/png", dataUrl: source.metadata!.content! }],
+            textCount: 0,
+            imageCount: 1,
+        }),
+    });
+
+    await controller.generateNode("source", "image", "将图片修改为水彩风格");
+
+    assert.equal(nodesRef.current.find((item) => item.id === source.id)?.metadata?.prompt, "将图片修改为水彩风格");
+});
+
 test("submits an ordered masked main image with additional reference images", async () => {
     const source = node("source", CanvasNodeType.Config);
     const maskedReference = { id: "masked", name: "masked.png", type: "image/png", dataUrl: "data:image/png;base64,masked", mask: { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] } };

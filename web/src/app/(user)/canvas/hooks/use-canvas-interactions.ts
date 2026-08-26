@@ -76,6 +76,7 @@ export type CanvasInteractionController = {
     handleGlobalMouseMove: (event: CanvasPointerEvent) => void;
     handleGlobalPointerMove: (event: CanvasPointerEvent) => void;
     handleGlobalMouseUp: (event: CanvasPointerEvent) => void;
+    handleGlobalPointerUp: (event: CanvasPointerEvent) => void;
     finishNodeDrag: (clientX?: number, clientY?: number) => void;
     finishCutConnection: () => boolean;
     createConnectedNode: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, pending: PendingConnectionCreate) => void;
@@ -409,15 +410,16 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
 
     const finishCutConnection = () => {
         if (!cutConnectionState) return false;
+        const removedConnectionIds = new Set(cutConnectionState.connectionIds);
         if (cutPerf.startedAt) {
             logCanvasPerf("cut end", { durationMs: Math.round(performance.now() - cutPerf.startedAt), moveCount: cutPerf.moveCount, hitConnections: cutConnectionState.connectionIds.size, scannedConnections: cutPerf.scannedConnections });
             cutPerf.startedAt = 0;
             cutPerf.moveCount = 0;
             cutPerf.scannedConnections = 0;
         }
-        if (cutConnectionState.connectionIds.size) {
-            options.setConnections((previous) => previous.filter((connection) => !cutConnectionState!.connectionIds.has(connection.id)));
-            options.setSelectedConnectionId((current) => (current && cutConnectionState!.connectionIds.has(current) ? null : current));
+        if (removedConnectionIds.size) {
+            options.setConnections((previous) => previous.filter((connection) => !removedConnectionIds.has(connection.id)));
+            options.setSelectedConnectionId((current) => (current && removedConnectionIds.has(current) ? null : current));
         }
         clearCutConnectionState();
         return true;
@@ -438,6 +440,10 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         const position = options.screenToCanvas(event.clientX, event.clientY);
         setMouse(position);
         setPending({ connection: connectingParams, position });
+    };
+
+    const handleGlobalPointerUp = (event: CanvasPointerEvent) => {
+        handleGlobalMouseUp(event);
     };
 
     const handleConnectStart = (event: CanvasPointerEvent, nodeId: string, handleType: ConnectionHandle["handleType"]) => {
@@ -501,6 +507,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         handleGlobalMouseMove,
         handleGlobalPointerMove,
         handleGlobalMouseUp,
+        handleGlobalPointerUp,
         finishNodeDrag,
         finishCutConnection,
         createConnectedNode,
@@ -540,8 +547,7 @@ export function useCanvasInteractions(options: UseCanvasInteractionsOptions) {
 
     useEffect(() => {
         const handlePointerUp = (event: PointerEvent) => {
-            if (controller.finishCutConnection()) return;
-            controller.finishNodeDrag(event.clientX, event.clientY);
+            controller.handleGlobalPointerUp(event);
         };
         const cancelNodeDrag = () => controller.finishNodeDrag();
         window.addEventListener("mousemove", controller.handleGlobalMouseMove);

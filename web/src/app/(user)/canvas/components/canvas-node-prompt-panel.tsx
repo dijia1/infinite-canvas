@@ -32,22 +32,23 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
-    const [prompt, setPrompt] = useState(isEditingExistingContent ? "" : node.metadata?.prompt || "");
+    const shouldPersistPrompt = node.type === CanvasNodeType.Image || !isEditingExistingContent;
+    const [prompt, setPrompt] = useState(shouldPersistPrompt ? node.metadata?.prompt || "" : "");
 
     useEffect(() => {
-        setPrompt(isEditingExistingContent ? "" : node.metadata?.prompt || "");
-    }, [isEditingExistingContent, node.id]);
+        setPrompt(shouldPersistPrompt ? node.metadata?.prompt || "" : "");
+    }, [node.id, node.metadata?.prompt, shouldPersistPrompt]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
-        if (!isEditingExistingContent) onPromptChange(node.id, value);
+        if (shouldPersistPrompt) onPromptChange(node.id, value);
     };
 
     const submit = () => {
         const text = prompt.trim();
         if (!text || isRunning) return;
         onGenerate(node.id, mode, text);
-        setPrompt("");
+        if (node.type !== CanvasNodeType.Image) setPrompt("");
     };
 
     return (

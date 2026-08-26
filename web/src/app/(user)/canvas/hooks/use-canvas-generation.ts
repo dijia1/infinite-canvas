@@ -331,7 +331,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                               : isEmptyImageNode
                                 ? { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...node.metadata, ...rootNode.metadata, errorDetails: undefined } }
                                 : isImageNode
-                                  ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
+                                  ? { ...node, metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
                                   : {
                                         ...node,
                                         type: CanvasNodeType.Text,

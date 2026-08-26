@@ -50,10 +50,6 @@ type MediaAccess struct {
 	Height         int        `json:"height"`
 }
 
-func imageObjectKey(userUID, extension string, now time.Time) string {
-	return privateImageObjectKey(userUID, model.MediaSourceUpload, extension, now)
-}
-
 func privateImageObjectKey(userUID string, source model.MediaSource, extension string, now time.Time) string {
 	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
 	if prefix == "" {

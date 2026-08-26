@@ -4,7 +4,7 @@ import type { AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
-import { apiDelete } from "@/services/api/request";
+import { aiApiPath, apiDelete, apiRequestError, debugApiRequest } from "@/services/api/request";
 import type { ReferenceImage } from "@/types/image";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { imageOutputSettings } from "@/lib/image-output-config";
@@ -22,13 +22,6 @@ export type ChatCompletionMessage = {
     role: "system" | "user" | "assistant";
     content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
 };
-
-function debugCanvasRequest(label: string, payload: Record<string, unknown>) {
-    if (process.env.NODE_ENV !== "development") return;
-    console.groupCollapsed(`[canvas-api] ${label}`);
-    console.log(payload);
-    console.groupEnd();
-}
 
 const QUALITY_ALIASES: Record<string, string> = {
     "1k": "low",
@@ -85,25 +78,13 @@ export async function uploadUserImage(file: File, intent: "canvas" | "library" =
     const form = new FormData();
     form.set("image", file);
     form.set("intent", intent);
-    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string; mediaExpiresAt?: string } }>(aiApiUrl("/media/images"), form);
+    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string; mediaExpiresAt?: string } }>(aiApiPath("/media/images"), form);
     if (response.data.code !== 0 || !response.data.data?.mediaId || !response.data.data.url) throw new Error(response.data.msg || "上传图片失败");
     return { mediaId: response.data.data.mediaId, url: response.data.data.url, mediaExpiresAt: response.data.data.mediaExpiresAt };
 }
 
 export async function deleteUserImage(mediaId: string) {
     return apiDelete<void>(`/api/v1/media/${encodeURIComponent(mediaId)}`);
-}
-
-function readAxiosError(error: unknown, fallback: string) {
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
-        const responseData = error.response?.data;
-        return responseData?.msg || responseData?.error?.message || (error.response?.status ? `${fallback}：${error.response.status}` : fallback);
-    }
-    return error instanceof Error ? error.message : fallback;
-}
-
-function aiApiUrl(path: string) {
-    return `${process.env.NEXT_PUBLIC_BASE_PATH || ""}/api/v1${path}`;
 }
 
 function aiHeaders(contentType?: string) {
@@ -126,17 +107,17 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
         background: output.background,
         response_format: "b64_json",
     };
-    debugCanvasRequest("image generation", {
-        url: aiApiUrl("/images/generations"),
+    debugApiRequest("image generation", {
+        url: aiApiPath("/images/generations"),
         body,
     });
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/generations"), body, {
+        const response = await axios.post<ImageApiResponse>(aiApiPath("/images/generations"), body, {
             headers: aiHeaders("application/json"),
         });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(readAxiosError(error, "请求失败"));
+        throw new Error(apiRequestError(error, "请求失败"));
     }
 }
 
@@ -171,8 +152,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (mask?.mask) {
         formData.set("mask", await createImageMaskFile(mask.mask, mask));
     }
-    debugCanvasRequest("image edit", {
-        url: aiApiUrl("/images/edits"),
+    debugApiRequest("image edit", {
+        url: aiApiPath("/images/edits"),
         body: {
             clientRequestId,
             prompt,
@@ -189,28 +170,28 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     });
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiUrl("/images/edits"), formData, { headers: aiHeaders() });
+        const response = await axios.post<ImageApiResponse>(aiApiPath("/images/edits"), formData, { headers: aiHeaders() });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(readAxiosError(error, "请求失败"));
+        throw new Error(apiRequestError(error, "请求失败"));
     }
 }
 
 export async function getImageGenerationTask(taskId: string): Promise<ImageGenerationTask> {
     try {
-        const response = await axios.get<ImageApiResponse>(aiApiUrl(`/images/tasks/${encodeURIComponent(taskId)}`));
+        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/${encodeURIComponent(taskId)}`));
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(readAxiosError(error, "查询图片任务失败"));
+        throw new Error(apiRequestError(error, "查询图片任务失败"));
     }
 }
 
 export async function getImageGenerationTaskByClientRequest(clientRequestId: string): Promise<ImageGenerationTask> {
     try {
-        const response = await axios.get<ImageApiResponse>(aiApiUrl(`/images/tasks/by-client-request/${encodeURIComponent(clientRequestId)}`));
+        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/by-client-request/${encodeURIComponent(clientRequestId)}`));
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(readAxiosError(error, "查询图片任务失败"));
+        throw new Error(apiRequestError(error, "查询图片任务失败"));
     }
 }
 
