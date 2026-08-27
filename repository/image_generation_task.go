@@ -146,6 +146,28 @@ func UpdateImageGenerationTask(id string, updates map[string]any) error {
 	return database.Model(&model.ImageGenerationTask{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// SetImageGenerationTaskProviderTaskID moves a claimed image task into its
+// polling state and records the upstream task ID in its audit record together.
+func SetImageGenerationTaskProviderTaskID(id, operationLogID, providerTaskID, updatedAt string) error {
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	return database.Transaction(func(transaction *gorm.DB) error {
+		if err := transaction.Model(&model.ImageGenerationTask{}).Where("id = ?", id).Updates(map[string]any{
+			"provider_task_id": providerTaskID,
+			"status":           model.ImageTaskRunning,
+			"updated_at":       updatedAt,
+		}).Error; err != nil {
+			return err
+		}
+		if operationLogID == "" {
+			return nil
+		}
+		return transaction.Model(&model.OperationLog{}).Where("id = ?", operationLogID).Update("provider_task_id", providerTaskID).Error
+	})
+}
+
 // RenewImageGenerationTaskLease records that a worker is still actively
 // processing a claimed task. Terminal tasks are intentionally never renewed.
 func RenewImageGenerationTaskLease(id, updatedAt string) (bool, error) {

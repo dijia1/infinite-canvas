@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/basketikun/infinite-canvas/ai"
 )
@@ -141,7 +140,7 @@ func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
 	if config.APIKey == "" || config.Model == "" {
 		return nil, maiziError{message: "请填写 MaiziAI API Key 和模型名称"}
 	}
-	return &maiziProvider{config: config, client: &http.Client{Timeout: 30 * time.Second}, editClient: &http.Client{}}, nil
+	return &maiziProvider{config: config, client: &http.Client{}, editClient: &http.Client{}}, nil
 }
 
 func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {

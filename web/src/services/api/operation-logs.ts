@@ -9,6 +9,7 @@ export type OperationLog = {
     status: "submitted" | "success" | "failure";
     targetType: string;
     targetId: string;
+    providerTaskId?: string;
     targetName: string;
     prompt: string;
     mediaIds: string[];

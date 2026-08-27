@@ -191,8 +191,12 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			failImageTask(ctx, item, errors.New("供应商未返回任务 ID"))
 			return
 		}
-		if err := repository.UpdateImageGenerationTask(item.ID, map[string]any{"provider_task_id": providerTaskID, "status": model.ImageTaskRunning, "progress": clampTaskProgress(created.Progress), "updated_at": now()}); err != nil {
+		if err := repository.SetImageGenerationTaskProviderTaskID(item.ID, item.OperationLogID, providerTaskID, now()); err != nil {
 			log.Printf("image task %s save provider task ID failed: %v", item.ID, err)
+			return
+		}
+		if err := repository.UpdateImageGenerationTask(item.ID, map[string]any{"progress": clampTaskProgress(created.Progress), "updated_at": now()}); err != nil {
+			log.Printf("image task %s save initial progress failed: %v", item.ID, err)
 			return
 		}
 		item.ProviderTaskID = providerTaskID

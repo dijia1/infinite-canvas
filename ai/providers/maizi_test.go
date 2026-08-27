@@ -114,6 +114,20 @@ func TestMaiziProviderCreatesAsyncTaskWithoutPolling(t *testing.T) {
 	}
 }
 
+func TestMaiziProviderUsesCallerDeadlineForAsyncTaskCreation(t *testing.T) {
+	instance, err := newMaiziProvider(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("newMaiziProvider() error = %v", err)
+	}
+	provider, ok := instance.(*maiziProvider)
+	if !ok {
+		t.Fatalf("newMaiziProvider() = %T, want *maiziProvider", instance)
+	}
+	if provider.client.Timeout != 0 {
+		t.Fatalf("async task client timeout = %s, want no independent deadline", provider.client.Timeout)
+	}
+}
+
 func TestMaiziProviderBuildsRedactedRequestSummaries(t *testing.T) {
 	typeInfo, _ := ai.Type("maizi-image")
 	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))

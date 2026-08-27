@@ -21,6 +21,7 @@ type OperationLog struct {
 	Status         OperationStatus `json:"status" gorm:"index"`
 	TargetType     string          `json:"targetType"`
 	TargetID       string          `json:"targetId"`
+	ProviderTaskID string          `json:"providerTaskId,omitempty" gorm:"index"`
 	TargetName     string          `json:"targetName"`
 	Prompt         string          `json:"prompt" gorm:"type:text"`
 	MediaIDs       []string        `json:"mediaIds" gorm:"serializer:json"`

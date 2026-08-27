@@ -104,6 +104,7 @@ function OperationLogItem({ item }: { item: OperationLog }) {
                         <OperationStatusTag status={item.status} />
                     </div>
                     {item.targetName ? <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{item.targetName}</p> : null}
+                    {item.providerTaskId ? <p className="mt-1 break-all font-mono text-xs text-stone-500 dark:text-stone-400">上游任务 ID：{item.providerTaskId}</p> : null}
                     {item.prompt ? (
                         <details className="mt-2 text-sm">
                             <summary className="cursor-pointer text-stone-500 dark:text-stone-400">查看完整提示词</summary>
