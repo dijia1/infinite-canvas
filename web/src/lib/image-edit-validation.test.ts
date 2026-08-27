@@ -18,13 +18,14 @@ function reference(id: string, masked = false): ReferenceImage {
     };
 }
 
-test("accepts one masked main image followed by up to six ordered references", () => {
+test("accepts one masked main image followed by ordered references", () => {
     assert.equal(imageEditReferenceError([reference("main", true)]), undefined);
     assert.equal(imageEditReferenceError([reference("main", true), ...Array.from({ length: 6 }, (_, index) => reference(`ref-${index}`))]), undefined);
 });
 
-test("rejects more than seven edit images and invalid mask placement", () => {
-    assert.equal(imageEditReferenceError(Array.from({ length: 8 }, (_, index) => reference(`image-${index}`))), "图像编辑需要 1–7 张参考图");
+test("rejects more than ten edit images and invalid mask placement", () => {
+    assert.equal(imageEditReferenceError(Array.from({ length: 10 }, (_, index) => reference(`image-${index}`))), undefined);
+    assert.equal(imageEditReferenceError(Array.from({ length: 11 }, (_, index) => reference(`image-${index}`))), "图像编辑需要 1–10 张参考图");
     assert.equal(imageEditReferenceError([reference("main"), reference("masked", true)]), "带遮罩的主图必须位于第一张参考图");
     assert.equal(imageEditReferenceError([reference("main", true), reference("second", true)]), "图像编辑只能使用一个遮罩");
 });

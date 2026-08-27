@@ -492,17 +492,24 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const batchRoot = node.metadata?.batchRootId ? options.nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
         const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
         const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
+		const retryProviderType = options.effectiveConfig.imageProviderType || savedImageMetadata?.imageProviderType;
+		const retryUsesSavedProviderOptions = savedImageMetadata?.imageProviderType === retryProviderType;
         const generationConfig =
             hasSavedImageMetadata && savedImageMetadata
                 ? {
-                      ...options.effectiveConfig,
+					  ...options.effectiveConfig,
                       model: savedImageMetadata.model || options.effectiveConfig.imageModel || options.effectiveConfig.model,
                       quality: savedImageMetadata.quality || options.effectiveConfig.quality || options.defaultConfig.quality,
                       size: savedImageMetadata.size || options.effectiveConfig.size || options.defaultConfig.size,
                       resolution: savedImageMetadata.resolution || options.effectiveConfig.resolution || options.defaultConfig.resolution,
                       outputFormat: savedImageMetadata.outputFormat || options.effectiveConfig.outputFormat || options.defaultConfig.outputFormat,
 					  background: savedImageMetadata.background || options.effectiveConfig.background || options.defaultConfig.background,
-                      count: "1",
+					  imageProviderId: retryUsesSavedProviderOptions ? savedImageMetadata.imageProviderId || options.effectiveConfig.imageProviderId : options.effectiveConfig.imageProviderId,
+					  videoProviderId: savedImageMetadata.videoProviderId || options.effectiveConfig.videoProviderId,
+					  imageProviderType: retryProviderType,
+					  imageRequestSchemaVersion: retryUsesSavedProviderOptions ? savedImageMetadata.imageRequestSchemaVersion || options.effectiveConfig.imageRequestSchemaVersion : options.effectiveConfig.imageRequestSchemaVersion,
+					  providerOptions: retryUsesSavedProviderOptions ? savedImageMetadata.providerOptions || options.effectiveConfig.providerOptions : options.effectiveConfig.providerOptions,
+					  count: "1",
                   }
                 : { ...buildGenerationConfig(options.effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", options.defaultConfig), count: "1" };
         if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
@@ -561,6 +568,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       resolution: generationConfig.resolution,
 					  outputFormat: generationConfig.outputFormat,
 					  background: generationConfig.background,
+					  imageProviderId: generationConfig.imageProviderId,
+					  videoProviderId: generationConfig.videoProviderId,
+					  imageProviderType: generationConfig.imageProviderType,
+					  imageRequestSchemaVersion: generationConfig.imageRequestSchemaVersion,
+					  providerOptions: generationConfig.providerOptions,
                       quality: generationConfig.quality,
                       count: savedImageMetadata.count || 1,
                       references: savedImageMetadata.references,

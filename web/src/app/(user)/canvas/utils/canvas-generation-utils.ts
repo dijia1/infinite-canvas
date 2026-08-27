@@ -27,10 +27,12 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
     return {
         generationType: type,
         size: config.size,
-        resolution: config.resolution,
+        resolution: generationResolution(config),
         outputFormat: normalizeImageOutputFormat(config.outputFormat),
 		background: normalizeImageBackground(config.background),
         quality: config.quality,
+		...(config.imageProviderType ? { imageProviderId: config.imageProviderId, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion, providerOptions: config.providerOptions } : {}),
+		...(config.videoProviderId ? { videoProviderId: config.videoProviderId } : {}),
         count,
         references: persistedReferences.map((reference) => reference.url),
         ...(persistedReferences.some((reference) => Boolean(reference.mask)) ? { referenceMasks: persistedReferences.map((reference) => reference.mask) } : {}),
@@ -54,18 +56,65 @@ export function getInputSummary(inputs: NodeGenerationInput[]): { textCount: num
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, fallbackConfig: AiConfig): AiConfig {
     const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : config.textModel;
+	const imageProviderId = node?.metadata?.imageProviderId || config.imageProviderId;
+	const useNodeProviderOptions = Boolean(node?.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
+	const imageProviderType = useNodeProviderOptions ? node?.metadata?.imageProviderType || config.imageProviderType : config.imageProviderType;
     return {
         ...config,
         model: node?.metadata?.model || defaultModel || config.model || fallbackConfig.model,
         quality: node?.metadata?.quality || config.quality || fallbackConfig.quality,
         size: node?.metadata?.size || config.size || fallbackConfig.size,
-        resolution: normalizeImageResolution(node?.metadata?.resolution || config.resolution || fallbackConfig.resolution),
+		resolution: generationResolution({ ...config, resolution: useNodeProviderOptions ? node?.metadata?.resolution || config.resolution || fallbackConfig.resolution : config.resolution || fallbackConfig.resolution, imageProviderType }),
         outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
 		background: normalizeImageBackground(node?.metadata?.background || config.background || fallbackConfig.background),
+		...(imageProviderType
+			? {
+					imageProviderType,
+					imageProviderId,
+					imageRequestSchemaVersion: useNodeProviderOptions ? node?.metadata?.imageRequestSchemaVersion || config.imageRequestSchemaVersion : config.imageRequestSchemaVersion,
+					providerOptions: useNodeProviderOptions ? node?.metadata?.providerOptions || config.providerOptions : config.providerOptions,
+				}
+			: {}),
+		...(node?.metadata?.videoProviderId || config.videoProviderId ? { videoProviderId: node?.metadata?.videoProviderId || config.videoProviderId } : {}),
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || fallbackConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || fallbackConfig.vquality,
         count: String(node?.metadata?.count || config.count || fallbackConfig.count),
     };
+}
+
+// Config nodes own their selected provider. This migrates nodes created before
+// provider selection existed, so a later global preference change cannot alter
+// an existing workflow.
+export function snapshotConfigNodeProviderSelection(nodes: CanvasNodeData[], config: AiConfig): CanvasNodeData[] {
+	let changed = false;
+	const next = nodes.map((node) => {
+		if (node.type !== CanvasNodeType.Config) return node;
+		const metadata = node.metadata || {};
+		const needsImageSnapshot = !metadata.imageProviderId && Boolean(config.imageProviderId);
+		const needsVideoSnapshot = !metadata.videoProviderId && Boolean(config.videoProviderId);
+		if (!needsImageSnapshot && !needsVideoSnapshot) return node;
+		changed = true;
+		return {
+			...node,
+			metadata: {
+				...metadata,
+				...(needsImageSnapshot
+					? {
+							imageProviderId: config.imageProviderId,
+							imageProviderType: config.imageProviderType,
+							imageRequestSchemaVersion: config.imageRequestSchemaVersion,
+							providerOptions: { ...config.providerOptions },
+						}
+					: {}),
+				...(needsVideoSnapshot ? { videoProviderId: config.videoProviderId } : {}),
+			},
+		};
+	});
+	return changed ? next : nodes;
+}
+
+function generationResolution(config: Pick<AiConfig, "resolution" | "imageProviderType">): string {
+	return config.imageProviderType ? config.resolution || "1k" : normalizeImageResolution(config.resolution);
 }
 
 export function resetInterruptedGeneration(nodes: CanvasNodeData[]): CanvasNodeData[] {

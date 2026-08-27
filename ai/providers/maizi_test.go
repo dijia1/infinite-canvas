@@ -37,6 +37,30 @@ func TestMaiziImageOutputPreservesBackgroundChoices(t *testing.T) {
 	}
 }
 
+func TestMaiziProviderNormalizesPublicRequestOptions(t *testing.T) {
+	provider, err := newMaiziProvider(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("newMaiziProvider() error = %v", err)
+	}
+	adapter, ok := provider.(ai.ImageTaskRequestAdapter)
+	if !ok {
+		t.Fatal("MaiziAI provider does not implement ImageTaskRequestAdapter")
+	}
+	normalized, err := adapter.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: ai.ImageRequest{Prompt: "一只猫", Count: 1, Options: ai.ImageRequestOptions{"resolution": json.RawMessage(`"2k"`), "background": json.RawMessage(`"opaque"`)}}})
+	if err != nil {
+		t.Fatalf("NormalizeImageTaskRequest() error = %v", err)
+	}
+	if normalized.Request.Resolution != "2k" || normalized.Request.Background != "opaque" || normalized.Request.OutputFormat != "jpeg" || normalized.Request.Size != "1:1" {
+		t.Fatalf("normalized request = %#v", normalized.Request)
+	}
+	if _, err := adapter.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: ai.ImageRequest{Prompt: "一只猫", Count: 1, Options: ai.ImageRequestOptions{"resolution": json.RawMessage(`"1.5k"`)}}}); err == nil {
+		t.Fatal("NormalizeImageTaskRequest() accepted an unsupported MaiziAI resolution")
+	}
+	if _, err := adapter.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: ai.ImageRequest{Prompt: "编辑", Count: 1}, References: make([]ai.ImageReference, 8)}); err == nil {
+		t.Fatal("NormalizeImageTaskRequest() accepted eight MaiziAI reference images")
+	}
+}
+
 func TestMaiziProviderCreatesAndCompletesImageTask(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })

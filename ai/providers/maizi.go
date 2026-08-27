@@ -70,6 +70,19 @@ type maiziError struct{ message string }
 func (err maiziError) Error() string       { return err.message }
 func (err maiziError) SafeMessage() string { return err.message }
 
+var maiziImageRequestSchema = ai.ImageRequestSchema{
+	Version:            "v1",
+	MaxReferenceImages: 7,
+	SupportsMask:       true,
+	Fields: []ai.ImageRequestField{
+		{Key: "quality", Label: "质量", Type: ai.ImageRequestFieldSelect, Default: json.RawMessage(`"auto"`), Options: []ai.ImageRequestFieldOption{{Value: "auto", Label: "自动"}, {Value: "high", Label: "高"}, {Value: "medium", Label: "中"}, {Value: "low", Label: "低"}}},
+		{Key: "size", Label: "宽高比", Type: ai.ImageRequestFieldSelect, Default: json.RawMessage(`"1:1"`), Options: []ai.ImageRequestFieldOption{{Value: "1:1", Label: "1:1"}, {Value: "3:2", Label: "3:2"}, {Value: "2:3", Label: "2:3"}, {Value: "4:3", Label: "4:3"}, {Value: "3:4", Label: "3:4"}, {Value: "16:9", Label: "16:9"}, {Value: "9:16", Label: "9:16"}, {Value: "21:9", Label: "21:9"}, {Value: "auto", Label: "自动"}}},
+		{Key: "resolution", Label: "尺寸", Type: ai.ImageRequestFieldSelect, Default: json.RawMessage(`"1k"`), Options: []ai.ImageRequestFieldOption{{Value: "1k", Label: "1K"}, {Value: "2k", Label: "2K"}, {Value: "4k", Label: "4K"}}},
+		{Key: "outputFormat", Label: "输出格式", Type: ai.ImageRequestFieldSelect, Default: json.RawMessage(`"jpeg"`), Options: []ai.ImageRequestFieldOption{{Value: "jpeg", Label: "JPEG"}, {Value: "png", Label: "PNG"}}},
+		{Key: "background", Label: "背景", Type: ai.ImageRequestFieldSelect, Default: json.RawMessage(`"auto"`), Options: []ai.ImageRequestFieldOption{{Value: "auto", Label: "自动"}, {Value: "opaque", Label: "不透明"}, {Value: "transparent", Label: "透明"}}},
+	},
+}
+
 func init() {
 	_ = ai.Register(ai.ProviderType{
 		ID:           "maizi-image",
@@ -79,8 +92,60 @@ func init() {
 			{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
 			{Key: "model", Label: "模型名称", Type: "text", Placeholder: "例如：gpt-image-2", Required: true},
 		},
-		New: newMaiziProvider,
+		ImageRequestSchema: &maiziImageRequestSchema,
+		New:                newMaiziProvider,
 	})
+}
+
+func (provider *maiziProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
+	if len(request.References) > maiziImageRequestSchema.MaxReferenceImages {
+		return ai.ImageTaskRequest{}, maiziError{message: "MaiziAI 图像编辑最多支持 7 张参考图"}
+	}
+	if request.Mask != nil && len(request.References) == 0 {
+		return ai.ImageTaskRequest{}, maiziError{message: "遮罩编辑需要参考图"}
+	}
+	options := cloneImageRequestOptions(request.Request.Options)
+	setImageRequestOption(options, "quality", request.Request.Quality)
+	setImageRequestOption(options, "size", request.Request.Size)
+	setImageRequestOption(options, "resolution", request.Request.Resolution)
+	setImageRequestOption(options, "outputFormat", request.Request.OutputFormat)
+	setImageRequestOption(options, "background", request.Request.Background)
+	normalized, err := ai.NormalizeImageRequestOptions(maiziImageRequestSchema, options)
+	if err != nil {
+		return ai.ImageTaskRequest{}, maiziError{message: err.Error()}
+	}
+	request.Request.Options = normalized
+	request.Request.Quality = imageRequestOptionString(normalized, "quality")
+	request.Request.Size = imageRequestOptionString(normalized, "size")
+	request.Request.Resolution = imageRequestOptionString(normalized, "resolution")
+	request.Request.OutputFormat = imageRequestOptionString(normalized, "outputFormat")
+	request.Request.Background = imageRequestOptionString(normalized, "background")
+	if request.Request.OutputFormat == "jpeg" && request.Request.Background == "transparent" {
+		return ai.ImageTaskRequest{}, maiziError{message: "透明背景只能使用 PNG 输出格式"}
+	}
+	return request, nil
+}
+
+func cloneImageRequestOptions(input ai.ImageRequestOptions) ai.ImageRequestOptions {
+	result := make(ai.ImageRequestOptions, len(input))
+	for key, value := range input {
+		result[key] = append(json.RawMessage(nil), value...)
+	}
+	return result
+}
+
+func setImageRequestOption(options ai.ImageRequestOptions, key, value string) {
+	if _, exists := options[key]; exists || strings.TrimSpace(value) == "" {
+		return
+	}
+	encoded, _ := json.Marshal(value)
+	options[key] = encoded
+}
+
+func imageRequestOptionString(options ai.ImageRequestOptions, key string) string {
+	var value string
+	_ = json.Unmarshal(options[key], &value)
+	return value
 }
 
 func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {

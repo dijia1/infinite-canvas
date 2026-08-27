@@ -17,6 +17,8 @@ import { appPath } from "@/lib/app-path";
 import { cn } from "@/lib/utils";
 import { toggleMaterialPanel, type MaterialPanel } from "@/components/layout/material-panel";
 import { fetchPortalSession } from "@/services/api/session";
+import { resolveSelectedModel, type AIModelChoice } from "@/lib/model-selection";
+import { useConfigStore } from "@/stores/use-config-store";
 
 export function AppTopNav() {
     const pathname = usePathname();
@@ -26,6 +28,12 @@ export function AppTopNav() {
     const session = useQuery({ queryKey: ["portal-session"], queryFn: fetchPortalSession, enabled: !hideHeader, retry: false, staleTime: 5 * 60 * 1000 });
     const slug = pathname.split("/").filter(Boolean)[0];
     const activeToolSlug = navigationTools.some((tool) => tool.slug === slug) ? (slug as NavigationToolSlug) : undefined;
+	const aiStatus = useConfigStore((state) => state.status);
+	const config = useConfigStore((state) => state.config);
+	const selectImageModel = useConfigStore((state) => state.selectImageModel);
+	const selectVideoModel = useConfigStore((state) => state.selectVideoModel);
+	const selectedImageModel = resolveSelectedModel(aiStatus?.imageModels, config.imageProviderId, aiStatus?.defaultImageModelId);
+	const selectedVideoModel = resolveSelectedModel(aiStatus?.videoModels, config.videoProviderId, aiStatus?.defaultVideoModelId);
 
     return (
         <>
@@ -90,6 +98,8 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+							<ModelSelect label="图片模型" models={aiStatus?.imageModels} selected={selectedImageModel} onSelect={selectImageModel} />
+							<ModelSelect label="视频模型" models={aiStatus?.videoModels} selected={selectedVideoModel} onSelect={selectVideoModel} />
                             {session.data?.user.displayName ? (
                                 <span className="max-w-32 truncate text-sm text-stone-600 dark:text-stone-300" title={session.data.user.displayName}>
                                     {session.data.user.displayName}
@@ -114,6 +124,18 @@ export function AppTopNav() {
             <PublicImageDrawer open={materialPanel === "public-assets"} onClose={() => setMaterialPanel(null)} />
         </>
     );
+}
+
+function ModelSelect({ label, models, selected, onSelect }: { label: string; models: AIModelChoice[] | undefined; selected: AIModelChoice | undefined; onSelect: (id: string) => void }) {
+	if (!models?.length) return null;
+	return (
+		<Dropdown menu={{ selectedKeys: selected ? [selected.id] : [], items: models.map((model) => ({ key: model.id, label: model.name, onClick: () => onSelect(model.id) })) }} trigger={["click"]}>
+			<button type="button" className="inline-flex h-8 max-w-40 items-center gap-1 rounded-md border border-stone-200 px-2.5 text-sm text-stone-700 transition hover:bg-stone-100 dark:border-stone-700 dark:text-stone-200 dark:hover:bg-stone-800">
+				<span className="truncate">{selected ? `${label} · ${selected.name}` : label}</span>
+				<ChevronDown className="size-3.5 shrink-0" />
+			</button>
+		</Dropdown>
+	);
 }
 
 function TopMaterialButton({ active, children, onClick }: { active: boolean; children: ReactNode; onClick: () => void }) {

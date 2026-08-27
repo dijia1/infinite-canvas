@@ -14,6 +14,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
     const size = normalizeVideoSize(config.size);
     const resolutionName = normalizeVideoResolution(config.vquality);
     const body = new FormData();
+	if (config.videoProviderId) body.append("providerId", config.videoProviderId);
     body.append("prompt", prompt);
     body.append("seconds", seconds);
     if (size) body.append("size", size);
@@ -25,6 +26,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
         url: aiApiPath("/videos"),
         body: {
             prompt,
+			...(config.videoProviderId ? { providerId: config.videoProviderId } : {}),
             seconds,
             ...(size ? { size } : {}),
             resolution_name: resolutionName,

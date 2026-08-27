@@ -94,10 +94,11 @@ function aiHeaders(contentType?: string) {
 export async function requestGeneration(config: AiConfig, prompt: string, clientRequestId: string): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
-    const resolution = normalizeImageResolution(config.resolution);
+    const resolution = config.imageProviderType ? config.resolution : normalizeImageResolution(config.resolution);
     const output = imageOutputSettings(config.outputFormat, config.background);
     const body = {
         clientRequestId,
+		...(config.imageProviderId ? { providerId: config.imageProviderId } : {}),
         prompt,
         n: 1,
         ...(quality ? { quality } : {}),
@@ -105,6 +106,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
         ...(resolution ? { resolution } : {}),
         output_format: output.outputFormat,
         background: output.background,
+		providerOptions: config.providerOptions || {},
         response_format: "b64_json",
     };
     debugApiRequest("image generation", {
@@ -124,15 +126,17 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
 export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId: string): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
-    const resolution = normalizeImageResolution(config.resolution);
+    const resolution = config.imageProviderType ? config.resolution : normalizeImageResolution(config.resolution);
     const output = imageOutputSettings(config.outputFormat, config.background);
     const formData = new FormData();
     formData.set("clientRequestId", clientRequestId);
+	if (config.imageProviderId) formData.set("providerId", config.imageProviderId);
     formData.set("prompt", prompt);
     formData.set("n", "1");
     formData.set("response_format", "b64_json");
     formData.set("output_format", output.outputFormat);
     formData.set("background", output.background);
+	formData.set("providerOptions", JSON.stringify(config.providerOptions || {}));
     if (quality) {
         formData.set("quality", quality);
     }
@@ -163,6 +167,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
             ...(resolution ? { resolution } : {}),
             output_format: output.outputFormat,
             background: output.background,
+			providerOptions: config.providerOptions || {},
             response_format: "b64_json",
         },
         references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),

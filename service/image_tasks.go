@@ -20,6 +20,7 @@ const (
 
 type CreateImageTaskRequest struct {
 	ClientRequestID string
+	ProviderID      string
 	Mode            string
 	Request         ai.ImageRequest
 	References      []ai.ImageReference
@@ -54,7 +55,15 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return imageTaskView(ctx, user, existing)
 	}
 
-	provider, err := selectedImageTaskProvider(request.Mode)
+	provider, err := selectedImageTaskProvider(request.Mode, request.ProviderID)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	request, err = normalizeImageTaskRequestForProvider(provider, request)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	providerOptionsJSON, err := imageTaskOptionsJSON(request.Request.Options)
 	if err != nil {
 		return ImageTaskView{}, err
 	}
@@ -76,7 +85,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	item := model.ImageGenerationTask{
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Mode: request.Mode,
 		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
-		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, Count: 1,
+		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
 		ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
 	}
 	operation := model.OperationLog{
@@ -121,6 +130,7 @@ func summarizeImageTaskRequest(provider model.AIProvider, request ai.ImageTaskRe
 
 func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskRequest, error) {
 	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
+	request.ProviderID = strings.TrimSpace(request.ProviderID)
 	if request.ClientRequestID == "" || len(request.ClientRequestID) > 128 {
 		return CreateImageTaskRequest{}, safeMessageError{message: "客户端请求 ID 无效"}
 	}
@@ -138,8 +148,8 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 	if request.Request.Count != 1 {
 		return CreateImageTaskRequest{}, safeMessageError{message: "单次图片任务只能生成一张图片"}
 	}
-	if request.Mode == ImageTaskModeEdit && (len(request.References) < 1 || len(request.References) > 7) {
-		return CreateImageTaskRequest{}, safeMessageError{message: "图像编辑需要 1–7 张参考图"}
+	if request.Mode == ImageTaskModeEdit && len(request.References) < 1 {
+		return CreateImageTaskRequest{}, safeMessageError{message: "图像编辑需要参考图"}
 	}
 	if request.Mask != nil && request.Mode != ImageTaskModeEdit {
 		return CreateImageTaskRequest{}, safeMessageError{message: "遮罩只能用于图像编辑"}
@@ -156,6 +166,27 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 		return CreateImageTaskRequest{}, safeMessageError{message: fmt.Sprintf("图片输出格式与背景组合无效：%s/%s", format, background)}
 	}
 	request.Request.OutputFormat, request.Request.Background = format, background
+	return request, nil
+}
+
+func normalizeImageTaskRequestForProvider(provider model.AIProvider, request CreateImageTaskRequest) (CreateImageTaskRequest, error) {
+	typeInfo, ok := ai.Type(strings.TrimSpace(provider.Type))
+	if !ok || typeInfo.New == nil {
+		return CreateImageTaskRequest{}, safeMessageError{message: "当前供应商未实现"}
+	}
+	instance, err := typeInfo.New(provider.Config)
+	if err != nil {
+		return CreateImageTaskRequest{}, err
+	}
+	adapter, ok := instance.(ai.ImageTaskRequestAdapter)
+	if !ok {
+		return CreateImageTaskRequest{}, safeMessageError{message: "当前供应商未实现请求参数适配"}
+	}
+	normalized, err := adapter.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: request.Request, References: request.References, Mask: request.Mask})
+	if err != nil {
+		return CreateImageTaskRequest{}, err
+	}
+	request.Request, request.References, request.Mask = normalized.Request, normalized.References, normalized.Mask
 	return request, nil
 }
 
@@ -211,28 +242,45 @@ func imageTaskView(ctx context.Context, user PortalUser, item model.ImageGenerat
 	return view, nil
 }
 
-func selectedImageTaskProvider(mode string) (model.AIProvider, error) {
+func selectedImageTaskProvider(mode, requestedProviderID string) (model.AIProvider, error) {
 	settings, err := AdminSettings()
 	if err != nil {
 		return model.AIProvider{}, err
 	}
-	provider, ok := findProvider(settings.AI, settings.AI.ImageProviderID)
-	if !ok || !provider.Enabled {
-		return model.AIProvider{}, safeMessageError{message: "当前供应商不可用"}
+	provider, err := configuredImageTaskProvider(settings.AI, mode, requestedProviderID)
+	if err != nil {
+		return model.AIProvider{}, err
 	}
-	typeInfo, ok := ai.Type(provider.Type)
-	if !ok {
-		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现"}
+	return validateImageTaskProvider(provider)
+}
+
+func configuredImageTaskProvider(settings model.AISettings, mode, requestedProviderID string) (model.AIProvider, error) {
+	providerID := strings.TrimSpace(requestedProviderID)
+	if providerID == "" {
+		providerID = settings.ImageProviderID
+	}
+	provider, ok := findProvider(settings, providerID)
+	if !ok || !provider.Enabled {
+		return model.AIProvider{}, safeMessageError{message: "当前模型不可用"}
 	}
 	capability := ai.CapabilityImageGenerate
 	if mode == ImageTaskModeEdit {
 		capability = ai.CapabilityImageEdit
 	}
-	if !typeInfo.Supports(capability) {
+	typeInfo, ok := ai.Type(provider.Type)
+	if !ok || !typeInfo.Supports(capability) {
 		if mode == ImageTaskModeEdit {
-			return model.AIProvider{}, safeMessageError{message: "当前生图供应商不支持图像编辑"}
+			return model.AIProvider{}, safeMessageError{message: "当前图片模型不支持图像编辑"}
 		}
-		return model.AIProvider{}, safeMessageError{message: "当前供应商不支持此能力"}
+		return model.AIProvider{}, safeMessageError{message: "当前模型不支持此能力"}
+	}
+	return provider, nil
+}
+
+func validateImageTaskProvider(provider model.AIProvider) (model.AIProvider, error) {
+	typeInfo, ok := ai.Type(provider.Type)
+	if !ok {
+		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现"}
 	}
 	if typeInfo.New == nil {
 		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现"}
@@ -246,6 +294,9 @@ func selectedImageTaskProvider(mode string) (model.AIProvider, error) {
 	}
 	if _, ok := instance.(ai.ImageTaskRequestSummarizer); !ok {
 		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现请求审计"}
+	}
+	if _, ok := instance.(ai.ImageTaskRequestAdapter); !ok {
+		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现请求参数适配"}
 	}
 	return provider, nil
 }
@@ -276,7 +327,22 @@ func imageTaskRequest(item model.ImageGenerationTask) ai.ImageRequest {
 	if format == "" && background == "" {
 		format, background = "jpeg", "auto"
 	}
-	return ai.ImageRequest{Prompt: item.Prompt, Count: item.Count, Quality: item.Quality, Size: item.Size, Resolution: item.Resolution, OutputFormat: format, Background: background}
+	options := ai.ImageRequestOptions{}
+	if strings.TrimSpace(item.ProviderOptionsJSON) != "" {
+		_ = json.Unmarshal([]byte(item.ProviderOptionsJSON), &options)
+	}
+	return ai.ImageRequest{Prompt: item.Prompt, Count: item.Count, Quality: item.Quality, Size: item.Size, Resolution: item.Resolution, OutputFormat: format, Background: background, Options: options}
+}
+
+func imageTaskOptionsJSON(options ai.ImageRequestOptions) (string, error) {
+	if len(options) == 0 {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(options)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func imageTaskInputs(item model.ImageGenerationTask) ([]ImageTaskInput, error) {

@@ -21,7 +21,7 @@ import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
-import { getInputSummary, resetInterruptedGeneration } from "../utils/canvas-generation-utils";
+import { getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection } from "../utils/canvas-generation-utils";
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
 import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
@@ -221,6 +221,7 @@ function InfiniteCanvasPage() {
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
+	const aiStatus = useConfigStore((state) => state.status);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const addAsset = useAssetStore((state) => state.addAsset);
@@ -351,6 +352,11 @@ function InfiniteCanvasPage() {
         updateProject(projectId, { nodes, connections, backgroundMode, showImageInfo });
     }, [backgroundMode, connections, isApplyingRef, isPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
+	useEffect(() => {
+		if (!projectLoaded || !aiStatus) return;
+		setNodes((current) => snapshotConfigNodeProviderSelection(current, effectiveConfig));
+	}, [aiStatus, effectiveConfig, projectLoaded]);
+
     useEffect(() => {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
@@ -414,7 +420,19 @@ function InfiniteCanvasPage() {
         (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, position: Position) => {
             const metadata =
                 type === CanvasNodeType.Config
-                    ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, resolution: normalizeImageResolution(effectiveConfig.resolution), outputFormat: effectiveConfig.outputFormat, background: effectiveConfig.background, count: Number(effectiveConfig.count) || 1 }
+                    ? {
+                          model: effectiveConfig.imageModel || effectiveConfig.model,
+                          size: effectiveConfig.size,
+                          resolution: effectiveConfig.imageProviderType ? effectiveConfig.resolution : normalizeImageResolution(effectiveConfig.resolution),
+                          outputFormat: effectiveConfig.outputFormat,
+                          background: effectiveConfig.background,
+						  imageProviderId: effectiveConfig.imageProviderId,
+						  videoProviderId: effectiveConfig.videoProviderId,
+                          imageProviderType: effectiveConfig.imageProviderType,
+                          imageRequestSchemaVersion: effectiveConfig.imageRequestSchemaVersion,
+                          providerOptions: effectiveConfig.providerOptions,
+                          count: Number(effectiveConfig.count) || 1,
+                      }
                     : undefined;
             return createCanvasNode(type, position, metadata);
         },

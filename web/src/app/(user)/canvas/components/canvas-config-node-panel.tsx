@@ -3,9 +3,10 @@
 import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Video } from "lucide-react";
-import { App, Button, Empty, Input, Modal, Segmented } from "antd";
+import { App, Button, Empty, Input, Modal, Segmented, Select } from "antd";
 
-import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, reconcileProviderConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { resolveSelectedModel } from "@/lib/model-selection";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-config";
@@ -32,12 +33,30 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
     const [editingTextId, setEditingTextId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState("");
     const globalConfig = useEffectiveConfig();
+	const aiStatus = useConfigStore((state) => state.status);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = node.metadata?.generationMode || "image";
     const config = buildNodeConfig(globalConfig, node, mode);
     const chipStyle = { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text };
     const textInputs = inputs.filter((input) => input.type === "text");
     const imageInputs = inputs.filter((input) => input.type === "image");
+	const selectedImageModel = resolveSelectedModel(aiStatus?.imageModels, config.imageProviderId, aiStatus?.defaultImageModelId);
+	const selectedVideoModel = resolveSelectedModel(aiStatus?.videoModels, config.videoProviderId, aiStatus?.defaultVideoModelId);
+	const selectImageModel = (imageProviderId: string) => {
+		if (!aiStatus) return;
+		const next = reconcileProviderConfig({ ...config, imageProviderId }, aiStatus);
+		onConfigChange(node.id, {
+			imageProviderId: next.imageProviderId,
+			imageProviderType: next.imageProviderType,
+			imageRequestSchemaVersion: next.imageRequestSchemaVersion,
+			providerOptions: next.providerOptions,
+			quality: next.quality,
+			size: next.size,
+			resolution: next.resolution,
+			outputFormat: next.outputFormat,
+			background: next.background,
+		});
+	};
 
     const moveInput = (input: NodeGenerationInput, offset: number) => {
         const sameTypeInputs = inputs.filter((item) => item.type === input.type);
@@ -144,16 +163,21 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                         autoAdjustOverflow={false}
                         buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
                         onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+						onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
                     />
                 ) : null}
             </div>
 
-            <Button type="primary" className="mt-auto !h-9 !w-full !cursor-pointer !rounded-lg" disabled={!inputSummary.textCount && !inputSummary.imageCount} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
-                <span className="inline-flex items-center gap-1.5">
-                    <Play className="size-4" />
-                    <span>开始生成</span>
-                </span>
-            </Button>
+			<div className="mt-auto grid gap-2">
+				<Button type="primary" className="!h-9 !w-full !cursor-pointer !rounded-lg" disabled={!inputSummary.textCount && !inputSummary.imageCount} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
+					<span className="inline-flex items-center gap-1.5">
+						<Play className="size-4" />
+						<span>开始生成</span>
+					</span>
+				</Button>
+				{mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
+				{mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => onConfigChange(node.id, { videoProviderId })} /> : null}
+			</div>
             <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} centered destroyOnHidden>
                 <div ref={previewContentRef} className="min-h-0 flex-1 overflow-hidden" data-canvas-no-zoom onWheelCapture={(event) => event.stopPropagation()}>
                     {inputs.length ? (
@@ -212,6 +236,25 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
             </Modal>
         </div>
     );
+}
+
+function CanvasConfigModelSelect({ value, options, onChange }: { value: string | undefined; options: Array<{ id: string; name: string }> | undefined; onChange: (value: string) => void }) {
+	if (!options?.length) return null;
+	return (
+		<div data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+			<Select
+				size="small"
+				value={value}
+				options={options.map((item) => ({ value: item.id, label: item.name }))}
+				popupRender={(menu) => (
+					<div data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+						{menu}
+					</div>
+				)}
+				onChange={onChange}
+			/>
+		</div>
+	);
 }
 
 function PreviewSection({ title, count, empty, children }: { title: string; count: number; empty: string; children: React.ReactNode }) {
@@ -316,14 +359,22 @@ function InputChip({ label, value, style }: { label: string; value: string; styl
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasGenerationMode): AiConfig {
+	const imageProviderId = node.metadata?.imageProviderId || globalConfig.imageProviderId;
+	const useNodeProviderOptions = Boolean(node.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
+	const imageProviderType = useNodeProviderOptions ? node.metadata?.imageProviderType || globalConfig.imageProviderType : globalConfig.imageProviderType;
     return {
         ...globalConfig,
         model: "",
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
-        resolution: normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
+        resolution: imageProviderType ? (useNodeProviderOptions ? node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution : globalConfig.resolution || defaultConfig.resolution) : normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
         outputFormat: normalizeImageOutputFormat(node.metadata?.outputFormat || globalConfig.outputFormat || defaultConfig.outputFormat),
 		background: normalizeImageBackground(node.metadata?.background || globalConfig.background || defaultConfig.background),
+		imageProviderType,
+		imageProviderId,
+		videoProviderId: node.metadata?.videoProviderId || globalConfig.videoProviderId,
+		imageRequestSchemaVersion: useNodeProviderOptions ? node.metadata?.imageRequestSchemaVersion || globalConfig.imageRequestSchemaVersion : globalConfig.imageRequestSchemaVersion,
+		providerOptions: useNodeProviderOptions ? node.metadata?.providerOptions || globalConfig.providerOptions : globalConfig.providerOptions,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

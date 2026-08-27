@@ -29,11 +29,12 @@ type ConfigField struct {
 }
 
 type ProviderType struct {
-	ID           string                                  `json:"id"`
-	Name         string                                  `json:"name"`
-	Capabilities []Capability                            `json:"capabilities"`
-	ConfigFields []ConfigField                           `json:"configFields"`
-	New          func(json.RawMessage) (Provider, error) `json:"-"`
+	ID                 string                                  `json:"id"`
+	Name               string                                  `json:"name"`
+	Capabilities       []Capability                            `json:"capabilities"`
+	ConfigFields       []ConfigField                           `json:"configFields"`
+	ImageRequestSchema *ImageRequestSchema                     `json:"imageRequestSchema,omitempty"`
+	New                func(json.RawMessage) (Provider, error) `json:"-"`
 }
 
 func (item ProviderType) Supports(capability Capability) bool {
@@ -102,6 +103,7 @@ type ImageRequest struct {
 	Resolution   string
 	OutputFormat string
 	Background   string
+	Options      ImageRequestOptions
 }
 
 type ImageReference struct {
@@ -130,6 +132,12 @@ type ImageTaskRequest struct {
 	Request    ImageRequest
 	References []ImageReference
 	Mask       *ImageReference
+}
+
+// ImageTaskRequestAdapter validates and normalizes the provider-specific
+// options before a task is persisted. The worker reuses that saved snapshot.
+type ImageTaskRequestAdapter interface {
+	NormalizeImageTaskRequest(ImageTaskRequest) (ImageTaskRequest, error)
 }
 
 type ImageTask struct {
@@ -170,6 +178,7 @@ type ImageTaskRequestSummarizer interface {
 }
 
 type VideoRequest struct {
+	ProviderID string
 	Prompt     string
 	Seconds    string
 	Size       string

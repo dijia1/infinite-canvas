@@ -81,6 +81,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                                 placement="topLeft"
                                 buttonClassName="!h-10 !max-w-[170px] !justify-start !rounded-full !px-3"
                                 onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+								onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
                                 onMissingConfig={() => openConfigDialog(true)}
                                 onOpenChange={onImageSettingsOpenChange}
                             />
@@ -108,12 +109,22 @@ function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
 }
 
 function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
+	const imageProviderId = node.metadata?.imageProviderId || globalConfig.imageProviderId;
+	const useNodeProviderOptions = Boolean(node.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
+	const imageProviderType = useNodeProviderOptions ? node.metadata?.imageProviderType || globalConfig.imageProviderType : globalConfig.imageProviderType;
     return {
         ...globalConfig,
         model: "",
         quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
-        resolution: normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
+        resolution: imageProviderType ? (useNodeProviderOptions ? node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution : globalConfig.resolution || defaultConfig.resolution) : normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
+		outputFormat: node.metadata?.outputFormat || globalConfig.outputFormat || defaultConfig.outputFormat,
+		background: node.metadata?.background || globalConfig.background || defaultConfig.background,
+		imageProviderType,
+		imageProviderId,
+		videoProviderId: node.metadata?.videoProviderId || globalConfig.videoProviderId,
+		imageRequestSchemaVersion: useNodeProviderOptions ? node.metadata?.imageRequestSchemaVersion || globalConfig.imageRequestSchemaVersion : globalConfig.imageRequestSchemaVersion,
+		providerOptions: useNodeProviderOptions ? node.metadata?.providerOptions || globalConfig.providerOptions : globalConfig.providerOptions,
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

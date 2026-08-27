@@ -4,6 +4,7 @@ import { type ReactNode } from "react";
 import { Tooltip } from "antd";
 import { Brush, Camera, Download, FolderPlus, Image as ImageIcon, Maximize2, MessageSquare, Minus, Pencil, Plus, RefreshCw, Scissors, Upload, Video } from "lucide-react";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
+import { useConfigStore } from "@/stores/use-config-store";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -44,6 +45,7 @@ export function CanvasNodeHoverToolbar({
     onMask,
     onRetry,
 }: CanvasNodeHoverToolbarProps) {
+	const supportsMask = useConfigStore((state) => state.status?.imageRequestSchema?.supportsMask ?? true);
     if (!node) return null;
 
     const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
@@ -78,7 +80,7 @@ export function CanvasNodeHoverToolbar({
             {isText ? <ToolbarAction title="增大字号" label="放大" icon={<Plus className="size-4" />} onClick={() => onIncreaseFont(node)} /> : null}
             {isImage ? <ToolbarAction title={hasImage ? "替换图片" : "上传图片"} label={hasImage ? "替换图片" : "上传图片"} icon={<Upload className="size-4" />} onClick={() => onUpload(node)} /> : null}
             {isVideo ? <ToolbarAction title={hasVideo ? "替换视频" : "上传视频"} label={hasVideo ? "替换视频" : "上传视频"} icon={<Video className="size-4" />} onClick={() => onUpload(node)} /> : null}
-            {hasImage ? <ToolbarAction title="编辑遮罩" label="遮罩" icon={<Brush className="size-4" />} onClick={() => onMask(node)} /> : null}
+            {hasImage && supportsMask ? <ToolbarAction title="编辑遮罩" label="遮罩" icon={<Brush className="size-4" />} onClick={() => onMask(node)} /> : null}
             {hasImage ? <ToolbarAction title="裁剪并生成新节点" label="裁剪" icon={<Scissors className="size-4" />} onClick={() => onCrop(node)} /> : null}
             {hasImage ? <ToolbarAction title="生成角度" label="多角度" icon={<Camera className="size-4" />} onClick={() => onAngle(node)} /> : null}
             {hasImage ? <ToolbarAction title="查看图片详情" label="查看大图" icon={<Maximize2 className="size-4" />} onClick={() => onViewImage(node)} /> : null}

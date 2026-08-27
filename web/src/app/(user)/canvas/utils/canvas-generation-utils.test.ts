@@ -4,7 +4,7 @@ import test from "node:test";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
-import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, resetInterruptedGeneration, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
+import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
 
 const config: AiConfig = {
     model: "legacy-model",
@@ -134,6 +134,43 @@ test("selects each generation model and normalizes node config", () => {
             count: "3",
         },
     );
+});
+
+test("keeps a selected video provider when building a video task config", () => {
+	const selected = buildGenerationConfig({ ...config, videoProviderId: "video-provider" }, undefined, "video", fallbackConfig);
+	assert.equal(selected.videoProviderId, "video-provider");
+});
+
+test("snapshots an old config node's selected models before global defaults change", () => {
+	const oldConfigNode = node("config", CanvasNodeType.Config, { quality: "high" });
+	const initialConfig = {
+		...config,
+		imageProviderId: "maizi",
+		imageProviderType: "maizi-image",
+		imageRequestSchemaVersion: "v1",
+		providerOptions: { size: "1:1", resolution: "1k" },
+		videoProviderId: "doubao-video",
+	};
+	const snapshot = snapshotConfigNodeProviderSelection([oldConfigNode], initialConfig);
+	assert.deepEqual(snapshot[0]?.metadata, {
+		quality: "high",
+		imageProviderId: "maizi",
+		imageProviderType: "maizi-image",
+		imageRequestSchemaVersion: "v1",
+		providerOptions: { size: "1:1", resolution: "1k" },
+		videoProviderId: "doubao-video",
+	});
+
+	const afterGlobalChange = snapshotConfigNodeProviderSelection(snapshot, { ...initialConfig, imageProviderId: "seedream", imageProviderType: "doubao-seedream-5-pro" });
+	assert.equal(afterGlobalChange[0]?.metadata?.imageProviderId, "maizi");
+	assert.equal(afterGlobalChange[0]?.metadata?.imageProviderType, "maizi-image");
+});
+
+test("preserves provider-specific resolutions and request options", () => {
+	const seedream = buildGenerationConfig({ ...config, imageProviderType: "doubao-seedream-5-pro", imageRequestSchemaVersion: "v1", resolution: "1.5k", providerOptions: { resolution: "1.5k", watermark: false } }, undefined, "image", fallbackConfig);
+	assert.equal(seedream.resolution, "1.5k");
+	assert.deepEqual(seedream.providerOptions, { resolution: "1.5k", watermark: false });
+	assert.deepEqual(buildImageGenerationMetadata("generation", seedream, 1, []).providerOptions, { resolution: "1.5k", watermark: false });
 });
 
 test("falls back to supplied defaults when generation config is empty", () => {

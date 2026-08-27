@@ -33,6 +33,11 @@ export type CanvasNodeMetadata = {
     resolution?: string;
     outputFormat?: string;
 	background?: string;
+	imageProviderId?: string;
+	videoProviderId?: string;
+	imageProviderType?: string;
+	imageRequestSchemaVersion?: string;
+	providerOptions?: Record<string, unknown>;
     quality?: string;
     count?: number;
     seconds?: string;

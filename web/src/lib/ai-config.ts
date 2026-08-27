@@ -13,5 +13,10 @@ export type AiConfig = {
 	resolution: string;
 	outputFormat: string;
 	background?: string;
+	imageProviderId?: string;
+	videoProviderId?: string;
+	imageProviderType?: string;
+	imageRequestSchemaVersion?: string;
+	providerOptions?: Record<string, unknown>;
 	count: string;
 };

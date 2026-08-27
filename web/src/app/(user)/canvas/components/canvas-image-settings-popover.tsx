@@ -6,13 +6,17 @@ import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
 import { ImageSettingsPanel, imageBackgroundLabel, imageOutputFormatLabel, imageQualityLabel, imageResolutionLabel, imageSizeLabel } from "@/components/image-settings-panel";
+import { normalizeImageRequestOptions, schemaOptionString, type ImageRequestOptions } from "@/lib/image-request-schema";
+import { resolveSelectedModel } from "@/lib/model-selection";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { AiConfig } from "@/stores/use-config-store";
+import { useConfigStore } from "@/stores/use-config-store";
 
 type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
+	onProviderOptionsChange?: (options: ImageRequestOptions) => void;
     onMissingConfig?: () => void;
     onOpenChange?: (open: boolean) => void;
     buttonClassName?: string;
@@ -21,15 +25,19 @@ type CanvasImageSettingsPopoverProps = {
     autoAdjustOverflow?: boolean;
 };
 
-export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasImageSettingsPopoverProps) {
+export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderOptionsChange, onOpenChange, buttonClassName, placement = "topLeft" }: CanvasImageSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
-    const quality = config.quality || "auto";
+	const aiStatus = useConfigStore((state) => state.status);
+	const selectedImageModel = resolveSelectedModel(aiStatus?.imageModels, config.imageProviderId, aiStatus?.defaultImageModelId);
+	const schema = selectedImageModel?.imageRequestSchema || (config.imageProviderType === aiStatus?.imageProviderType ? aiStatus?.imageRequestSchema : undefined);
+	const options = normalizeImageRequestOptions(schema, config.providerOptions);
+    const quality = schemaOptionString(options, "quality") || config.quality || "auto";
     const count = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
-    const activeSize = config.size || "auto";
+    const activeSize = schemaOptionString(options, "size") || config.size || "auto";
     const updateOpen = (nextOpen: boolean) => {
         setOpen(nextOpen);
         onOpenChange?.(nextOpen);
@@ -57,7 +65,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} schema={schema} onConfigChange={onConfigChange} onProviderOptionsChange={onProviderOptionsChange} /> : null;
 
     return (
         <>
@@ -71,7 +79,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onOpenChang
                     onClick={() => updateOpen(!open)}
                 >
                     <span className="truncate">
-                        {imageQualityLabel(quality)} · {imageSizeLabel(activeSize)} · {imageResolutionLabel(config.resolution)} · {imageOutputFormatLabel(config.outputFormat)} · {imageBackgroundLabel(config.background)} · {count} 张
+						{imageSettingsSummary(config, schema, options, quality, activeSize, count)}
                     </span>
                 </Button>
             </span>
@@ -86,14 +94,18 @@ function ImageSettingsPortal({
     placement,
     theme,
     config,
+	schema,
     onConfigChange,
+	onProviderOptionsChange,
 }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
     placement: CanvasImageSettingsPopoverProps["placement"];
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     config: AiConfig;
+	schema?: import("@/lib/image-request-schema").ImageRequestSchema;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
+	onProviderOptionsChange?: (options: ImageRequestOptions) => void;
 }) {
     const width = 356;
     const gap = 8;
@@ -127,8 +139,21 @@ function ImageSettingsPortal({
             onClick={(event) => event.stopPropagation()}
             onWheelCapture={(event) => event.stopPropagation()}
         >
-            <ImageSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
+			<ImageSettingsPanel config={config} schema={schema} onConfigChange={(key, value) => onConfigChange(key, value)} onProviderOptionsChange={onProviderOptionsChange} theme={theme} className="space-y-4" />
         </div>,
         document.body,
     );
+}
+
+function imageSettingsSummary(config: AiConfig, schema: import("@/lib/image-request-schema").ImageRequestSchema | undefined, options: ImageRequestOptions, quality: string, size: string, count: number) {
+	if (!schema) return `${imageQualityLabel(quality)} · ${imageSizeLabel(size)} · ${imageResolutionLabel(config.resolution)} · ${imageOutputFormatLabel(config.outputFormat)} · ${imageBackgroundLabel(config.background)} · ${count} 张`;
+	const fields = schema.fields
+		.map((field) => {
+			const value = options[field.key];
+			if (value === undefined) return "";
+			if (typeof value === "boolean") return `${field.label}${value ? "开" : "关"}`;
+			return field.options?.find((item) => item.value === value)?.label || String(value);
+		})
+		.filter(Boolean);
+	return [...fields, `${count} 张`].join(" · ");
 }
