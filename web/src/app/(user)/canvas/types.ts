@@ -28,7 +28,6 @@ export type CanvasNodeMetadata = {
     fontSize?: number;
     generationMode?: CanvasGenerationMode;
     generationType?: CanvasImageGenerationType;
-    model?: string;
     size?: string;
     resolution?: string;
     outputFormat?: string;

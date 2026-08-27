@@ -7,12 +7,6 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../t
 import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
 
 const config: AiConfig = {
-    model: "legacy-model",
-    imageModel: "image-model",
-    videoModel: "video-model",
-    textModel: "text-model",
-    models: ["image-model", "video-model", "text-model"],
-    systemPrompt: "",
     videoSeconds: "6",
     vquality: "720",
     quality: "auto",
@@ -20,15 +14,12 @@ const config: AiConfig = {
     resolution: "1k",
     outputFormat: "jpeg",
     background: "auto",
+    providerOptions: {},
     count: "1",
 };
 
 const fallbackConfig: AiConfig = {
     ...config,
-    model: "fallback-model",
-    imageModel: "fallback-image-model",
-    videoModel: "fallback-video-model",
-    textModel: "fallback-text-model",
     quality: "standard",
     size: "16:9",
     resolution: "2k",
@@ -73,6 +64,7 @@ test("builds edit metadata with persisted or remote references only", () => {
         count: 2,
         references: ["media:reference", "https://example.test/reference.png"],
     });
+    assert.equal("model" in buildImageGenerationMetadata("edit", config, 1, []), false);
 });
 
 test("persists masks in the same order as reusable reference URLs", () => {
@@ -99,22 +91,14 @@ test("persists masks in the same order as reusable reference URLs", () => {
     });
 });
 
-test("uses the configured model and normalizes node config", () => {
-    assert.equal(buildGenerationConfig(config, undefined, fallbackConfig).model, "legacy-model");
-
-    const configuredNode = node("configured", CanvasNodeType.Config, {
-        model: "node-model",
-        quality: "node-quality",
-        size: "4:3",
-        resolution: "2048x1024",
-        seconds: "12",
-        vquality: "4k",
-        count: 3,
-    });
-    const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, fallbackConfig);
+test("normalizes node config without copying historical model fields", () => {
+    const historicalConfig = JSON.parse(JSON.stringify({ ...config, model: "legacy-model", imageModel: "legacy-image-model", videoModel: "legacy-video-model", textModel: "legacy-text-model", models: ["legacy-model"], systemPrompt: "legacy prompt" })) as AiConfig;
+    const configuredNode = JSON.parse(
+        '{"id":"configured","type":"config","title":"configured","position":{"x":0,"y":0},"width":100,"height":100,"metadata":{"model":"node-model","quality":"node-quality","size":"4:3","resolution":"2048x1024","seconds":"12","vquality":"4k","count":3}}',
+    ) as CanvasNodeData;
+    const configuredResult = buildGenerationConfig({ ...historicalConfig, quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, fallbackConfig);
     assert.deepEqual(
         {
-            model: configuredResult.model,
             quality: configuredResult.quality,
             size: configuredResult.size,
             resolution: configuredResult.resolution,
@@ -123,7 +107,6 @@ test("uses the configured model and normalizes node config", () => {
             count: configuredResult.count,
         },
         {
-            model: "node-model",
             quality: "node-quality",
             size: "4:3",
             resolution: "2k",
@@ -132,6 +115,9 @@ test("uses the configured model and normalizes node config", () => {
             count: "3",
         },
     );
+    for (const obsoleteField of ["model", "imageModel", "videoModel", "textModel", "models", "systemPrompt"]) {
+        assert.equal(obsoleteField in configuredResult, false);
+    }
 });
 
 test("keeps a selected video provider when building a video task config", () => {
@@ -139,7 +125,7 @@ test("keeps a selected video provider when building a video task config", () => 
 	assert.equal(selected.videoProviderId, "video-provider");
 });
 
-test("snapshots an old config node's selected models before global defaults change", () => {
+test("snapshots an old config node's selected providers before global defaults change", () => {
 	const oldConfigNode = node("config", CanvasNodeType.Config, { quality: "high" });
 	const initialConfig = {
 		...config,
@@ -166,7 +152,6 @@ test("snapshots an old config node's selected models before global defaults chan
 
 test("keeps node-local provider options after global provider settings change", () => {
     const providerSnapshot = node("config", CanvasNodeType.Config, {
-        model: "snapshot-model",
         quality: "high",
         size: "3:2",
         resolution: "1.5k",
@@ -230,11 +215,10 @@ test("preserves provider-specific resolutions and request options", () => {
 });
 
 test("falls back to supplied defaults when generation config is empty", () => {
-    const emptyConfig: AiConfig = { ...config, model: "", imageModel: "", videoModel: "", textModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" };
+    const emptyConfig: AiConfig = { ...config, quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" };
 
     assert.deepEqual(buildGenerationConfig(emptyConfig, undefined, fallbackConfig), {
         ...emptyConfig,
-        model: "fallback-model",
         quality: "standard",
         size: "16:9",
         resolution: "2k",

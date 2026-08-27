@@ -14,12 +14,6 @@ type Deferred<T> = {
 };
 
 const config: AiConfig = {
-    model: "image-model",
-    imageModel: "image-model",
-    videoModel: "video-model",
-    textModel: "text-model",
-    models: [],
-    systemPrompt: "",
     videoSeconds: "6",
     vquality: "medium",
     quality: "auto",
@@ -120,6 +114,11 @@ test("creates a batch root and three children with three parallel single-image r
     assert.equal(nodesRef.current.filter((item) => item.metadata?.batchRootId === root.id).length, 3);
     assert.equal(connectionsRef.current.filter((item) => item.fromNodeId === root.id).length, 3);
     assert.equal(root.metadata?.primaryImageId, root.metadata?.batchChildIds?.[0]);
+    assert.equal("model" in (root.metadata || {}), false);
+    assert.equal(
+        nodesRef.current.filter((item) => item.metadata?.batchRootId === root.id).every((item) => !("model" in (item.metadata || {}))),
+        true,
+    );
 });
 
 test("dispatches every batch image request before completion and uses one image per request", async () => {
@@ -142,6 +141,7 @@ test("dispatches every batch image request before completion and uses one image 
         requests.map((request) => request.count),
         ["1", "1", "1"],
     );
+    assert.equal(requests.every((request) => !("model" in request)), true);
 
     pending.forEach((request, index) => request.resolve(completedTask(`image-${index}`, `media-${index}`)));
     await generation;
@@ -276,7 +276,9 @@ test("angle generation always uses edit and creates a connected child", async ()
 });
 
 test("retries persisted image metadata and marks a missing reference as an error", async () => {
-    const retryable = node("retry", CanvasNodeType.Image, { prompt: "retry me", generationType: "edit", model: "image-model", size: "1:1", resolution: "1k", quality: "auto", count: 3, references: ["data:image/png;base64,reference"] });
+    const retryable = JSON.parse(
+        '{"id":"retry","type":"image","title":"retry","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"prompt":"retry me","generationType":"edit","model":"historical-model","size":"1:1","resolution":"1k","quality":"auto","count":3,"references":["data:image/png;base64,reference"]}}',
+    ) as CanvasNodeData;
     const { controller, calls } = setup([retryable]);
 
     await controller.retryNode(retryable);
@@ -321,20 +323,10 @@ test("retries persisted media references through the stored-image resolver", asy
     assert.equal(calls.edit, 1);
 });
 
-test("retries a batch child with root metadata without changing the batch", async () => {
-    const root = node("root", CanvasNodeType.Image, {
-        prompt: "retry this batch",
-        generationType: "edit",
-        model: "root-model",
-        size: "16:9",
-        resolution: "2k",
-        quality: "high",
-        count: 3,
-        references: ["data:image/png;base64,reference"],
-        isBatchRoot: true,
-        batchChildIds: ["child-a", "child-b", "child-c"],
-        primaryImageId: "child-a",
-    });
+test("retries historical batch metadata without copying its obsolete model", async () => {
+    const root = JSON.parse(
+        '{"id":"root","type":"image","title":"root","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"prompt":"retry this batch","generationType":"edit","model":"root-model","size":"16:9","resolution":"2k","quality":"high","count":3,"references":["data:image/png;base64,reference"],"isBatchRoot":true,"batchChildIds":["child-a","child-b","child-c"],"primaryImageId":"child-a"}}',
+    ) as CanvasNodeData;
     const child = node("child-b", CanvasNodeType.Image, { batchRootId: "root", status: "error" });
     const rootMetadataBefore = { ...root.metadata };
     const editRequests: AiConfig[] = [];
@@ -348,14 +340,16 @@ test("retries a batch child with root metadata without changing the batch", asyn
     await controller.retryNode(child);
 
     assert.deepEqual(
-        editRequests.map((request) => ({ model: request.model, size: request.size, resolution: request.resolution, quality: request.quality, count: request.count })),
-        [{ model: "root-model", size: "16:9", resolution: "2k", quality: "high", count: "1" }],
+        editRequests.map((request) => ({ size: request.size, resolution: request.resolution, quality: request.quality, count: request.count })),
+        [{ size: "16:9", resolution: "2k", quality: "high", count: "1" }],
     );
+    assert.equal(editRequests.every((request) => !("model" in request)), true);
     assert.equal(nodesRef.current.length, 2);
     assert.deepEqual(nodesRef.current.find((item) => item.id === "root")?.metadata, rootMetadataBefore);
     const retriedChild = nodesRef.current.find((item) => item.id === "child-b");
     assert.equal(retriedChild?.metadata?.batchRootId, "root");
     assert.equal(retriedChild?.metadata?.status, "success");
+    assert.equal("model" in (retriedChild?.metadata || {}), false);
 });
 
 test("restores an in-flight image task from its persisted client request ID", async () => {
@@ -409,7 +403,9 @@ test("routes video generation through the video service", async () => {
     await controller.generateNode("source", "video", "make it move");
 
     assert.equal(calls.video, 1);
-    assert.equal(nodesRef.current.find((item) => item.type === CanvasNodeType.Video)?.metadata?.status, "success");
+    const video = nodesRef.current.find((item) => item.type === CanvasNodeType.Video);
+    assert.equal(video?.metadata?.status, "success");
+    assert.equal("model" in (video?.metadata || {}), false);
 });
 
 test("text-to-image creates and opens an image config node instead of calling text generation", () => {
@@ -420,7 +416,7 @@ test("text-to-image creates and opens an image config node instead of calling te
 
     const configNode = nodesRef.current.find((item) => item.type === CanvasNodeType.Config);
     assert.ok(configNode);
-    assert.equal(configNode.metadata?.model, "image-model");
+    assert.equal("model" in (configNode.metadata || {}), false);
     assert.deepEqual(
         connectionsRef.current.map(({ fromNodeId, toNodeId }) => ({ fromNodeId, toNodeId })),
         [{ fromNodeId: "source", toNodeId: configNode.id }],

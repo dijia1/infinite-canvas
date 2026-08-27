@@ -1,6 +1,6 @@
 import { normalizeImageResolution } from "../../../../lib/image-generation-config.ts";
 import { normalizeImageBackground, normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
-import type { AiConfig } from "../../../../lib/ai-config";
+import { normalizePersistedAiConfig, type AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
@@ -19,6 +19,12 @@ export type CanvasAngleParameters = {
     cameraDistance: number;
     wideAngle: boolean;
 };
+
+export function withoutLegacyModel(metadata: CanvasNodeMetadata | undefined): CanvasNodeMetadata {
+    const current = { ...metadata } as Record<string, unknown>;
+    delete current.model;
+    return current as CanvasNodeMetadata;
+}
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
     const persistedReferences = references
@@ -55,30 +61,31 @@ export function getInputSummary(inputs: NodeGenerationInput[]): { textCount: num
 }
 
 export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, fallbackConfig: AiConfig): AiConfig {
-	const imageProviderId = node?.metadata?.imageProviderId || config.imageProviderId;
+	const currentConfig = normalizePersistedAiConfig(config);
+	const defaults = normalizePersistedAiConfig(fallbackConfig);
+	const imageProviderId = node?.metadata?.imageProviderId || currentConfig.imageProviderId;
 	const useNodeProviderOptions = Boolean(node?.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
-	const imageProviderType = useNodeProviderOptions ? node?.metadata?.imageProviderType || config.imageProviderType : config.imageProviderType;
+	const imageProviderType = useNodeProviderOptions ? node?.metadata?.imageProviderType || currentConfig.imageProviderType : currentConfig.imageProviderType;
 	const useNodeResolution = useNodeProviderOptions || !imageProviderType;
     return {
-        ...config,
-        model: node?.metadata?.model || config.model || fallbackConfig.model,
-        quality: node?.metadata?.quality || config.quality || fallbackConfig.quality,
-        size: node?.metadata?.size || config.size || fallbackConfig.size,
-		resolution: generationResolution({ ...config, resolution: useNodeResolution ? node?.metadata?.resolution || config.resolution || fallbackConfig.resolution : config.resolution || fallbackConfig.resolution, imageProviderType }),
-        outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
-		background: normalizeImageBackground(node?.metadata?.background || config.background || fallbackConfig.background),
+        ...currentConfig,
+        quality: node?.metadata?.quality || currentConfig.quality || defaults.quality,
+        size: node?.metadata?.size || currentConfig.size || defaults.size,
+		resolution: generationResolution({ ...currentConfig, resolution: useNodeResolution ? node?.metadata?.resolution || currentConfig.resolution || defaults.resolution : currentConfig.resolution || defaults.resolution, imageProviderType }),
+		outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || currentConfig.outputFormat || defaults.outputFormat),
+		background: normalizeImageBackground(node?.metadata?.background || currentConfig.background || defaults.background),
 		...(imageProviderType
 			? {
 					imageProviderType,
 					imageProviderId,
-					imageRequestSchemaVersion: useNodeProviderOptions ? node?.metadata?.imageRequestSchemaVersion || config.imageRequestSchemaVersion : config.imageRequestSchemaVersion,
-					providerOptions: useNodeProviderOptions ? node?.metadata?.providerOptions || config.providerOptions : config.providerOptions,
+					imageRequestSchemaVersion: useNodeProviderOptions ? node?.metadata?.imageRequestSchemaVersion || currentConfig.imageRequestSchemaVersion : currentConfig.imageRequestSchemaVersion,
+					providerOptions: useNodeProviderOptions ? node?.metadata?.providerOptions || currentConfig.providerOptions : currentConfig.providerOptions,
 				}
 			: {}),
-		...(node?.metadata?.videoProviderId || config.videoProviderId ? { videoProviderId: node?.metadata?.videoProviderId || config.videoProviderId } : {}),
-        videoSeconds: node?.metadata?.seconds || config.videoSeconds || fallbackConfig.videoSeconds,
-        vquality: node?.metadata?.vquality || config.vquality || fallbackConfig.vquality,
-        count: String(node?.metadata?.count || config.count || fallbackConfig.count),
+		...(node?.metadata?.videoProviderId || currentConfig.videoProviderId ? { videoProviderId: node?.metadata?.videoProviderId || currentConfig.videoProviderId } : {}),
+        videoSeconds: node?.metadata?.seconds || currentConfig.videoSeconds || defaults.videoSeconds,
+        vquality: node?.metadata?.vquality || currentConfig.vquality || defaults.vquality,
+        count: String(node?.metadata?.count || currentConfig.count || defaults.count),
     };
 }
 

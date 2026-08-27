@@ -21,7 +21,7 @@ import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
-import { getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection } from "../utils/canvas-generation-utils";
+import { getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
 import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
@@ -421,7 +421,6 @@ function InfiniteCanvasPage() {
             const metadata =
                 type === CanvasNodeType.Config
                     ? {
-                          model: effectiveConfig.imageModel || effectiveConfig.model,
                           size: effectiveConfig.size,
                           resolution: effectiveConfig.imageProviderType ? effectiveConfig.resolution : normalizeImageResolution(effectiveConfig.resolution),
                           outputFormat: effectiveConfig.outputFormat,
@@ -436,7 +435,7 @@ function InfiniteCanvasPage() {
                     : undefined;
             return createCanvasNode(type, position, metadata);
         },
-        [effectiveConfig.count, effectiveConfig.imageModel, effectiveConfig.model, effectiveConfig.resolution, effectiveConfig.size],
+        [effectiveConfig.background, effectiveConfig.count, effectiveConfig.imageProviderId, effectiveConfig.imageProviderType, effectiveConfig.imageRequestSchemaVersion, effectiveConfig.outputFormat, effectiveConfig.providerOptions, effectiveConfig.resolution, effectiveConfig.size, effectiveConfig.videoProviderId],
     );
 
     const {
@@ -1361,7 +1360,7 @@ function InfiniteCanvasPage() {
                                   width: size.width,
                                   height: size.height,
                                   metadata: {
-                                      ...node.metadata,
+                                      ...withoutLegacyModel(node.metadata),
                                       ...imageMetadata(image),
                                       mediaExpiresAt: remote.mediaExpiresAt,
                                       errorDetails: undefined,
@@ -1371,7 +1370,6 @@ function InfiniteCanvasPage() {
                                       batchChildIds: undefined,
                                       batchUsesReferenceImages: undefined,
                                       generationType: undefined,
-                                      model: undefined,
                                       size: undefined,
                                       quality: undefined,
                                       count: undefined,

@@ -10,7 +10,7 @@ import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-h
 import type { UploadedFile } from "@/services/file-storage";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { imageEditReferenceError } from "@/lib/image-edit-validation";
-import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, referenceUrl, sourceNodeReferenceImages, type CanvasAngleParameters } from "../utils/canvas-generation-utils";
+import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, referenceUrl, sourceNodeReferenceImages, withoutLegacyModel, type CanvasAngleParameters } from "../utils/canvas-generation-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "../types";
@@ -397,7 +397,6 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                     metadata: {
                         prompt: effectivePrompt,
                         status: NODE_STATUS_LOADING,
-                        model: generationConfig.model,
                         size: generationConfig.size,
                         seconds: generationConfig.videoSeconds,
                         vquality: generationConfig.vquality,
@@ -425,7 +424,6 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                                       ...node.metadata,
                                       ...mediaMetadata(video),
                                       prompt: effectivePrompt,
-                                      model: generationConfig.model,
                                       size: generationConfig.size,
                                       seconds: generationConfig.videoSeconds,
                                       vquality: generationConfig.vquality,
@@ -497,7 +495,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
     const retryNode = async (node: CanvasNodeData) => {
         const sourceNode = findRetrySourceNode(node.id, options.nodesRef.current, options.connectionsRef.current) || node;
         const batchRoot = node.metadata?.batchRootId ? options.nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
-        const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
+        const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...withoutLegacyModel(batchRoot?.metadata), ...withoutLegacyModel(node.metadata) } : undefined;
         const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
         const generationConfig = {
             ...buildGenerationConfig(options.effectiveConfig, hasSavedImageMetadata && savedImageMetadata ? { ...node, metadata: savedImageMetadata } : sourceNode, options.defaultConfig),
@@ -522,16 +520,16 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             return;
         }
         setRunningNodeId(node.id);
-        options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...item.metadata, status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
+        options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...withoutLegacyModel(item.metadata), status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));
         try {
             if (node.type === CanvasNodeType.Text) {
                 if (!context) return;
                 let streamed = "";
                 const answer = await options.requestImageQuestion(generationConfig, options.buildChatMessages?.({ ...context, prompt }) || [], (text) => {
                     streamed = text;
-                    options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: text, status: NODE_STATUS_LOADING } } : item)));
+                    options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...withoutLegacyModel(item.metadata), content: text, status: NODE_STATUS_LOADING } } : item)));
                 });
-                options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...item.metadata, content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
+                options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Text, metadata: { ...withoutLegacyModel(item.metadata), content: answer || streamed, prompt, status: NODE_STATUS_SUCCESS } } : item)));
                 return;
             }
             if (node.type === CanvasNodeType.Video) {
@@ -545,7 +543,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                                   width: videoSize.width,
                                   height: videoSize.height,
                                   position: { x: item.position.x + item.width / 2 - videoSize.width / 2, y: item.position.y + item.height / 2 - videoSize.height / 2 },
-                                  metadata: { ...item.metadata, ...mediaMetadata(video), prompt, model: generationConfig.model, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality },
+                                  metadata: { ...withoutLegacyModel(item.metadata), ...mediaMetadata(video), prompt, size: generationConfig.size, seconds: generationConfig.videoSeconds, vquality: generationConfig.vquality },
                               }
                             : item,
                     ),
@@ -555,7 +553,6 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             const generationMetadata = savedImageMetadata?.generationType
                 ? {
                       generationType: savedImageMetadata.generationType,
-                      model: generationConfig.model,
                       size: generationConfig.size,
                       resolution: generationConfig.resolution,
 					  outputFormat: generationConfig.outputFormat,
@@ -571,7 +568,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       referenceMasks: savedImageMetadata.referenceMasks,
                   }
                 : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
-            options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, metadata: { ...item.metadata, prompt, ...generationMetadata } } : item)));
+            options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, metadata: { ...withoutLegacyModel(item.metadata), prompt, ...generationMetadata } } : item)));
             await startImageTask(node.id, node.metadata?.batchRootId || node.id, (clientRequestId) =>
                 useReferenceImages ? options.requestEdit(generationConfig, prompt, retryReferenceImages || [], clientRequestId) : options.requestGeneration(generationConfig, prompt, clientRequestId),
             );
@@ -597,7 +594,6 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             { x: sourceNode.position.x + sourceNode.width + 96 + nodeSize.width / 2, y: sourceNode.position.y + sourceNode.height / 2 },
             {
                 prompt: "",
-                model: options.effectiveConfig.imageModel || options.effectiveConfig.model,
                 size: options.effectiveConfig.size,
                 resolution: normalizeImageResolution(options.effectiveConfig.resolution),
                 count: Number(options.effectiveConfig.count) || 1,

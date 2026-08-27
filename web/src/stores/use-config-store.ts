@@ -4,12 +4,13 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { apiGet } from "@/services/api/request";
-import type { AiConfig } from "@/lib/ai-config";
+import { defaultAiConfig, normalizePersistedAiConfig, type AiConfig } from "@/lib/ai-config";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { normalizeImageRequestOptions, type ImageRequestSchema } from "@/lib/image-request-schema";
 import { resolveSelectedModel, type AIModelChoice } from "@/lib/model-selection";
 
 export type { AiConfig } from "@/lib/ai-config";
+export { normalizePersistedAiConfig } from "@/lib/ai-config";
 
 export type AIStatus = {
 	imageAvailable: boolean;
@@ -26,7 +27,7 @@ export type AICapability = "image" | "imageEdit" | "video";
 
 export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 
-export const defaultConfig: AiConfig = { model: "", imageModel: "", videoModel: "", textModel: "", models: [], systemPrompt: "", videoSeconds: "6", vquality: "720", quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", background: "auto", providerOptions: {}, count: "1" };
+export const defaultConfig: AiConfig = defaultAiConfig;
 
 type ConfigStore = {
     config: AiConfig;
@@ -75,7 +76,14 @@ export const useConfigStore = create<ConfigStore>()(
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
         }),
-        { name: CONFIG_STORE_KEY, partialize: (state) => ({ config: state.config }) },
+        {
+            name: CONFIG_STORE_KEY,
+            partialize: (state) => ({ config: normalizePersistedAiConfig(state.config) }),
+            merge: (persistedState, currentState) => ({
+                ...currentState,
+                config: normalizePersistedAiConfig((persistedState as { config?: unknown } | undefined)?.config),
+            }),
+        },
     ),
 );
 
