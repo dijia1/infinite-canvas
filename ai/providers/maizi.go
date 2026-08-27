@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/ai"
@@ -23,8 +22,6 @@ import (
 
 const maiziBaseURL = "https://www.maizitech.xyz/v1"
 const maiziMaskedEditURL = "https://www.maizitech.xyz/v2/images/edits"
-
-var maiziPollInterval = 2 * time.Second
 
 type maiziConfig struct {
 	APIKey string `json:"apiKey"`
@@ -161,17 +158,6 @@ func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
 	return &maiziProvider{config: config, client: &http.Client{Timeout: 30 * time.Second}, editClient: &http.Client{}}, nil
 }
 
-func (provider *maiziProvider) GenerateImage(ctx context.Context, request ai.ImageRequest) ([]ai.ImageResult, error) {
-	return provider.generate(ctx, request, nil)
-}
-
-func (provider *maiziProvider) EditImage(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) ([]ai.ImageResult, error) {
-	if len(references) == 0 {
-		return nil, maiziError{message: "图像编辑需要参考图"}
-	}
-	return provider.generate(ctx, request, references)
-}
-
 func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
 	if len(request.References) > 0 && strings.TrimSpace(request.Request.Prompt) == "" {
 		return ai.ImageTask{}, maiziError{message: "提示词不能为空"}
@@ -208,52 +194,6 @@ func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.
 		return ai.ImageTask{}, err
 	}
 	return ai.ImageTask{ID: firstNonEmpty(result.ID, id), Status: strings.ToLower(strings.TrimSpace(result.Status)), Progress: result.Progress, ResultURLs: result.ResultURLs, Error: strings.TrimSpace(result.Error)}, nil
-}
-
-func (provider *maiziProvider) generate(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) ([]ai.ImageResult, error) {
-	count := request.Count
-	if count < 1 {
-		count = 1
-	}
-	if count > 15 {
-		count = 15
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	results := make([][]ai.ImageResult, count)
-	var once sync.Once
-	var firstErr error
-	var group sync.WaitGroup
-	for index := range results {
-		group.Add(1)
-		go func(index int) {
-			defer group.Done()
-			taskID, err := provider.createTask(ctx, request, references)
-			if err == nil {
-				results[index], err = provider.waitTask(ctx, taskID)
-			}
-			if err != nil {
-				once.Do(func() {
-					firstErr = err
-					cancel()
-				})
-			}
-		}(index)
-	}
-	group.Wait()
-	if firstErr != nil {
-		return nil, firstErr
-	}
-	var images []ai.ImageResult
-	for _, item := range results {
-		images = append(images, item...)
-	}
-	return images, nil
-}
-
-func (provider *maiziProvider) createTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) (string, error) {
-	task, err := provider.createAsyncTask(ctx, request, references, nil)
-	return task.ID, err
 }
 
 func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference, mask *ai.ImageReference) (ai.ImageTask, error) {
@@ -501,36 +441,6 @@ func maiziResolution(value string) string {
 		return "2k"
 	}
 	return "4k"
-}
-
-func (provider *maiziProvider) waitTask(ctx context.Context, taskID string) ([]ai.ImageResult, error) {
-	for {
-		task, err := provider.GetImageTask(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		switch task.Status {
-		case "completed":
-			if len(task.ResultURLs) == 0 {
-				return nil, maiziError{message: "MaiziAI 任务完成但未返回图片"}
-			}
-			result := make([]ai.ImageResult, 0, len(task.ResultURLs))
-			for _, url := range task.ResultURLs {
-				result = append(result, ai.ImageResult{URL: url})
-			}
-			return result, nil
-		case "failed", "cancelled", "canceled", "error", "violated", "rejected":
-			if task.Error != "" {
-				return nil, maiziError{message: "MaiziAI 任务失败：" + task.Error}
-			}
-			return nil, maiziError{message: "MaiziAI 任务失败"}
-		}
-		select {
-		case <-ctx.Done():
-			return nil, maiziError{message: "MaiziAI 任务等待超时"}
-		case <-time.After(maiziPollInterval):
-		}
-	}
 }
 
 func firstNonEmpty(values ...string) string {

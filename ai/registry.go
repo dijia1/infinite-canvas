@@ -120,14 +120,6 @@ type ImageResult struct {
 	ExpiresAt   time.Time
 }
 
-type ImageGenerator interface {
-	GenerateImage(context.Context, ImageRequest) ([]ImageResult, error)
-}
-
-type ImageEditor interface {
-	EditImage(context.Context, ImageRequest, []ImageReference) ([]ImageResult, error)
-}
-
 type ImageTaskRequest struct {
 	Request    ImageRequest
 	References []ImageReference

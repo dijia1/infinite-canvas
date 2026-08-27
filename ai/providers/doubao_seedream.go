@@ -142,38 +142,6 @@ func doubaoSeedreamSize(resolution, ratio string) (string, error) {
 	return "", doubaoSeedreamError{message: "Doubao Seedream 不支持当前尺寸与宽高比组合"}
 }
 
-func (provider *doubaoSeedreamProvider) GenerateImage(ctx context.Context, request ai.ImageRequest) ([]ai.ImageResult, error) {
-	normalized, err := provider.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: request})
-	if err != nil {
-		return nil, err
-	}
-	task, err := provider.CreateImageTask(ctx, normalized)
-	if err != nil {
-		return nil, err
-	}
-	return imageResultsFromURLs(task.ResultURLs), nil
-}
-
-func (provider *doubaoSeedreamProvider) EditImage(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) ([]ai.ImageResult, error) {
-	normalized, err := provider.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: request, References: references})
-	if err != nil {
-		return nil, err
-	}
-	task, err := provider.CreateImageTask(ctx, normalized)
-	if err != nil {
-		return nil, err
-	}
-	return imageResultsFromURLs(task.ResultURLs), nil
-}
-
-func imageResultsFromURLs(urls []string) []ai.ImageResult {
-	result := make([]ai.ImageResult, 0, len(urls))
-	for _, url := range urls {
-		result = append(result, ai.ImageResult{URL: url})
-	}
-	return result
-}
-
 func (provider *doubaoSeedreamProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
 	body, err := provider.imageRequestBody(request, false)
 	if err != nil {

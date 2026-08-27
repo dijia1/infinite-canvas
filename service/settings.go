@@ -105,38 +105,6 @@ func SaveSettings(settings model.Settings) (model.Settings, error) {
 
 func AIProviderTypes() []ai.ProviderType { return ai.Types() }
 
-func GenerateImages(ctx context.Context, request ai.ImageRequest) ([]ai.ImageResult, error) {
-	provider, err := resolveProvider(ai.CapabilityImageGenerate)
-	if err != nil {
-		return nil, err
-	}
-	generator, ok := provider.(ai.ImageGenerator)
-	if !ok {
-		return nil, errors.New("当前生图供应商未实现文生图")
-	}
-	images, err := generator.GenerateImage(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	return persistGeneratedImages(ctx, images)
-}
-
-func EditImages(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference) ([]ai.ImageResult, error) {
-	provider, err := resolveProvider(ai.CapabilityImageEdit)
-	if err != nil {
-		return nil, err
-	}
-	editor, ok := provider.(ai.ImageEditor)
-	if !ok {
-		return nil, errors.New("当前生图供应商不支持图像编辑")
-	}
-	images, err := editor.EditImage(ctx, request, references)
-	if err != nil {
-		return nil, err
-	}
-	return persistGeneratedImages(ctx, images)
-}
-
 func CreateVideo(ctx context.Context, request ai.VideoRequest) (ai.VideoTask, error) {
 	provider, providerID, err := resolveProviderAndID(ai.CapabilityVideoGenerate, request.ProviderID)
 	if err != nil {
