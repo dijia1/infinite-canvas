@@ -198,6 +198,30 @@ test("keeps node-local provider options after global provider settings change", 
     assert.equal(resolved.resolution, "1.5k");
 });
 
+test("uses the current provider resolution for legacy nodes without a provider snapshot", () => {
+    const legacyNode = node("legacy", CanvasNodeType.Config, { resolution: "2048x1024" });
+    const changedGlobalConfig = {
+        ...config,
+        imageProviderId: "new-provider",
+        imageProviderType: "new-type",
+        imageRequestSchemaVersion: "new-v2",
+        providerOptions: { resolution: "1.5k" },
+        resolution: "1.5k",
+    };
+
+    const resolved = buildGenerationConfig(changedGlobalConfig, legacyNode, fallbackConfig);
+
+    assert.equal(resolved.resolution, "1.5k");
+});
+
+test("normalizes the stored resolution for legacy generic nodes", () => {
+    const legacyNode = node("legacy", CanvasNodeType.Config, { resolution: "2048x1024" });
+
+    const resolved = buildGenerationConfig(config, legacyNode, fallbackConfig);
+
+    assert.equal(resolved.resolution, "2k");
+});
+
 test("preserves provider-specific resolutions and request options", () => {
 	const seedream = buildGenerationConfig({ ...config, imageProviderType: "doubao-seedream-5-pro", imageRequestSchemaVersion: "v1", resolution: "1.5k", providerOptions: { resolution: "1.5k", watermark: false } }, undefined, fallbackConfig);
 	assert.equal(seedream.resolution, "1.5k");

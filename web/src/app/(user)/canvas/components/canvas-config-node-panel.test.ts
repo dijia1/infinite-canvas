@@ -20,5 +20,6 @@ test("generation panels share the canvas generation config resolver", async () =
     for (const source of [configPanelSource, promptPanelSource]) {
         assert.match(source, /import \{ buildGenerationConfig \} from "\.\.\/utils\/canvas-generation-utils"/);
         assert.doesNotMatch(source, /function buildNodeConfig/);
+        assert.match(source, /buildGenerationConfig\(globalConfig, node, defaultConfig\)/);
     }
 });

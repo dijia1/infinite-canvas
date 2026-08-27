@@ -58,12 +58,13 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
 	const imageProviderId = node?.metadata?.imageProviderId || config.imageProviderId;
 	const useNodeProviderOptions = Boolean(node?.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
 	const imageProviderType = useNodeProviderOptions ? node?.metadata?.imageProviderType || config.imageProviderType : config.imageProviderType;
+	const useNodeResolution = useNodeProviderOptions || !imageProviderType;
     return {
         ...config,
         model: node?.metadata?.model || config.model || fallbackConfig.model,
         quality: node?.metadata?.quality || config.quality || fallbackConfig.quality,
         size: node?.metadata?.size || config.size || fallbackConfig.size,
-		resolution: generationResolution({ ...config, resolution: node?.metadata?.resolution || config.resolution || fallbackConfig.resolution, imageProviderType }),
+		resolution: generationResolution({ ...config, resolution: useNodeResolution ? node?.metadata?.resolution || config.resolution || fallbackConfig.resolution : config.resolution || fallbackConfig.resolution, imageProviderType }),
         outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
 		background: normalizeImageBackground(node?.metadata?.background || config.background || fallbackConfig.background),
 		...(imageProviderType
