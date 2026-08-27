@@ -338,7 +338,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                             : isConfigNode
                               ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
                               : isEmptyImageNode
-                                ? { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...node.metadata, ...rootNode.metadata, errorDetails: undefined } }
+                                ? { ...node, position: rootNode.position, width: rootNode.width, height: rootNode.height, title: rootNode.title, metadata: { ...withoutLegacyModel(node.metadata), ...rootNode.metadata, errorDetails: undefined } }
                                 : isImageNode
                                   ? { ...node, metadata: { ...node.metadata, prompt: effectivePrompt, status: NODE_STATUS_SUCCESS, errorDetails: undefined } }
                                   : {
@@ -464,7 +464,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                         .requestImageQuestion(generationConfig, options.buildChatMessages?.({ ...generationContext, prompt: effectivePrompt }) || [], (text) => {
                             localStreamed = text;
                             streamed = text;
-                            if (!isConfigNode) options.setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...node.metadata, content: text, status: NODE_STATUS_LOADING } } : node)));
+                            if (!isConfigNode) options.setNodes((prev) => prev.map((node) => (node.id === targetNodeId ? { ...node, type: CanvasNodeType.Text, metadata: { ...withoutLegacyModel(node.metadata), content: text, status: NODE_STATUS_LOADING } } : node)));
                         })
                         .then((answer) => ({ nodeId: targetNodeId, content: answer || localStreamed }));
                 }),
@@ -477,7 +477,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                         : node.id === nodeId && isConfigNode
                           ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_SUCCESS } }
                           : node.id === nodeId && !editingTextNode
-                            ? { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...node.metadata, content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
+                            ? { ...node, type: CanvasNodeType.Text, title: prompt.slice(0, 32) || "Generated Text", metadata: { ...withoutLegacyModel(node.metadata), content: answerByNodeId.get(node.id) || streamed, status: NODE_STATUS_SUCCESS } }
                             : node,
                 ),
             );

@@ -26,6 +26,17 @@ export function withoutLegacyModel(metadata: CanvasNodeMetadata | undefined): Ca
     return current as CanvasNodeMetadata;
 }
 
+export function replaceNodeWithUploadedVideo(node: CanvasNodeData, title: string, metadata: CanvasNodeMetadata, size: { width: number; height: number }): CanvasNodeData {
+    return {
+        ...node,
+        type: CanvasNodeType.Video,
+        title,
+        position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 },
+        ...size,
+        metadata: { ...withoutLegacyModel(node.metadata), ...metadata, errorDetails: undefined },
+    };
+}
+
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
     const persistedReferences = references
         .map((reference) => ({ url: referenceUrl(reference), mask: normalizeImageMask(reference.mask) }))

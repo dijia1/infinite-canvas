@@ -4,7 +4,7 @@ import test from "node:test";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
-import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
+import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, sourceNodeReferenceImages } from "./canvas-generation-utils.ts";
 
 const config: AiConfig = {
     videoSeconds: "6",
@@ -118,6 +118,25 @@ test("normalizes node config without copying historical model fields", () => {
     for (const obsoleteField of ["model", "imageModel", "videoModel", "textModel", "models", "systemPrompt"]) {
         assert.equal(obsoleteField in configuredResult, false);
     }
+});
+
+test("replacing historical metadata with an uploaded video removes its obsolete model", () => {
+    const historicalNode = JSON.parse(
+        '{"id":"source","type":"image","title":"source","position":{"x":10,"y":20},"width":340,"height":240,"metadata":{"model":"historical-model","assetId":"asset-to-keep","errorDetails":"old error"}}',
+    ) as CanvasNodeData;
+
+    const result = replaceNodeWithUploadedVideo(
+        historicalNode,
+        "replacement.mp4",
+        { content: "blob:video", storageKey: "video:1", status: "success", bytes: 12, mimeType: "video/mp4", naturalWidth: 1280, naturalHeight: 720 },
+        { width: 420, height: 236 },
+    );
+
+    assert.equal(result.type, CanvasNodeType.Video);
+    assert.equal("model" in (result.metadata || {}), false);
+    assert.equal(result.metadata?.assetId, "asset-to-keep");
+    assert.equal(result.metadata?.content, "blob:video");
+    assert.equal(result.metadata?.errorDetails, undefined);
 });
 
 test("keeps a selected video provider when building a video task config", () => {

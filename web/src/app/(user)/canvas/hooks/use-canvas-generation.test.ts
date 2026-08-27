@@ -121,6 +121,19 @@ test("creates a batch root and three children with three parallel single-image r
     );
 });
 
+test("reusing a historical empty image removes its obsolete model metadata", async () => {
+    const source = JSON.parse(
+        '{"id":"source","type":"image","title":"source","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"model":"historical-model","freeResize":true}}',
+    ) as CanvasNodeData;
+    const { controller, nodesRef } = setup([source]);
+
+    await controller.generateNode(source.id, "image", "a forest");
+
+    const result = nodesRef.current.find((item) => item.id === source.id);
+    assert.equal("model" in (result?.metadata || {}), false);
+    assert.equal(result?.metadata?.freeResize, true);
+});
+
 test("dispatches every batch image request before completion and uses one image per request", async () => {
     const source = node("source", CanvasNodeType.Config, { count: 3 });
     const requests: AiConfig[] = [];
@@ -198,6 +211,28 @@ test("keeps the submitted prompt on an existing image after editing", async () =
     await controller.generateNode("source", "image", "将图片修改为水彩风格");
 
     assert.equal(nodesRef.current.find((item) => item.id === source.id)?.metadata?.prompt, "将图片修改为水彩风格");
+});
+
+test("converting historical metadata to text removes its obsolete model during streaming and completion", async () => {
+    const source = JSON.parse(
+        '{"id":"source","type":"image","title":"source","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"model":"historical-model","assetId":"asset-to-keep"}}',
+    ) as CanvasNodeData;
+    let streamingMetadata: CanvasNodeData["metadata"];
+    let state: ReturnType<typeof setup>;
+    state = setup([source], [], {
+        requestImageQuestion: async (_requestConfig: AiConfig, _messages: unknown[], onDelta: (text: string) => void) => {
+            onDelta("draft");
+            streamingMetadata = state.nodesRef.current.find((item) => item.id === source.id)?.metadata;
+            return "final";
+        },
+    });
+
+    await state.controller.generateNode(source.id, "text", "describe it");
+
+    const result = state.nodesRef.current.find((item) => item.id === source.id);
+    assert.equal("model" in (streamingMetadata || {}), false);
+    assert.equal("model" in (result?.metadata || {}), false);
+    assert.equal(result?.metadata?.assetId, "asset-to-keep");
 });
 
 test("submits an ordered masked main image with additional reference images", async () => {

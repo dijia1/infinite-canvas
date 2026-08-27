@@ -21,7 +21,7 @@ import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
-import { getInputSummary, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
+import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
 import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
@@ -1326,19 +1326,7 @@ function InfiniteCanvasPage() {
                     const video = await uploadMediaFile(file, "video");
                     const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
                     setNodes((prev) =>
-                        prev.map((node) =>
-                            node.id === target.nodeId
-                                ? {
-                                      ...node,
-                                      type: CanvasNodeType.Video,
-                                      title: file.name,
-                                      position: { x: node.position.x + node.width / 2 - nextSize.width / 2, y: node.position.y + node.height / 2 - nextSize.height / 2 },
-                                      width: nextSize.width,
-                                      height: nextSize.height,
-                                      metadata: { ...node.metadata, ...videoMetadata(video), errorDetails: undefined },
-                                  }
-                                : node,
-                        ),
+                        prev.map((node) => (node.id === target.nodeId ? replaceNodeWithUploadedVideo(node, file.name, videoMetadata(video), nextSize) : node)),
                     );
                     setSelectedNodeIds(new Set([target.nodeId]));
                     setSelectedConnectionId(null);
