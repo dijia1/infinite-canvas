@@ -123,26 +123,12 @@ func (provider *maiziProvider) NormalizeImageTaskRequest(request ai.ImageTaskReq
 	return request, nil
 }
 
-func cloneImageRequestOptions(input ai.ImageRequestOptions) ai.ImageRequestOptions {
-	result := make(ai.ImageRequestOptions, len(input))
-	for key, value := range input {
-		result[key] = append(json.RawMessage(nil), value...)
-	}
-	return result
-}
-
 func setImageRequestOption(options ai.ImageRequestOptions, key, value string) {
 	if _, exists := options[key]; exists || strings.TrimSpace(value) == "" {
 		return
 	}
 	encoded, _ := json.Marshal(value)
 	options[key] = encoded
-}
-
-func imageRequestOptionString(options ai.ImageRequestOptions, key string) string {
-	var value string
-	_ = json.Unmarshal(options[key], &value)
-	return value
 }
 
 func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
@@ -169,23 +155,13 @@ func (provider *maiziProvider) SummarizeImageTaskRequest(request ai.ImageTaskReq
 	if request.Mask != nil {
 		return provider.summarizeMaskedEdit(request.Request, request.References, *request.Mask), nil
 	}
-	body, err := marshalMaiziRedactedJSON(provider.v1ImageTaskBody(request.Request, request.References, true))
+	body, err := marshalRedactedJSON(provider.v1ImageTaskBody(request.Request, request.References, true))
 	if err != nil {
 		return ai.ImageTaskRequestSummary{}, err
 	}
 	return ai.ImageTaskRequestSummary{
 		Method: http.MethodPost, Endpoint: maiziBaseURL + "/images/generations", ContentType: "application/json", JSONBody: body,
 	}, nil
-}
-
-func marshalMaiziRedactedJSON(body map[string]any) (json.RawMessage, error) {
-	var result bytes.Buffer
-	encoder := json.NewEncoder(&result)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(body); err != nil {
-		return nil, err
-	}
-	return json.RawMessage(bytes.TrimSpace(result.Bytes())), nil
 }
 
 func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.ImageTask, error) {

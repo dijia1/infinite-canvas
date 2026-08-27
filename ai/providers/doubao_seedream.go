@@ -181,7 +181,7 @@ func (provider *doubaoSeedreamProvider) SummarizeImageTaskRequest(request ai.Ima
 	if err != nil {
 		return ai.ImageTaskRequestSummary{}, err
 	}
-	encoded, err := marshalMaiziRedactedJSON(body)
+	encoded, err := marshalRedactedJSON(body)
 	if err != nil {
 		return ai.ImageTaskRequestSummary{}, err
 	}

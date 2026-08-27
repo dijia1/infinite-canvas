@@ -19,6 +19,26 @@ func (fn roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, err
 	return fn(request)
 }
 
+func TestMarshalRedactedJSONClonesOptionsAndRedactsImageData(t *testing.T) {
+	options := ai.ImageRequestOptions{"resolution": json.RawMessage(`"2k"`)}
+	clone := cloneImageRequestOptions(options)
+	clone["resolution"] = json.RawMessage(`"4k"`)
+	if string(options["resolution"]) != `"2k"` {
+		t.Fatal("source options mutated")
+	}
+
+	body, err := marshalRedactedJSON(map[string]any{
+		"image":  "data:image/png;base64,c2VjcmV0LWltYWdl",
+		"prompt": "一只猫",
+	})
+	if err != nil {
+		t.Fatalf("marshalRedactedJSON() error = %v", err)
+	}
+	if got := string(body); !strings.Contains(got, `"image":"data:image/png;base64,<base64>"`) || !strings.Contains(got, `"prompt":"一只猫"`) || strings.Contains(got, "c2VjcmV0LWltYWdl") {
+		t.Fatalf("marshalRedactedJSON() = %s", got)
+	}
+}
+
 func TestMaiziImageOutputPreservesBackgroundChoices(t *testing.T) {
 	for _, item := range []struct {
 		request    ai.ImageRequest
