@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 
 import type { AiConfig } from "@/lib/ai-config";
+import type { AICapability } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import type { ChatCompletionMessage, ImageGenerationTask } from "@/services/api/image";
 import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
@@ -30,7 +31,7 @@ export type CanvasGenerationControllerOptions = {
     connectionsRef: MutableRef<CanvasConnection[]>;
     effectiveConfig: AiConfig;
     defaultConfig: AiConfig;
-    isAiConfigReady: (config: AiConfig, model?: string) => boolean;
+    isAiConfigReady: (capability: AICapability) => boolean;
     openConfigDialog: (open: boolean) => void;
     message: MessageApi;
     setNodes: StateSetter<CanvasNodeData[]>;
@@ -219,8 +220,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
 
     const generateAngleNode = async (node: CanvasNodeData, params: CanvasAngleParameters) => {
         if (!node.metadata?.content) return;
-        const generationConfig = { ...buildGenerationConfig(options.effectiveConfig, node, "image", options.defaultConfig), count: "1" };
-        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
+        const generationConfig = { ...buildGenerationConfig(options.effectiveConfig, node, options.defaultConfig), count: "1" };
+        if (!options.isAiConfigReady("imageEdit")) {
             options.openConfigDialog(true);
             return;
         }
@@ -259,12 +260,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
 
     const generateNode = async (nodeId: string, mode: CanvasGenerationMode, prompt: string) => {
         const sourceNode = options.nodesRef.current.find((node) => node.id === nodeId);
-        const generationConfig = buildGenerationConfig(options.effectiveConfig, sourceNode, mode, options.defaultConfig);
-        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
+        const generationConfig = buildGenerationConfig(options.effectiveConfig, sourceNode, options.defaultConfig);
+        if (mode === "video" && !options.isAiConfigReady("video")) {
             options.openConfigDialog(true);
             return;
         }
-        setRunningNodeId(nodeId);
         const sourceTextContent = sourceNode?.type === CanvasNodeType.Text ? sourceNode.metadata?.content?.trim() || "" : "";
         const editingTextNode = mode === "text" && Boolean(sourceTextContent);
         const generationContext = await options.hydrateGenerationContext(nodeId, editingTextNode ? `请根据要求修改以下文本。\n\n原文：\n${sourceTextContent}\n\n修改要求：\n${prompt}` : prompt);
@@ -274,6 +274,20 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             setRunningNodeId(null);
             return;
         }
+        const sourceReference = sourceNode?.type === CanvasNodeType.Image && sourceNode.metadata?.content ? sourceNodeReferenceImages(sourceNode) : [];
+        const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
+        if (mode === "image") {
+            const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages) : undefined;
+            if (referenceError) {
+                options.message.error(referenceError);
+                return;
+            }
+            if (!options.isAiConfigReady(referenceImages.length ? "imageEdit" : "image")) {
+                options.openConfigDialog(true);
+                return;
+            }
+        }
+        setRunningNodeId(nodeId);
         let pendingChildIds: string[] = [];
         if (markSourceStatus) options.setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, prompt, status: NODE_STATUS_LOADING, errorDetails: undefined } } : node)));
         try {
@@ -282,13 +296,6 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                 const isEmptyImageNode = isImageNode && !sourceNode?.metadata?.content;
-                const sourceReference = isImageNode && sourceNode?.metadata?.content ? sourceNodeReferenceImages(sourceNode) : [];
-                const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
-                const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages) : undefined;
-                if (referenceError) {
-                    options.message.error(referenceError);
-                    return;
-                }
                 const generationMetadata = buildImageGenerationMetadata(referenceImages.length ? "edit" : "generation", generationConfig, count, referenceImages);
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
@@ -492,30 +499,10 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const batchRoot = node.metadata?.batchRootId ? options.nodesRef.current.find((item) => item.id === node.metadata?.batchRootId) : null;
         const savedImageMetadata = node.type === CanvasNodeType.Image ? { ...batchRoot?.metadata, ...node.metadata } : undefined;
         const hasSavedImageMetadata = Boolean(savedImageMetadata?.generationType);
-		const retryProviderType = options.effectiveConfig.imageProviderType || savedImageMetadata?.imageProviderType;
-		const retryUsesSavedProviderOptions = savedImageMetadata?.imageProviderType === retryProviderType;
-        const generationConfig =
-            hasSavedImageMetadata && savedImageMetadata
-                ? {
-					  ...options.effectiveConfig,
-                      model: savedImageMetadata.model || options.effectiveConfig.imageModel || options.effectiveConfig.model,
-                      quality: savedImageMetadata.quality || options.effectiveConfig.quality || options.defaultConfig.quality,
-                      size: savedImageMetadata.size || options.effectiveConfig.size || options.defaultConfig.size,
-                      resolution: savedImageMetadata.resolution || options.effectiveConfig.resolution || options.defaultConfig.resolution,
-                      outputFormat: savedImageMetadata.outputFormat || options.effectiveConfig.outputFormat || options.defaultConfig.outputFormat,
-					  background: savedImageMetadata.background || options.effectiveConfig.background || options.defaultConfig.background,
-					  imageProviderId: retryUsesSavedProviderOptions ? savedImageMetadata.imageProviderId || options.effectiveConfig.imageProviderId : options.effectiveConfig.imageProviderId,
-					  videoProviderId: savedImageMetadata.videoProviderId || options.effectiveConfig.videoProviderId,
-					  imageProviderType: retryProviderType,
-					  imageRequestSchemaVersion: retryUsesSavedProviderOptions ? savedImageMetadata.imageRequestSchemaVersion || options.effectiveConfig.imageRequestSchemaVersion : options.effectiveConfig.imageRequestSchemaVersion,
-					  providerOptions: retryUsesSavedProviderOptions ? savedImageMetadata.providerOptions || options.effectiveConfig.providerOptions : options.effectiveConfig.providerOptions,
-					  count: "1",
-                  }
-                : { ...buildGenerationConfig(options.effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", options.defaultConfig), count: "1" };
-        if (!options.isAiConfigReady(generationConfig, generationConfig.model)) {
-            options.openConfigDialog(true);
-            return;
-        }
+        const generationConfig = {
+            ...buildGenerationConfig(options.effectiveConfig, hasSavedImageMetadata && savedImageMetadata ? { ...node, metadata: savedImageMetadata } : sourceNode, options.defaultConfig),
+            count: "1",
+        };
         const context = hasSavedImageMetadata ? null : await options.hydrateGenerationContext(sourceNode.id, sourceNode.metadata?.prompt || node.metadata?.prompt || "");
         const prompt = (savedImageMetadata?.prompt || context?.prompt || "").trim();
         if (!prompt) {
@@ -523,6 +510,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             return;
         }
         const useReferenceImages = savedImageMetadata?.generationType ? savedImageMetadata.generationType === "edit" : Boolean(context?.referenceImages.length);
+        const retryCapability = node.type === CanvasNodeType.Video ? "video" : node.type === CanvasNodeType.Image ? (useReferenceImages ? "imageEdit" : "image") : null;
+        if (retryCapability && !options.isAiConfigReady(retryCapability)) {
+            options.openConfigDialog(true);
+            return;
+        }
         const retryReferenceImages =
             hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
         if (useReferenceImages && !retryReferenceImages) {

@@ -38,7 +38,7 @@ type ConfigStore = {
 	selectImageModel: (providerId: string) => void;
 	selectVideoModel: (providerId: string) => void;
     loadPublicSettings: () => Promise<void>;
-    isAiConfigReady: (capability: AICapability | AiConfig, legacyModel?: string) => boolean;
+    isAiConfigReady: (capability: AICapability) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
     setConfigDialogOpen: (isOpen: boolean) => void;
     clearPromptContinue: () => void;
@@ -70,10 +70,7 @@ export const useConfigStore = create<ConfigStore>()(
                     set({ isStatusLoading: false });
                 }
             },
-            isAiConfigReady: (capability) => {
-                if (typeof capability !== "string") return Boolean(get().status?.imageAvailable || get().status?.videoAvailable);
-                return capability === "imageEdit" ? Boolean(get().status?.imageEditable) : Boolean(get().status?.[capability === "image" ? "imageAvailable" : "videoAvailable"]);
-            },
+            isAiConfigReady: (capability) => isCapabilityReady(get().status, capability),
             openConfigDialog: (shouldPromptContinue = false) => set({ isConfigOpen: true, shouldPromptContinue }),
             setConfigDialogOpen: (isConfigOpen) => set({ isConfigOpen }),
             clearPromptContinue: () => set({ shouldPromptContinue: false }),
@@ -83,6 +80,12 @@ export const useConfigStore = create<ConfigStore>()(
 );
 
 const emptyAIStatus: AIStatus = { imageAvailable: false, imageEditable: false, videoAvailable: false, imageModels: [], videoModels: [] };
+
+export function isCapabilityReady(status: AIStatus | null | undefined, capability: AICapability): boolean {
+    if (!status) return false;
+    if (capability === "imageEdit") return status.imageEditable;
+    return capability === "image" ? status.imageAvailable : status.videoAvailable;
+}
 
 export function reconcileProviderConfig(config: AiConfig, status: AIStatus): AiConfig {
 	const imageModel = resolveSelectedModel(status.imageModels, config.imageProviderId, status.defaultImageModelId);

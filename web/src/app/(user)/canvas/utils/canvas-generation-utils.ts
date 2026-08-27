@@ -3,7 +3,7 @@ import { normalizeImageBackground, normalizeImageOutputFormat } from "../../../.
 import type { AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
-import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
+import { CanvasNodeType, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
 
 type NodeGenerationInput = {
     nodeId: string;
@@ -54,17 +54,16 @@ export function getInputSummary(inputs: NodeGenerationInput[]): { textCount: num
     };
 }
 
-export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, mode: CanvasGenerationMode, fallbackConfig: AiConfig): AiConfig {
-    const defaultModel = mode === "image" ? config.imageModel : mode === "video" ? config.videoModel : config.textModel;
+export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | undefined, fallbackConfig: AiConfig): AiConfig {
 	const imageProviderId = node?.metadata?.imageProviderId || config.imageProviderId;
 	const useNodeProviderOptions = Boolean(node?.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
 	const imageProviderType = useNodeProviderOptions ? node?.metadata?.imageProviderType || config.imageProviderType : config.imageProviderType;
     return {
         ...config,
-        model: node?.metadata?.model || defaultModel || config.model || fallbackConfig.model,
+        model: node?.metadata?.model || config.model || fallbackConfig.model,
         quality: node?.metadata?.quality || config.quality || fallbackConfig.quality,
         size: node?.metadata?.size || config.size || fallbackConfig.size,
-		resolution: generationResolution({ ...config, resolution: useNodeProviderOptions ? node?.metadata?.resolution || config.resolution || fallbackConfig.resolution : config.resolution || fallbackConfig.resolution, imageProviderType }),
+		resolution: generationResolution({ ...config, resolution: node?.metadata?.resolution || config.resolution || fallbackConfig.resolution, imageProviderType }),
         outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
 		background: normalizeImageBackground(node?.metadata?.background || config.background || fallbackConfig.background),
 		...(imageProviderType

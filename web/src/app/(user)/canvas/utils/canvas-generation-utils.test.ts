@@ -99,10 +99,8 @@ test("persists masks in the same order as reusable reference URLs", () => {
     });
 });
 
-test("selects each generation model and normalizes node config", () => {
-    assert.equal(buildGenerationConfig(config, undefined, "image", fallbackConfig).model, "image-model");
-    assert.equal(buildGenerationConfig(config, undefined, "video", fallbackConfig).model, "video-model");
-    assert.equal(buildGenerationConfig(config, undefined, "text", fallbackConfig).model, "text-model");
+test("uses the configured model and normalizes node config", () => {
+    assert.equal(buildGenerationConfig(config, undefined, fallbackConfig).model, "legacy-model");
 
     const configuredNode = node("configured", CanvasNodeType.Config, {
         model: "node-model",
@@ -113,7 +111,7 @@ test("selects each generation model and normalizes node config", () => {
         vquality: "4k",
         count: 3,
     });
-    const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, "image", fallbackConfig);
+    const configuredResult = buildGenerationConfig({ ...config, model: "", imageModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" }, configuredNode, fallbackConfig);
     assert.deepEqual(
         {
             model: configuredResult.model,
@@ -137,7 +135,7 @@ test("selects each generation model and normalizes node config", () => {
 });
 
 test("keeps a selected video provider when building a video task config", () => {
-	const selected = buildGenerationConfig({ ...config, videoProviderId: "video-provider" }, undefined, "video", fallbackConfig);
+	const selected = buildGenerationConfig({ ...config, videoProviderId: "video-provider" }, undefined, fallbackConfig);
 	assert.equal(selected.videoProviderId, "video-provider");
 });
 
@@ -166,8 +164,42 @@ test("snapshots an old config node's selected models before global defaults chan
 	assert.equal(afterGlobalChange[0]?.metadata?.imageProviderType, "maizi-image");
 });
 
+test("keeps node-local provider options after global provider settings change", () => {
+    const providerSnapshot = node("config", CanvasNodeType.Config, {
+        model: "snapshot-model",
+        quality: "high",
+        size: "3:2",
+        resolution: "1.5k",
+        outputFormat: "png",
+        background: "transparent",
+        seconds: "8",
+        vquality: "1080",
+        count: 2,
+        imageProviderId: "snapshot-provider",
+        imageProviderType: "snapshot-type",
+        imageRequestSchemaVersion: "snapshot-v1",
+        providerOptions: { watermark: false, steps: 28 },
+    });
+    const changedGlobalConfig = {
+        ...config,
+        imageProviderId: "new-provider",
+        imageProviderType: "new-type",
+        imageRequestSchemaVersion: "new-v2",
+        providerOptions: { watermark: true, steps: 8 },
+        resolution: "2k",
+    };
+
+    const resolved = buildGenerationConfig(changedGlobalConfig, providerSnapshot, fallbackConfig);
+
+    assert.equal(resolved.imageProviderId, "snapshot-provider");
+    assert.equal(resolved.imageProviderType, "snapshot-type");
+    assert.equal(resolved.imageRequestSchemaVersion, "snapshot-v1");
+    assert.deepEqual(resolved.providerOptions, { watermark: false, steps: 28 });
+    assert.equal(resolved.resolution, "1.5k");
+});
+
 test("preserves provider-specific resolutions and request options", () => {
-	const seedream = buildGenerationConfig({ ...config, imageProviderType: "doubao-seedream-5-pro", imageRequestSchemaVersion: "v1", resolution: "1.5k", providerOptions: { resolution: "1.5k", watermark: false } }, undefined, "image", fallbackConfig);
+	const seedream = buildGenerationConfig({ ...config, imageProviderType: "doubao-seedream-5-pro", imageRequestSchemaVersion: "v1", resolution: "1.5k", providerOptions: { resolution: "1.5k", watermark: false } }, undefined, fallbackConfig);
 	assert.equal(seedream.resolution, "1.5k");
 	assert.deepEqual(seedream.providerOptions, { resolution: "1.5k", watermark: false });
 	assert.deepEqual(buildImageGenerationMetadata("generation", seedream, 1, []).providerOptions, { resolution: "1.5k", watermark: false });
@@ -176,7 +208,7 @@ test("preserves provider-specific resolutions and request options", () => {
 test("falls back to supplied defaults when generation config is empty", () => {
     const emptyConfig: AiConfig = { ...config, model: "", imageModel: "", videoModel: "", textModel: "", quality: "", size: "", resolution: "", outputFormat: "", videoSeconds: "", vquality: "", count: "" };
 
-    assert.deepEqual(buildGenerationConfig(emptyConfig, undefined, "image", fallbackConfig), {
+    assert.deepEqual(buildGenerationConfig(emptyConfig, undefined, fallbackConfig), {
         ...emptyConfig,
         model: "fallback-model",
         quality: "standard",

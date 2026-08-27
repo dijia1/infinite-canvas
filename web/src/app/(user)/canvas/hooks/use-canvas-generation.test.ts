@@ -52,14 +52,17 @@ function completedTask(id: string, mediaId: string): ImageGenerationTask {
 function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnection[] = [], overrides: Record<string, unknown> = {}) {
     const nodesRef = ref(initialNodes);
     const connectionsRef = ref(initialConnections);
-    const calls = { generation: 0, edit: 0, video: 0, configDialog: 0, errors: [] as string[], warnings: [] as string[] };
+    const calls = { generation: 0, edit: 0, video: 0, configDialog: 0, readiness: [] as string[], errors: [] as string[], warnings: [] as string[] };
     let sequence = 0;
     const controller = createCanvasGenerationController({
         nodesRef,
         connectionsRef,
         effectiveConfig: config,
         defaultConfig: config,
-        isAiConfigReady: () => true,
+        isAiConfigReady: (capability) => {
+            calls.readiness.push(typeof capability === "string" ? capability : "config");
+            return true;
+        },
         openConfigDialog: () => calls.configDialog++,
         message: { error: (text: string) => calls.errors.push(text), warning: (text: string) => calls.warnings.push(text) },
         setNodes: (next) => {
@@ -160,6 +163,25 @@ test("uses image edit only when references exist", async () => {
 
     assert.equal(calls.edit, 1);
     assert.equal(calls.generation, 0);
+    assert.deepEqual(calls.readiness, ["imageEdit"]);
+});
+
+test("uses image readiness when generating without references", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    const { controller, calls } = setup([source]);
+
+    await controller.generateNode("source", "image", "a forest");
+
+    assert.deepEqual(calls.readiness, ["image"]);
+});
+
+test("uses video readiness for video generation", async () => {
+    const source = node("source", CanvasNodeType.Video);
+    const { controller, calls } = setup([source]);
+
+    await controller.generateNode("source", "video", "a waterfall");
+
+    assert.deepEqual(calls.readiness, ["video"]);
 });
 
 test("keeps the submitted prompt on an existing image after editing", async () => {
@@ -259,6 +281,7 @@ test("retries persisted image metadata and marks a missing reference as an error
 
     await controller.retryNode(retryable);
     assert.equal(calls.edit, 1);
+    assert.deepEqual(calls.readiness, ["imageEdit"]);
 
     const missing = node("missing", CanvasNodeType.Image, { prompt: "retry me", generationType: "edit", references: ["image:gone"] });
     const failed = setup([missing], [], { resolveMetadataReferences: async () => null });

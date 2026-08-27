@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { ArrowUp, LoaderCircle } from "lucide-react";
 import { Button } from "antd";
 
-import { defaultConfig, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
-import { normalizeImageResolution } from "@/lib/image-generation-config";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
+import { buildGenerationConfig } from "../utils/canvas-generation-utils";
 import { CanvasNodeType, type CanvasGenerationMode, type CanvasNodeData } from "../types";
 
 export type CanvasNodeGenerationMode = CanvasGenerationMode;
@@ -28,7 +28,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const mode = defaultMode(node.type);
-    const config = buildNodeConfig(globalConfig, node, mode);
+    const config = buildGenerationConfig(globalConfig, node, defaultConfig);
     const hasTextContent = node.type === CanvasNodeType.Text && Boolean(node.metadata?.content?.trim());
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
@@ -106,27 +106,4 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
 
 function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
     return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : "image";
-}
-
-function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: CanvasNodeGenerationMode): AiConfig {
-	const imageProviderId = node.metadata?.imageProviderId || globalConfig.imageProviderId;
-	const useNodeProviderOptions = Boolean(node.metadata?.imageProviderId && node.metadata.imageProviderId === imageProviderId);
-	const imageProviderType = useNodeProviderOptions ? node.metadata?.imageProviderType || globalConfig.imageProviderType : globalConfig.imageProviderType;
-    return {
-        ...globalConfig,
-        model: "",
-        quality: node.metadata?.quality || globalConfig.quality || defaultConfig.quality,
-        size: node.metadata?.size || globalConfig.size || defaultConfig.size,
-        resolution: imageProviderType ? (useNodeProviderOptions ? node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution : globalConfig.resolution || defaultConfig.resolution) : normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
-		outputFormat: node.metadata?.outputFormat || globalConfig.outputFormat || defaultConfig.outputFormat,
-		background: node.metadata?.background || globalConfig.background || defaultConfig.background,
-		imageProviderType,
-		imageProviderId,
-		videoProviderId: node.metadata?.videoProviderId || globalConfig.videoProviderId,
-		imageRequestSchemaVersion: useNodeProviderOptions ? node.metadata?.imageRequestSchemaVersion || globalConfig.imageRequestSchemaVersion : globalConfig.imageRequestSchemaVersion,
-		providerOptions: useNodeProviderOptions ? node.metadata?.providerOptions || globalConfig.providerOptions : globalConfig.providerOptions,
-        videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
-        vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
-        count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),
-    };
 }
