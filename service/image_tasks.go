@@ -146,18 +146,17 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 	}
 	format := strings.ToLower(strings.TrimSpace(request.Request.OutputFormat))
 	background := strings.ToLower(strings.TrimSpace(request.Request.Background))
-	if format == "" && background == "" {
-		format, background = "jpeg", "opaque"
+	if format == "" {
+		format = "jpeg"
 	}
-	if format == "jpeg" && background == "opaque" {
-		request.Request.OutputFormat, request.Request.Background = format, background
-		return request, nil
+	if background == "" {
+		background = "auto"
 	}
-	if format == "png" && background == "transparent" {
-		request.Request.OutputFormat, request.Request.Background = format, background
-		return request, nil
+	if (format != "jpeg" && format != "png") || (background != "auto" && background != "opaque" && background != "transparent") || (format == "jpeg" && background == "transparent") {
+		return CreateImageTaskRequest{}, safeMessageError{message: fmt.Sprintf("图片输出格式与背景组合无效：%s/%s", format, background)}
 	}
-	return CreateImageTaskRequest{}, safeMessageError{message: fmt.Sprintf("图片输出格式与背景组合无效：%s/%s", format, background)}
+	request.Request.OutputFormat, request.Request.Background = format, background
+	return request, nil
 }
 
 func GetImageTask(ctx context.Context, id string) (ImageTaskView, error) {
@@ -275,7 +274,7 @@ func imageTaskRequest(item model.ImageGenerationTask) ai.ImageRequest {
 	format := strings.TrimSpace(item.OutputFormat)
 	background := strings.TrimSpace(item.Background)
 	if format == "" && background == "" {
-		format, background = "jpeg", "opaque"
+		format, background = "jpeg", "auto"
 	}
 	return ai.ImageRequest{Prompt: item.Prompt, Count: item.Count, Quality: item.Quality, Size: item.Size, Resolution: item.Resolution, OutputFormat: format, Background: background}
 }

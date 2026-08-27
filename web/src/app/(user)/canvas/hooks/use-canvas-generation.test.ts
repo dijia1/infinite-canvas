@@ -267,6 +267,37 @@ test("retries persisted image metadata and marks a missing reference as an error
     assert.equal(failed.nodesRef.current[0].metadata?.errorDetails, "参考图片已丢失，无法继续重试");
 });
 
+test("retries persisted media references through the stored-image resolver", async () => {
+    const retryable = node("retry-media", CanvasNodeType.Image, {
+        prompt: "retry media",
+        generationType: "edit",
+        references: ["image:temporary-reference", "media:persistent-reference:v1:original"],
+    });
+    const resolvedKeys: string[] = [];
+    let submittedReferences: Array<{ dataUrl: string; storageKey?: string }> = [];
+    const { controller, calls } = setup([retryable], [], {
+        resolveMetadataReferences: undefined,
+        resolveStoredImageReference: async (storageKey: string) => {
+            resolvedKeys.push(storageKey);
+            return `blob:${storageKey}`;
+        },
+        requestEdit: async (_config: AiConfig, _prompt: string, references: Array<{ dataUrl: string; storageKey?: string }>) => {
+            calls.edit++;
+            submittedReferences = references;
+            return completedTask("retry-media", "retry-media-result");
+        },
+    });
+
+    await controller.retryNode(retryable);
+
+    assert.deepEqual(resolvedKeys, ["image:temporary-reference", "media:persistent-reference:v1:original"]);
+    assert.deepEqual(submittedReferences, [
+        { id: "0", name: "reference-0.png", type: "image/png", dataUrl: "blob:image:temporary-reference", storageKey: "image:temporary-reference" },
+        { id: "1", name: "reference-1.png", type: "image/png", dataUrl: "blob:media:persistent-reference:v1:original", storageKey: "media:persistent-reference:v1:original" },
+    ]);
+    assert.equal(calls.edit, 1);
+});
+
 test("retries a batch child with root metadata without changing the batch", async () => {
     const root = node("root", CanvasNodeType.Image, {
         prompt: "retry this batch",

@@ -57,3 +57,27 @@ func TestImageGenerationTaskLookupAndClaimAreOwnerScoped(t *testing.T) {
 		t.Fatalf("second claim = found %v, err %v", found, err)
 	}
 }
+
+func TestRenewImageGenerationTaskLeasePreventsASecondWorkerFromReclaimingAnActiveTask(t *testing.T) {
+	useImageTaskTestDB(t)
+	item := model.ImageGenerationTask{
+		ID:              "task-active",
+		OwnerUID:        "user-1",
+		ClientRequestID: "client-active",
+		Status:          model.ImageTaskSubmitting,
+		CreatedAt:       "2026-08-27T10:00:00Z",
+		UpdatedAt:       "2026-08-27T10:00:00Z",
+	}
+	if _, _, err := CreateImageGenerationTask(item); err != nil {
+		t.Fatalf("CreateImageGenerationTask() error = %v", err)
+	}
+
+	renewed, err := RenewImageGenerationTaskLease(item.ID, "2026-08-27T10:00:40Z")
+	if err != nil || !renewed {
+		t.Fatalf("RenewImageGenerationTaskLease() = %v, %v", renewed, err)
+	}
+
+	if _, claimed, err := ClaimNextImageGenerationTask("2026-08-27T10:00:20Z", "2026-08-27T10:01:00Z"); err != nil || claimed {
+		t.Fatalf("ClaimNextImageGenerationTask() reclaimed an active task: claimed=%v, err=%v", claimed, err)
+	}
+}

@@ -19,6 +19,7 @@ const config: AiConfig = {
     size: "1:1",
     resolution: "1k",
     outputFormat: "jpeg",
+    background: "auto",
     count: "1",
 };
 
@@ -67,6 +68,7 @@ test("builds edit metadata with persisted or remote references only", () => {
         size: "3:2",
         resolution: "4k",
         outputFormat: "jpeg",
+		background: "auto",
         quality: "high",
         count: 2,
         references: ["media:reference", "https://example.test/reference.png"],
@@ -89,6 +91,7 @@ test("persists masks in the same order as reusable reference URLs", () => {
         size: "1:1",
         resolution: "1k",
         outputFormat: "jpeg",
+		background: "auto",
         quality: "auto",
         count: 1,
         references: ["media:masked"],
@@ -143,6 +146,7 @@ test("falls back to supplied defaults when generation config is empty", () => {
         size: "16:9",
         resolution: "2k",
         outputFormat: "jpeg",
+        background: "auto",
         videoSeconds: "8",
         vquality: "1080",
         count: "4",

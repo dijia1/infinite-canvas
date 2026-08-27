@@ -53,6 +53,7 @@ export type CanvasGenerationControllerOptions = {
     hydrateGenerationContext: (nodeId: string, prompt: string) => Promise<NodeGenerationContext>;
     buildChatMessages?: (context: NodeGenerationContext) => ChatCompletionMessage[];
     resolveImageUrl?: (storageKey?: string, fallback?: string) => Promise<string>;
+    resolveStoredImageReference?: (storageKey: string) => Promise<string>;
     resolveMetadataReferences?: (metadata: CanvasNodeMetadata) => Promise<ReferenceImage[] | null>;
 };
 
@@ -88,17 +89,18 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
     const resolveMetadataReferences = async (metadata: CanvasNodeMetadata): Promise<ReferenceImage[] | null> => {
         if (options.resolveMetadataReferences) return options.resolveMetadataReferences(metadata);
         if (metadata.generationType !== "edit") return [];
-        if (!metadata.references?.length || !options.resolveImageUrl) return null;
+        if (!metadata.references?.length || (!options.resolveImageUrl && !options.resolveStoredImageReference)) return null;
         const references = await Promise.all(
             metadata.references.map(async (url, index) => {
-                const dataUrl = url.startsWith("image:") ? await options.resolveImageUrl!(url, "") : url;
+                const isStoredImage = /^(?:image|media|preview):/.test(url);
+                const dataUrl = isStoredImage ? await (options.resolveStoredImageReference?.(url) || options.resolveImageUrl!(url, "")) : url;
                 return dataUrl
                     ? {
                           id: `${index}`,
                           name: `reference-${index}.png`,
                           type: "image/png",
                           dataUrl,
-                          storageKey: url.startsWith("image:") ? url : undefined,
+                          storageKey: isStoredImage ? url : undefined,
                           ...(metadata.referenceMasks?.[index] ? { mask: metadata.referenceMasks[index] } : {}),
                       }
                     : null;
@@ -499,6 +501,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       size: savedImageMetadata.size || options.effectiveConfig.size || options.defaultConfig.size,
                       resolution: savedImageMetadata.resolution || options.effectiveConfig.resolution || options.defaultConfig.resolution,
                       outputFormat: savedImageMetadata.outputFormat || options.effectiveConfig.outputFormat || options.defaultConfig.outputFormat,
+					  background: savedImageMetadata.background || options.effectiveConfig.background || options.defaultConfig.background,
                       count: "1",
                   }
                 : { ...buildGenerationConfig(options.effectiveConfig, sourceNode, node.type === CanvasNodeType.Text ? "text" : node.type === CanvasNodeType.Video ? "video" : "image", options.defaultConfig), count: "1" };
@@ -556,6 +559,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       model: generationConfig.model,
                       size: generationConfig.size,
                       resolution: generationConfig.resolution,
+					  outputFormat: generationConfig.outputFormat,
+					  background: generationConfig.background,
                       quality: generationConfig.quality,
                       count: savedImageMetadata.count || 1,
                       references: savedImageMetadata.references,

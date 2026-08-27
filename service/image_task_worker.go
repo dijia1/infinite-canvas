@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	imageTaskPollInterval = 2 * time.Second
-	imageTaskTimeout      = 3 * time.Minute
-	imageTaskStaleAfter   = 45 * time.Second
-	imageTaskRetention    = 30 * 24 * time.Hour
+	imageTaskPollInterval  = 2 * time.Second
+	imageTaskTimeout       = 3 * time.Minute
+	imageTaskStaleAfter    = 45 * time.Second
+	imageTaskLeaseInterval = 10 * time.Second
+	imageTaskRetention     = 30 * 24 * time.Hour
 )
 
 func parseImageTaskWorkerConcurrency(value int) (int, error) {
@@ -83,8 +84,45 @@ func runImageTaskWorker(ctx context.Context, workerID int) {
 			continue
 		}
 		workerContext, cancel := context.WithTimeout(ctx, imageTaskTimeout)
+		stopLease := startImageTaskLeaseHeartbeat(workerContext, item.ID)
 		executeImageTask(workerContext, item)
+		stopLease()
 		cancel()
+	}
+}
+
+func startImageTaskLeaseHeartbeat(ctx context.Context, taskID string) func() {
+	heartbeatContext, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		maintainImageTaskLease(heartbeatContext, imageTaskLeaseInterval, func() (bool, error) {
+			return repository.RenewImageGenerationTaskLease(taskID, now())
+		})
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
+}
+
+func maintainImageTaskLease(ctx context.Context, interval time.Duration, renew func() (bool, error)) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewed, err := renew()
+			if err != nil {
+				log.Printf("image task lease renewal failed: %v", err)
+				continue
+			}
+			if !renewed {
+				return
+			}
+		}
 	}
 }
 

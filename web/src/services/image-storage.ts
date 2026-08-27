@@ -157,6 +157,10 @@ function mediaIDFromStorageKey(storageKey: string) {
     return undefined;
 }
 
+export function mediaIdFromImageStorageKey(storageKey?: string) {
+    return storageKey ? mediaIDFromStorageKey(storageKey) : undefined;
+}
+
 function canonicalStorageKey(storageKey: string) {
     const mediaId = mediaIDFromStorageKey(storageKey);
     if (!mediaId) return storageKey;

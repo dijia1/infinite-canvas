@@ -8,7 +8,7 @@ import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 import { defaultConfig, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { normalizeImageResolution } from "@/lib/image-generation-config";
-import { normalizeImageOutputFormat } from "@/lib/image-output-config";
+import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-config";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { hasImageMask } from "../image-mask/mask-utils";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
@@ -323,6 +323,7 @@ function buildNodeConfig(globalConfig: AiConfig, node: CanvasNodeData, mode: Can
         size: node.metadata?.size || globalConfig.size || defaultConfig.size,
         resolution: normalizeImageResolution(node.metadata?.resolution || globalConfig.resolution || defaultConfig.resolution),
         outputFormat: normalizeImageOutputFormat(node.metadata?.outputFormat || globalConfig.outputFormat || defaultConfig.outputFormat),
+		background: normalizeImageBackground(node.metadata?.background || globalConfig.background || defaultConfig.background),
         videoSeconds: node.metadata?.seconds || globalConfig.videoSeconds || defaultConfig.videoSeconds,
         vquality: node.metadata?.vquality || globalConfig.vquality || defaultConfig.vquality,
         count: String(node.metadata?.count || globalConfig.count || defaultConfig.count),

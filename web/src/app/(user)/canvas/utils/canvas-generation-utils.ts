@@ -1,5 +1,5 @@
 import { normalizeImageResolution } from "../../../../lib/image-generation-config.ts";
-import { normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
+import { normalizeImageBackground, normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
 import type { AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
@@ -29,6 +29,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
         size: config.size,
         resolution: config.resolution,
         outputFormat: normalizeImageOutputFormat(config.outputFormat),
+		background: normalizeImageBackground(config.background),
         quality: config.quality,
         count,
         references: persistedReferences.map((reference) => reference.url),
@@ -60,6 +61,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
         size: node?.metadata?.size || config.size || fallbackConfig.size,
         resolution: normalizeImageResolution(node?.metadata?.resolution || config.resolution || fallbackConfig.resolution),
         outputFormat: normalizeImageOutputFormat(node?.metadata?.outputFormat || config.outputFormat || fallbackConfig.outputFormat),
+		background: normalizeImageBackground(node?.metadata?.background || config.background || fallbackConfig.background),
         videoSeconds: node?.metadata?.seconds || config.videoSeconds || fallbackConfig.videoSeconds,
         vquality: node?.metadata?.vquality || config.vquality || fallbackConfig.vquality,
         count: String(node?.metadata?.count || config.count || fallbackConfig.count),

@@ -2,13 +2,13 @@
 
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2 } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { ContextMenuState } from "../types";
 
-export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete }: { menu: ContextMenuState; onClose: () => void; onDuplicate: () => void; onDelete: () => void }) {
+export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete, downloadCount = 0, onDownloadSelected }: { menu: ContextMenuState; onClose: () => void; onDuplicate: () => void; onDelete: () => void; downloadCount?: number; onDownloadSelected?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
 
     useEffect(() => {
@@ -27,6 +27,7 @@ export function CanvasNodeContextMenu({ menu, onClose, onDuplicate, onDelete }: 
             style={{ left: menu.x, top: menu.y, background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
             onPointerDown={(event) => event.stopPropagation()}
         >
+            {downloadCount > 1 ? <MenuButton icon={<Download className="size-4" />} label={`下载选中图片（${downloadCount}）`} onClick={onDownloadSelected} /> : null}
             <MenuButton icon={<Plus className="size-4" />} label="Duplicate" onClick={onDuplicate} />
             <MenuButton icon={<Trash2 className="size-4" />} label="Delete" onClick={onDelete} danger />
         </div>

@@ -146,6 +146,22 @@ func UpdateImageGenerationTask(id string, updates map[string]any) error {
 	return database.Model(&model.ImageGenerationTask{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// RenewImageGenerationTaskLease records that a worker is still actively
+// processing a claimed task. Terminal tasks are intentionally never renewed.
+func RenewImageGenerationTaskLease(id, updatedAt string) (bool, error) {
+	database, err := DB()
+	if err != nil {
+		return false, err
+	}
+	result := database.Model(&model.ImageGenerationTask{}).
+		Where("id = ? AND status IN ?", id, []model.ImageGenerationTaskStatus{model.ImageTaskSubmitting, model.ImageTaskRunning}).
+		Updates(map[string]any{"updated_at": updatedAt})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func ListImageGenerationTasksForRecovery(staleBefore string) ([]model.ImageGenerationTask, error) {
 	database, err := DB()
 	if err != nil {

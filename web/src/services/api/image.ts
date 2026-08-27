@@ -95,7 +95,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
-    const output = imageOutputSettings(config.outputFormat);
+    const output = imageOutputSettings(config.outputFormat, config.background);
     const body = {
         clientRequestId,
         prompt,
@@ -125,7 +125,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = normalizeImageResolution(config.resolution);
-    const output = imageOutputSettings(config.outputFormat);
+    const output = imageOutputSettings(config.outputFormat, config.background);
     const formData = new FormData();
     formData.set("clientRequestId", clientRequestId);
     formData.set("prompt", prompt);

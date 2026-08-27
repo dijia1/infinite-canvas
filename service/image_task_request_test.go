@@ -15,8 +15,19 @@ func TestNormalizeImageTaskRequestDefaultsAndValidatesImageAndMaskCounts(t *test
 	if err != nil {
 		t.Fatalf("normalizeImageTaskRequest() error = %v", err)
 	}
-	if request.Request.OutputFormat != "jpeg" || request.Request.Background != "opaque" {
-		t.Fatalf("defaults = %q/%q, want jpeg/opaque", request.Request.OutputFormat, request.Request.Background)
+	if request.Request.OutputFormat != "jpeg" || request.Request.Background != "auto" {
+		t.Fatalf("defaults = %q/%q, want jpeg/auto", request.Request.OutputFormat, request.Request.Background)
+	}
+
+	for _, item := range []ai.ImageRequest{
+		{Prompt: "生成图", Count: 1, OutputFormat: "jpeg", Background: "auto"},
+		{Prompt: "生成图", Count: 1, OutputFormat: "png", Background: "auto"},
+		{Prompt: "生成图", Count: 1, OutputFormat: "png", Background: "opaque"},
+		{Prompt: "生成图", Count: 1, OutputFormat: "png", Background: "transparent"},
+	} {
+		if _, err := normalizeImageTaskRequest(CreateImageTaskRequest{ClientRequestID: "request-background-" + item.OutputFormat + "-" + item.Background, Mode: ImageTaskModeGeneration, Request: item}); err != nil {
+			t.Fatalf("normalizeImageTaskRequest(%s/%s) error = %v", item.OutputFormat, item.Background, err)
+		}
 	}
 
 	invalidFormat := CreateImageTaskRequest{ClientRequestID: "request-invalid-format", Mode: ImageTaskModeGeneration, Request: ai.ImageRequest{Prompt: "生成图", Count: 1, OutputFormat: "jpeg", Background: "transparent"}}

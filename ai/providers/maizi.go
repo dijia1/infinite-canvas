@@ -401,10 +401,17 @@ func parseMaiziV2CompletedEdit(data []byte) (ai.ImageTask, error) {
 
 func maiziImageOutput(request ai.ImageRequest) (string, string) {
 	format := strings.ToLower(strings.TrimSpace(request.OutputFormat))
-	if format == "png" {
-		return "png", "transparent"
+	if format != "png" {
+		format = "jpeg"
 	}
-	return "jpeg", "opaque"
+	background := strings.ToLower(strings.TrimSpace(request.Background))
+	if background != "opaque" && background != "transparent" {
+		background = "auto"
+	}
+	if format == "jpeg" && background == "transparent" {
+		format = "png"
+	}
+	return format, background
 }
 
 func maiziResolution(value string) string {

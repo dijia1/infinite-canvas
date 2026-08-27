@@ -20,6 +20,23 @@ func (fn roundTripperFunc) RoundTrip(request *http.Request) (*http.Response, err
 	return fn(request)
 }
 
+func TestMaiziImageOutputPreservesBackgroundChoices(t *testing.T) {
+	for _, item := range []struct {
+		request    ai.ImageRequest
+		format     string
+		background string
+	}{
+		{request: ai.ImageRequest{OutputFormat: "jpeg", Background: "auto"}, format: "jpeg", background: "auto"},
+		{request: ai.ImageRequest{OutputFormat: "png", Background: "opaque"}, format: "png", background: "opaque"},
+		{request: ai.ImageRequest{OutputFormat: "png", Background: "transparent"}, format: "png", background: "transparent"},
+	} {
+		format, background := maiziImageOutput(item.request)
+		if format != item.format || background != item.background {
+			t.Errorf("maiziImageOutput(%#v) = %s/%s, want %s/%s", item.request, format, background, item.format, item.background)
+		}
+	}
+}
+
 func TestMaiziProviderCreatesAndCompletesImageTask(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
@@ -33,6 +50,9 @@ func TestMaiziProviderCreatesAndCompletesImageTask(t *testing.T) {
 			_ = json.Unmarshal(body, &payload)
 			if payload["model"] != "gpt-image-2" || payload["prompt"] != "一只猫" || payload["size"] != "1:1" || payload["resolution"] != "1k" || payload["quality"] != "high" {
 				t.Errorf("generation payload = %#v", payload)
+			}
+			if payload["output_format"] != "jpeg" || payload["background"] != "auto" {
+				t.Errorf("generation output payload = %#v, want jpeg/auto", payload)
 			}
 			if _, exists := payload["n"]; exists {
 				t.Errorf("generation payload unexpectedly includes n: %#v", payload)

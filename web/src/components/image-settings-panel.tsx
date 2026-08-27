@@ -4,8 +4,8 @@ import { type ReactNode } from "react";
 import { ConfigProvider } from "antd";
 
 import { type CanvasTheme } from "@/lib/canvas-theme";
-import { imageResolutionOptions, normalizeImageResolution } from "@/lib/image-generation-config";
-import { normalizeImageOutputFormat } from "@/lib/image-output-config";
+import { imageAspectOptions, imageResolutionOptions, normalizeImageResolution } from "@/lib/image-generation-config";
+import { normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-config";
 import type { AiConfig } from "@/stores/use-config-store";
 
 const qualityOptions = [
@@ -15,19 +15,9 @@ const qualityOptions = [
     { value: "low", label: "低" },
 ];
 
-const aspectOptions = [
-    { value: "1:1", label: "1:1", width: 1024, height: 1024, icon: "square" },
-    { value: "3:2", label: "3:2", width: 1536, height: 1024, icon: "landscape" },
-    { value: "2:3", label: "2:3", width: 1024, height: 1536, icon: "portrait" },
-    { value: "4:3", label: "4:3", width: 1344, height: 1024, icon: "landscape" },
-    { value: "3:4", label: "3:4", width: 1024, height: 1344, icon: "portrait" },
-    { value: "9:16", label: "9:16", width: 1024, height: 1792, icon: "portrait" },
-    { value: "auto", label: "auto", width: 0, height: 0, icon: "auto" },
-];
-
 type ImageSettingsPanelProps = {
     config: AiConfig;
-    onConfigChange: (key: "quality" | "size" | "resolution" | "outputFormat" | "count", value: string) => void;
+    onConfigChange: (key: "quality" | "size" | "resolution" | "outputFormat" | "background" | "count", value: string) => void;
     theme: CanvasTheme;
     showTitle?: boolean;
     className?: string;
@@ -40,6 +30,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const activeSize = config.size || "auto";
     const resolution = normalizeImageResolution(config.resolution);
     const outputFormat = normalizeImageOutputFormat(config.outputFormat);
+    const background = normalizeImageBackground(config.background);
 
     return (
         <ImageSettingsTheme theme={theme}>
@@ -74,7 +65,7 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>宽高比</SettingTitle>
                     <div className="grid grid-cols-4 gap-2.5">
-                        {aspectOptions.map((item) => (
+                        {imageAspectOptions.map((item) => (
                             <button
                                 key={item.value}
                                 type="button"
@@ -92,12 +83,41 @@ export function ImageSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 <div className="space-y-2.5">
                     <SettingTitle color={theme.node.muted}>输出格式</SettingTitle>
                     <div className="grid grid-cols-2 gap-2.5">
-                        <OptionPill selected={outputFormat === "jpeg"} theme={theme} onClick={() => onConfigChange("outputFormat", "jpeg")}>
+                        <OptionPill
+                            selected={outputFormat === "jpeg"}
+                            theme={theme}
+                            onClick={() => {
+                                onConfigChange("outputFormat", "jpeg");
+                                if (background === "transparent") onConfigChange("background", "auto");
+                            }}
+                        >
                             JPEG
                         </OptionPill>
                         <OptionPill selected={outputFormat === "png"} theme={theme} onClick={() => onConfigChange("outputFormat", "png")}>
                             PNG
                         </OptionPill>
+                    </div>
+                </div>
+                <div className="space-y-2.5">
+                    <SettingTitle color={theme.node.muted}>背景</SettingTitle>
+                    <div className="grid grid-cols-3 gap-2.5">
+                        {[
+                            { value: "auto", label: "自动" },
+                            { value: "opaque", label: "不透明" },
+                            { value: "transparent", label: "透明" },
+                        ].map((item) => (
+                            <OptionPill
+                                key={item.value}
+                                selected={background === item.value}
+                                theme={theme}
+                                onClick={() => {
+                                    if (item.value === "transparent" && outputFormat === "jpeg") onConfigChange("outputFormat", "png");
+                                    onConfigChange("background", item.value);
+                                }}
+                            >
+                                {item.label}
+                            </OptionPill>
+                        ))}
                     </div>
                 </div>
                 <div className="space-y-2.5">
@@ -134,7 +154,7 @@ export function imageQualityLabel(value: string) {
 }
 
 export function imageSizeLabel(size: string) {
-    return aspectOptions.find((item) => item.value === size)?.label || size;
+    return imageAspectOptions.find((item) => item.value === size)?.label || size;
 }
 
 export function imageResolutionLabel(resolution: string) {
@@ -143,6 +163,10 @@ export function imageResolutionLabel(resolution: string) {
 
 export function imageOutputFormatLabel(value: string) {
     return normalizeImageOutputFormat(value).toUpperCase();
+}
+
+export function imageBackgroundLabel(value: unknown) {
+    return ({ auto: "自动", opaque: "不透明", transparent: "透明" } as Record<string, string>)[normalizeImageBackground(value)] || "自动";
 }
 
 function OptionPill({ selected, theme, onClick, children }: { selected: boolean; theme: CanvasTheme; onClick: () => void; children: ReactNode }) {

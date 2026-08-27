@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createImagePreview, createImageStorageOperations, imageStorageKeyForMedia, imageThumbnailStorageKey, imageToDataUrl, type ImageCacheStore } from "./image-storage.ts";
+import { createImagePreview, createImageStorageOperations, imageStorageKeyForMedia, imageThumbnailStorageKey, imageToDataUrl, mediaIdFromImageStorageKey, type ImageCacheStore } from "./image-storage.ts";
 
 class MemoryStore implements ImageCacheStore {
     readonly values = new Map<string, unknown>();
@@ -83,6 +83,12 @@ function deferred<T>() {
 test("original and thumbnail variants use versioned stable cache keys", () => {
     assert.equal(imageStorageKeyForMedia("media-1"), "media:media-1:v1:original");
     assert.equal(imageThumbnailStorageKey("media-1"), "media:media-1:v1:thumbnail");
+});
+
+test("extracts only persistent media IDs from image storage keys", () => {
+    assert.equal(mediaIdFromImageStorageKey("media:media-1:v1:original"), "media-1");
+    assert.equal(mediaIdFromImageStorageKey("media:legacy-media"), "legacy-media");
+    assert.equal(mediaIdFromImageStorageKey("image:temporary-image"), undefined);
 });
 
 test("migrates a legacy original cache entry without fetching its signed URL", async () => {

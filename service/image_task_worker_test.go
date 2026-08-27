@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/ai"
 )
@@ -15,6 +17,36 @@ func TestImageTaskWorkerConcurrencyDefaultsAndRejectsInvalidValues(t *testing.T)
 	}
 	if _, err := parseImageTaskWorkerConcurrency(-1); err == nil {
 		t.Fatal("negative worker concurrency must be rejected")
+	}
+}
+
+func TestMaintainImageTaskLeaseRenewsUntilTheTaskContextEnds(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	renewed := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		maintainImageTaskLease(ctx, time.Millisecond, func() (bool, error) {
+			select {
+			case renewed <- struct{}{}:
+			default:
+			}
+			return true, nil
+		})
+	}()
+
+	select {
+	case <-renewed:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("lease was not renewed while the task was active")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("lease heartbeat did not stop when the task context ended")
 	}
 }
 

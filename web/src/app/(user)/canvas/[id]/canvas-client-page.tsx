@@ -10,7 +10,7 @@ import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestE
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { loadMediaImage, releaseImageObjectURL, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { loadMediaImage, mediaIdFromImageStorageKey, releaseImageObjectURL, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { hydrateCanvasImages, imageMetadata } from "@/services/canvas-image-hydration";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -23,6 +23,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
 import { getInputSummary, resetInterruptedGeneration } from "../utils/canvas-generation-utils";
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
+import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -277,6 +278,14 @@ function InfiniteCanvasPage() {
         [],
     );
 
+    const resolveStoredImageReference = useCallback(async (storageKey: string) => {
+        const cached = await resolveImageUrl(storageKey, "");
+        if (cached) return cached;
+        const mediaId = mediaIdFromImageStorageKey(storageKey);
+        if (!mediaId) return "";
+        return (await loadMediaImage(mediaId, async () => resolveRemoteImage(mediaId))).url;
+    }, []);
+
     const historySnapshot = useMemo<CanvasHistoryEntry>(() => ({ nodes, connections, backgroundMode, showImageInfo }), [backgroundMode, connections, nodes, showImageInfo]);
 
     const applyHistorySnapshot = useCallback((entry: CanvasHistoryEntry) => {
@@ -405,7 +414,7 @@ function InfiniteCanvasPage() {
         (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, position: Position) => {
             const metadata =
                 type === CanvasNodeType.Config
-                    ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, resolution: normalizeImageResolution(effectiveConfig.resolution), count: Number(effectiveConfig.count) || 1 }
+                    ? { model: effectiveConfig.imageModel || effectiveConfig.model, size: effectiveConfig.size, resolution: normalizeImageResolution(effectiveConfig.resolution), outputFormat: effectiveConfig.outputFormat, background: effectiveConfig.background, count: Number(effectiveConfig.count) || 1 }
                     : undefined;
             return createCanvasNode(type, position, metadata);
         },
@@ -482,6 +491,7 @@ function InfiniteCanvasPage() {
         hydrateGenerationContext: (nodeId, prompt) => hydrateNodeGenerationContext(buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt)),
         buildChatMessages: buildNodeChatMessages,
         resolveImageUrl,
+        resolveStoredImageReference,
     });
 
     useEffect(() => {
@@ -565,6 +575,11 @@ function InfiniteCanvasPage() {
     const angleNode = angleNodeId ? nodeById.get(angleNodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
+	const contextMenuImageNodes = useMemo(() => {
+		if (!contextMenu) return [];
+		const ids = selectedNodeIds.has(contextMenu.nodeId) ? selectedNodeIds : new Set([contextMenu.nodeId]);
+		return selectedDownloadableImageNodes(nodes, ids);
+	}, [contextMenu, nodes, selectedNodeIds]);
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
@@ -1169,10 +1184,32 @@ function InfiniteCanvasPage() {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? applyNodeConfigPatch(node, patch) : node)));
     }, []);
 
-    const downloadNodeImage = useCallback((node: CanvasNodeData) => {
-        if ((node.type !== CanvasNodeType.Image && node.type !== CanvasNodeType.Video) || !node.metadata?.content) return;
-        saveAs(node.metadata.content, `canvas-${node.type}-${node.id}.${node.type === CanvasNodeType.Video ? "mp4" : imageExtension(node.metadata.content)}`);
-    }, []);
+	const downloadNodeImage = useCallback(
+		async (node: CanvasNodeData) => {
+			if (node.type === CanvasNodeType.Video) {
+				if (!node.metadata?.content) throw new Error("没有可下载的视频");
+				saveAs(node.metadata.content, `canvas-video-${node.id}.mp4`);
+				return;
+			}
+			if (node.type !== CanvasNodeType.Image || !node.metadata) throw new Error("没有可下载的图片");
+			let content = node.metadata.content || "";
+			if (node.metadata.storageKey) content = (await resolveStoredImageReference(node.metadata.storageKey)) || content;
+			if (!content && node.metadata.mediaId) content = (await loadMediaImage(node.metadata.mediaId, () => resolveRemoteImage(node.metadata!.mediaId!))).url;
+			if (!content) throw new Error("图片尚未加载完成");
+			saveAs(content, `canvas-image-${node.id}.${imageExtension(node.metadata.mimeType || content)}`);
+		},
+		[resolveStoredImageReference],
+	);
+
+	const downloadSelectedImages = useCallback(
+		async (selectedImages: CanvasNodeData[]) => {
+			const results = await Promise.allSettled(selectedImages.map((node) => downloadNodeImage(node)));
+			const failed = results.filter((result) => result.status === "rejected").length;
+			if (failed) message.error(`${failed} 张图片下载失败`);
+			else message.success(`已开始下载 ${selectedImages.length} 张图片`);
+		},
+		[downloadNodeImage, message],
+	);
 
     const saveNodeAsset = useCallback(
         async (node: CanvasNodeData) => {
@@ -1432,6 +1469,7 @@ function InfiniteCanvasPage() {
     const handleCanvasNodeContextMenu = useCallback((event: ReactMouseEvent, id: string) => {
         event.preventDefault();
         event.stopPropagation();
+		setSelectedNodeIds((previous) => (previous.has(id) ? previous : new Set([id])));
         setContextMenu({ type: "node", x: event.clientX, y: event.clientY, nodeId: id });
     }, []);
 
@@ -1639,7 +1677,7 @@ function InfiniteCanvasPage() {
                     onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
                     onGenerateImage={generateImageFromTextNode}
                     onUpload={(node) => handleUploadRequest(node.id)}
-                    onDownload={downloadNodeImage}
+                        onDownload={downloadNodeImage}
                     onSaveAsset={(node) => void saveNodeAsset(node)}
                     onCrop={(node) => setCropNodeId(node.id)}
                     onAngle={(node) => setAngleNodeId(node.id)}
@@ -1684,6 +1722,11 @@ function InfiniteCanvasPage() {
                             deleteNodes(new Set([contextMenu.nodeId]));
                             setContextMenu(null);
                         }}
+						downloadCount={contextMenuImageNodes.length}
+						onDownloadSelected={() => {
+							void downloadSelectedImages(contextMenuImageNodes);
+							setContextMenu(null);
+						}}
                     />
                 ) : null}
 

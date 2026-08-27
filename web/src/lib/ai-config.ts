@@ -12,5 +12,6 @@ export type AiConfig = {
     size: string;
 	resolution: string;
 	outputFormat: string;
+	background?: string;
 	count: string;
 };
