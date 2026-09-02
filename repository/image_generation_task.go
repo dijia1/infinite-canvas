@@ -109,13 +109,14 @@ func ClaimNextImageGenerationTask(staleBefore, updatedAt string) (model.ImageGen
 		if staleBefore != "" {
 			query = query.Or("status IN ? AND updated_at < ?", []model.ImageGenerationTaskStatus{model.ImageTaskSubmitting, model.ImageTaskRunning}, staleBefore)
 		}
-		if err := query.Order("created_at asc").First(&candidate).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil
-			}
-			return err
+		result := query.Order("created_at asc").Limit(1).Find(&candidate)
+		if result.Error != nil {
+			return result.Error
 		}
-		result := transaction.Model(&model.ImageGenerationTask{}).
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		result = transaction.Model(&model.ImageGenerationTask{}).
 			Where("id = ? AND status = ?", candidate.ID, candidate.Status).
 			Updates(map[string]any{"status": model.ImageTaskSubmitting, "updated_at": updatedAt})
 		if result.Error != nil {

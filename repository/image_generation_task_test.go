@@ -1,11 +1,16 @@
 package repository
 
 import (
+	"bytes"
+	"log"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func useImageTaskTestDB(t *testing.T) {
@@ -55,6 +60,24 @@ func TestImageGenerationTaskLookupAndClaimAreOwnerScoped(t *testing.T) {
 	}
 	if _, found, err := ClaimNextImageGenerationTask("2026-08-24T09:59:00Z", "2026-08-24T10:02:00Z"); err != nil || found {
 		t.Fatalf("second claim = found %v, err %v", found, err)
+	}
+}
+
+func TestClaimNextImageGenerationTaskDoesNotLogAnEmptyQueueAsAnError(t *testing.T) {
+	useImageTaskTestDB(t)
+	var logs bytes.Buffer
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db = database.Session(&gorm.Session{Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Warn})})
+
+	_, found, err := ClaimNextImageGenerationTask("2026-09-02T12:00:00Z", "2026-09-02T12:00:01Z")
+	if err != nil || found {
+		t.Fatalf("empty claim = found %v, err %v", found, err)
+	}
+	if strings.Contains(logs.String(), "record not found") {
+		t.Fatalf("idle claim logged an error: %s", logs.String())
 	}
 }
 
