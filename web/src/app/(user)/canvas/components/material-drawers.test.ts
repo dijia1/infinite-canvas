@@ -29,15 +29,13 @@ test("my assets drawer takes image paste priority and keeps a local preview whil
     assert.match(imageStorage, /export async function promoteImageStorageKey/);
 });
 
-test("my assets drawer exposes read-only source folders and temporary media preservation", async () => {
+test("my assets drawer exposes permanent source folders without temporary media preservation", async () => {
     const [source, privateAPI] = await Promise.all([readFile(componentURL("asset-picker-modal.tsx"), "utf8"), readFile(componentURL("../../../../services/api/private-images.ts"), "utf8")]);
 
-    assert.match(source, /画板临时素材/);
     assert.match(source, /我的上传/);
     assert.match(source, /AI 生成/);
-    assert.match(source, /永久保存/);
-    assert.match(source, /preserveTemporaryPrivateImage/);
-    assert.match(privateAPI, /\/private-images\/\$\{encodeURIComponent\(id\)\}\/preserve/);
+    assert.doesNotMatch(source, /画板临时素材|永久保存|preserveTemporaryPrivateImage/);
+    assert.doesNotMatch(privateAPI, /\/private-images\/\$\{encodeURIComponent\(id\)\}\/preserve/);
 });
 
 test("public assets drawer only exposes uploads to Portal administrators", async () => {

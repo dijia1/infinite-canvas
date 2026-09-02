@@ -46,7 +46,7 @@ test("maps server private media into cache-backed image assets", () => {
     ]);
 });
 
-test("preserves temporary media source and expiration for the system asset folders", () => {
+test("maps a legacy temporary media source into the permanent upload system folder", () => {
     const state = privateCatalogToAssetState(
         {
             items: [
@@ -69,7 +69,7 @@ test("preserves temporary media source and expiration for the system asset folde
     );
 
     const asset = state.assets[0];
-    assert.equal(asset?.source, "画板临时素材");
+    assert.equal(asset?.source, "我的上传");
     assert.deepEqual(asset?.metadata, {
         mediaId: "media-canvas",
         mediaSource: "canvas_temporary",

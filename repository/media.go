@@ -2,7 +2,6 @@ package repository
 
 import (
 	"errors"
-	"time"
 
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
@@ -50,17 +49,15 @@ func ListPrivateMedia(ownerUID string) ([]model.Media, error) {
 	return items, err
 }
 
-func ListExpiredTemporaryMedia(before time.Time) ([]model.Media, error) {
+func PromoteLegacyCanvasTemporaryMedia() (int64, error) {
 	db, err := DB()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
-	items := make([]model.Media, 0)
-	err = db.Where("source = ?", model.MediaSourceCanvasTemporary).
-		Where("expires_at IS NOT NULL AND expires_at <= ?", before).
-		Order("expires_at asc").
-		Find(&items).Error
-	return items, err
+	result := db.Model(&model.Media{}).
+		Where("source = ?", "canvas_temporary").
+		Updates(map[string]any{"source": model.MediaSourceUpload, "expires_at": nil})
+	return result.RowsAffected, result.Error
 }
 
 func UpdatePrivateMedia(id, ownerUID string, title *string, folderID *string) (model.Media, bool, error) {
@@ -79,20 +76,6 @@ func UpdatePrivateMedia(id, ownerUID string, title *string, folderID *string) (m
 		return model.Media{}, false, nil
 	}
 	result := db.Model(&model.Media{}).Where("id = ? AND owner_uid = ?", id, ownerUID).Updates(updates)
-	if result.Error != nil || result.RowsAffected == 0 {
-		return model.Media{}, false, result.Error
-	}
-	return GetMedia(id)
-}
-
-func PreserveTemporaryMedia(id, ownerUID string) (model.Media, bool, error) {
-	db, err := DB()
-	if err != nil {
-		return model.Media{}, false, err
-	}
-	result := db.Model(&model.Media{}).
-		Where("id = ? AND owner_uid = ? AND source = ?", id, ownerUID, model.MediaSourceCanvasTemporary).
-		Updates(map[string]any{"source": model.MediaSourceUpload, "expires_at": nil})
 	if result.Error != nil || result.RowsAffected == 0 {
 		return model.Media{}, false, result.Error
 	}

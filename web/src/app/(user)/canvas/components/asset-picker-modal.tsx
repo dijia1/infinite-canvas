@@ -8,7 +8,7 @@ import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
 import { deleteUserImage, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
-import { createPrivateFolder, deletePrivateFolder, preserveTemporaryPrivateImage, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
+import { createPrivateFolder, deletePrivateFolder, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
 import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailStorageKey, loadMediaImage, loadMediaThumbnail, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
@@ -18,9 +18,8 @@ import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPay
 import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
 const PAGE_SIZE = 24;
-type PrivateMediaSource = "canvas_temporary" | "upload" | "generated";
+type PrivateMediaSource = "upload" | "generated";
 const PRIVATE_SYSTEM_FOLDERS: Array<{ source: PrivateMediaSource; title: string }> = [
-    { source: "canvas_temporary", title: "画板临时素材" },
     { source: "upload", title: "我的上传" },
     { source: "generated", title: "AI 生成" },
 ];
@@ -192,21 +191,6 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         [deletingAssetId, message, removeAsset],
     );
 
-    const preserveTemporaryImage = useCallback(
-        async (asset: ImageAsset) => {
-            const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
-            if (!mediaId) return;
-            try {
-                await preserveTemporaryPrivateImage(mediaId);
-                await refreshFromServer();
-                message.success("图片已永久保存");
-            } catch (error) {
-                message.error(error instanceof Error ? error.message : "永久保存失败");
-            }
-        },
-        [message, refreshFromServer],
-    );
-
     useEffect(() => {
         if (!open) return;
         const handlePasteKeyDown = (event: KeyboardEvent) => {
@@ -306,7 +290,6 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         }}
                         onAddImage={() => fileInputRef.current?.click()}
                         onRetryImage={retryImage}
-                        onPreserveImage={preserveTemporaryImage}
                         onPreview={setPreview}
                         onFolderDrop={(folderId, event) => void handleFolderDrop(folderId, event)}
                         onImageContextMenu={(asset, event) => {
@@ -485,7 +468,6 @@ function MyAssetsTab({
     onSystemNavigate,
     onAddImage,
     onRetryImage,
-    onPreserveImage,
     onPreview,
     onFolderDrop,
     onImageContextMenu,
@@ -501,7 +483,6 @@ function MyAssetsTab({
     onSystemNavigate: (source?: PrivateMediaSource) => void;
     onAddImage: () => void;
     onRetryImage: (asset: ImageAsset) => void;
-    onPreserveImage: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
     onFolderDrop: (folderId: string, event: DragEvent<HTMLButtonElement>) => void;
     onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
@@ -564,7 +545,7 @@ function MyAssetsTab({
             {visible.length ? (
                 <div className={gridClass}>
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreserve={onPreserveImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
+                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
                     ))}
                 </div>
             ) : (
@@ -581,7 +562,7 @@ function MyAssetsTab({
 
 function privateMediaSource(asset: ImageAsset): PrivateMediaSource {
     const source = asset.metadata?.mediaSource;
-    return source === "canvas_temporary" || source === "generated" ? source : "upload";
+    return source === "generated" ? source : "upload";
 }
 
 function PrivateSystemFolderTree({ currentSource, onNavigate }: { currentSource?: PrivateMediaSource; onNavigate: (source?: PrivateMediaSource) => void }) {
@@ -628,13 +609,11 @@ function formatMaterialPreviewError(error: unknown) {
 function PickerCard({
     asset,
     onRetry,
-    onPreserve,
     onPreview,
     onImageContextMenu,
 }: {
     asset: ImageAsset;
     onRetry: (asset: ImageAsset) => void;
-    onPreserve: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
     onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
 }) {
@@ -643,9 +622,6 @@ function PickerCard({
     const failed = uploadState === "failed";
     const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
     const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
-    const temporary = privateMediaSource(asset) === "canvas_temporary";
-    const expiresAt = typeof asset.metadata?.expiresAt === "string" ? Date.parse(asset.metadata.expiresAt) : NaN;
-    const expired = temporary && Number.isFinite(expiresAt) && expiresAt <= Date.now();
     const [loadFailed, setLoadFailed] = useState(false);
     const loadPreview = useCallback(async () => {
         return await loadMediaThumbnail(mediaId, async () => {
@@ -653,7 +629,7 @@ function PickerCard({
                 return access.previewUrl || access.url;
             });
     }, [mediaId, publicImageId]);
-    const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed && !expired;
+    const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed;
     const { ref, url: previewURL, error: previewLoadError, loading } = useVisibleMediaPreview({
         identity: asset.id,
         enabled: shouldLoadPreview,
@@ -690,9 +666,9 @@ function PickerCard({
                     .catch(() => onPreview({ title: asset.title, url: preview }));
             }}
             onContextMenu={(event: MouseEvent) => onImageContextMenu(asset, event)}
-            title={expired ? "画板临时素材已到期，可右键删除" : previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
+            title={previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
         >
-            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder expired={expired} />}
+            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder />}
             {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
             {previewError ? (
                 <div className="absolute inset-x-0 bottom-0 truncate bg-amber-100/95 px-1.5 py-1 text-[10px] leading-3 text-amber-950 dark:bg-amber-950/95 dark:text-amber-100" aria-label="缩略图加载失败" title={previewError}>
@@ -713,35 +689,14 @@ function PickerCard({
                     <RefreshCw className="size-3.5" />
                 </button>
             ) : null}
-            {temporary && !expired ? (
-                <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-1 bg-black/65 px-1.5 py-1 text-[10px] text-white">
-                    <span className="truncate">{temporaryExpiryLabel(expiresAt)}</span>
-                    <button
-                        type="button"
-                        className="shrink-0 rounded bg-white/20 px-1.5 py-0.5 transition hover:bg-white/30"
-                        onClick={(event) => {
-                            event.stopPropagation();
-                            onPreserve(asset);
-                        }}
-                    >
-                        永久保存
-                    </button>
-                </div>
-            ) : null}
         </div>
     );
 }
-function temporaryExpiryLabel(expiresAt: number) {
-    if (!Number.isFinite(expiresAt)) return "七天后到期";
-    const remaining = Math.max(0, expiresAt - Date.now());
-    const days = Math.ceil(remaining / (24 * 60 * 60 * 1000));
-    return days > 0 ? `${days} 天后到期` : "即将到期";
-}
-function BrokenImagePlaceholder({ expired = false }: { expired?: boolean }) {
+function BrokenImagePlaceholder() {
     return (
         <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 bg-stone-100 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
             <ImageOff className="size-5" aria-hidden />
-            <span>{expired ? "临时素材已到期" : "图片已损坏"}</span>
+            <span>图片已损坏</span>
         </div>
     );
 }

@@ -2,7 +2,6 @@ package router
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -56,7 +55,7 @@ func TestPrivateMediaDeleteRouteIsProtected(t *testing.T) {
 	}
 }
 
-func TestCanvasUploadCreatesSevenDayTemporaryMediaAndPreserveKeepsTheObject(t *testing.T) {
+func TestCanvasUploadCreatesPermanentLibraryMedia(t *testing.T) {
 	owner := "canvas-upload-owner-" + time.Now().Format("20060102150405.000000000")
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -96,58 +95,31 @@ func TestCanvasUploadCreatesSevenDayTemporaryMediaAndPreserveKeepsTheObject(t *t
 	if err != nil || !found {
 		t.Fatalf("saved canvas media = %#v, found=%t, err=%v", item, found, err)
 	}
-	if item.Source != model.MediaSourceCanvasTemporary || item.ExpiresAt == nil {
-		t.Fatalf("canvas media = %#v, want temporary source with expiration", item)
+	if item.Source != model.MediaSourceUpload || item.ExpiresAt != nil {
+		t.Fatalf("canvas media = %#v, want permanent library media", item)
 	}
-	if remaining := time.Until(*item.ExpiresAt); remaining < 6*24*time.Hour || remaining > 7*24*time.Hour+time.Minute {
-		t.Fatalf("temporary expiration has %s remaining, want about seven days", remaining)
-	}
-	if !strings.Contains(item.ObjectKey, "/private/canvas/"+owner+"/") {
+	if !strings.Contains(item.ObjectKey, "/private/library/"+owner+"/") {
 		t.Fatalf("canvas object key = %q", item.ObjectKey)
-	}
-
-	preserve := httptest.NewRequest(http.MethodPost, "/api/v1/private-images/"+item.ID+"/preserve", nil)
-	preserve.Header.Set("X-Portal-User-Uid", owner)
-	preservedResponse := httptest.NewRecorder()
-	New().ServeHTTP(preservedResponse, preserve)
-	if preservedResponse.Code != http.StatusOK {
-		t.Fatalf("preserve temporary media = %d/%s", preservedResponse.Code, preservedResponse.Body.String())
-	}
-	preserved, found, err := repository.GetMedia(item.ID)
-	if err != nil || !found || preserved.Source != model.MediaSourceUpload || preserved.ExpiresAt != nil || preserved.ObjectKey != item.ObjectKey {
-		t.Fatalf("preserved media = %#v, found=%t, err=%v", preserved, found, err)
 	}
 }
 
-func TestExpiredTemporaryMediaCleanupDeletesRecordsAfterMissingOrExistingObjects(t *testing.T) {
+func TestPromoteLegacyCanvasTemporaryMediaKeepsObjectKey(t *testing.T) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(-time.Minute)
-	existing := model.Media{ID: "media-expired-existing-" + now.Format("20060102150405.000000000"), OwnerUID: "expired-owner", Source: model.MediaSourceCanvasTemporary, ObjectKey: "images/private/canvas/expired-owner/2026/08/existing.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
-	missing := model.Media{ID: "media-expired-missing-" + now.Format("20060102150405.000000000"), OwnerUID: "expired-owner", Source: model.MediaSourceCanvasTemporary, ObjectKey: "images/private/canvas/expired-owner/2026/08/missing.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
-	for _, item := range []model.Media{existing, missing} {
-		if _, err := repository.SaveMedia(item); err != nil {
-			t.Fatal(err)
-		}
-	}
-	existingPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(existing.ObjectKey))
-	if err := os.MkdirAll(filepath.Dir(existingPath), 0755); err != nil {
+	item := model.Media{ID: "media-legacy-canvas-" + now.Format("20060102150405.000000000"), OwnerUID: "legacy-owner", Source: model.MediaSource("canvas_temporary"), ObjectKey: "images/private/canvas/legacy-owner/2026/08/image.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
+	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(existingPath, []byte("png"), 0644); err != nil {
-		t.Fatal(err)
+	updated, err := repository.PromoteLegacyCanvasTemporaryMedia()
+	if err != nil || updated < 1 {
+		t.Fatalf("PromoteLegacyCanvasTemporaryMedia() = %d, %v", updated, err)
 	}
-	deleted, err := service.CleanupExpiredTemporaryMedia(context.Background(), now)
-	if err != nil || deleted < 2 {
-		t.Fatalf("CleanupExpiredTemporaryMedia() = %d, %v", deleted, err)
+	promoted, found, err := repository.GetMedia(item.ID)
+	if err != nil || !found {
+		t.Fatalf("promoted media found=%t err=%v", found, err)
 	}
-	if _, found, err := repository.GetMedia(existing.ID); err != nil || found {
-		t.Fatalf("existing expired record found=%t err=%v", found, err)
-	}
-	if _, found, err := repository.GetMedia(missing.ID); err != nil || found {
-		t.Fatalf("missing expired record found=%t err=%v", found, err)
-	}
-	if _, err := os.Stat(existingPath); !os.IsNotExist(err) {
-		t.Fatalf("expired local object should be deleted, stat error=%v", err)
+	if promoted.Source != model.MediaSourceUpload || promoted.ExpiresAt != nil || promoted.ObjectKey != item.ObjectKey {
+		t.Fatalf("promoted media = %#v", promoted)
 	}
 }
 
@@ -625,6 +597,35 @@ func TestPrivateMediaDeleteCleansDatabaseRecordWhenLocalObjectIsMissing(t *testi
 	}
 	if found {
 		t.Fatal("media record must be removed when its object is already missing")
+	}
+}
+
+func TestPrivateMediaDeleteKeepsRecordAndReturnsSafeMessageWhenStorageIsUnavailable(t *testing.T) {
+	item := model.Media{ID: "media-private-delete-storage-failure", OwnerUID: "owner", ObjectKey: "images/private/owner/unavailable.png", ContentType: "image/png"}
+	if _, err := repository.SaveMedia(item); err != nil {
+		t.Fatal(err)
+	}
+	previousStorage := config.Cfg.MediaStorage
+	config.Cfg.MediaStorage = "unavailable"
+	t.Cleanup(func() { config.Cfg.MediaStorage = previousStorage })
+
+	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
+	request.Header.Set("X-Portal-User-Uid", item.OwnerUID)
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+
+	var body struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Code != 1 || body.Msg != "删除图片失败，请稍后重试" {
+		t.Fatalf("storage failure response = %#v, body = %s", body, response.Body.String())
+	}
+	if _, found, err := repository.GetMedia(item.ID); err != nil || !found {
+		t.Fatalf("storage failure must retain media record, found=%t err=%v", found, err)
 	}
 }
 

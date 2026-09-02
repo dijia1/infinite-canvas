@@ -36,10 +36,6 @@ export function updatePrivateImage(id: string, patch: { title?: string; folderId
     return apiPatch<PrivateImage>(`/api/v1/private-images/${encodeURIComponent(id)}`, patch);
 }
 
-export function preserveTemporaryPrivateImage(id: string) {
-    return apiPost<PrivateImage>(`/api/v1/private-images/${encodeURIComponent(id)}/preserve`);
-}
-
 export function createPrivateFolder(input: { title: string; parentId?: string }) {
     return apiPost<PrivateFolder>("/api/v1/private-folders", input);
 }

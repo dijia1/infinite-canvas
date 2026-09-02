@@ -5,9 +5,8 @@ import "time"
 type MediaSource string
 
 const (
-	MediaSourceGenerated       MediaSource = "generated"
-	MediaSourceUpload          MediaSource = "upload"
-	MediaSourceCanvasTemporary MediaSource = "canvas_temporary"
+	MediaSourceGenerated MediaSource = "generated"
+	MediaSourceUpload    MediaSource = "upload"
 )
 
 // Media is a private image object owned by one Portal user.

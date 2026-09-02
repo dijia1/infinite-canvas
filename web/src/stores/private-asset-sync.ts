@@ -4,7 +4,6 @@ import type { Asset, PrivateAssetFolder } from "./use-asset-store";
 
 function sourceLabel(source: PrivateImage["source"]) {
     if (source === "generated") return "AI 生成";
-    if (source === "canvas_temporary") return "画板临时素材";
     return "我的上传";
 }
 

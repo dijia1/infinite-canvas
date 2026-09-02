@@ -915,7 +915,7 @@ function InfiniteCanvasPage() {
     }, [cleanupAssetImages, deleteProjects, projectId, router]);
 
     const createImageFileNode = useCallback(async (file: File, position: Position, options: { focus?: boolean; refreshAssets?: boolean } = {}) => {
-        const remote = await uploadUserImage(file, "canvas");
+        const remote = await uploadUserImage(file, "library");
         let image: UploadedImage;
         try {
             image = await uploadImage(file, remote.mediaId);

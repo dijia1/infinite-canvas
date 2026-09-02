@@ -33,7 +33,6 @@ func New() *gin.Engine {
 	v1.DELETE("/media/:id", func(c *gin.Context) { handler.DeletePrivateMedia(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/private-images", gin.WrapF(handler.PrivateImages))
 	v1.PATCH("/private-images/:id", func(c *gin.Context) { handler.UpdatePrivateImage(c.Writer, c.Request, c.Param("id")) })
-	v1.POST("/private-images/:id/preserve", func(c *gin.Context) { handler.PreserveTemporaryPrivateMedia(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/private-folders", gin.WrapF(handler.PrivateFolders))
 	v1.POST("/private-folders", gin.WrapF(handler.CreatePrivateFolder))
 	v1.PATCH("/private-folders/:id", func(c *gin.Context) { handler.RenamePrivateFolder(c.Writer, c.Request, c.Param("id")) })

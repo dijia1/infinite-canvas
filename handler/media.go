@@ -39,21 +39,6 @@ func UploadImage(w http.ResponseWriter, r *http.Request) {
 	OK(w, result)
 }
 
-func PreserveTemporaryPrivateMedia(w http.ResponseWriter, r *http.Request, id string) {
-	user, ok := service.PortalUserFromContext(r.Context())
-	if !ok {
-		Fail(w, "未经过 Portal Gateway 身份验证")
-		return
-	}
-	item, err := service.PreserveTemporaryPrivateMedia(r.Context(), user, id)
-	if err != nil {
-		FailError(w, err)
-		return
-	}
-	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_image_preserve", TargetType: "media", TargetID: item.ID, TargetName: item.Title, MediaIDs: []string{item.ID}})
-	OK(w, item)
-}
-
 func MediaAccess(w http.ResponseWriter, r *http.Request, id string) {
 	user, ok := service.PortalUserFromContext(r.Context())
 	if !ok {
