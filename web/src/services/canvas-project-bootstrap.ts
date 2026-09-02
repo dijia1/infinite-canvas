@@ -22,12 +22,50 @@ type CanvasBootstrapOptions = {
     uid: string;
     getProjects: () => CanvasProject[];
     api?: Pick<CanvasProjectsApi, "list" | "importProjects">;
-    persistNormalizedProject?: (id: string, nodes: CanvasNodeData[]) => void;
+    persistNormalizedProject?: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean | void;
     adoptImportedProjects?: (projects: CanvasProjectRecord[], snapshots: Map<string, CanvasProject>) => void;
     replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
     startSync: (uid: string) => void;
     imageDependencies?: LegacyCanvasImageDependencies;
 };
+
+const STABLE_IMAGE_METADATA_KEYS = ["mediaId", "storageKey", "mediaExpiresAt", "naturalWidth", "naturalHeight", "bytes", "mimeType", "status", "errorDetails"] as const;
+
+export function mergeNormalizedLegacyNodes(currentNodes: CanvasNodeData[], capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) {
+    const currentById = new Map(currentNodes.map((node, index) => [node.id, { node, index }]));
+    let nodes = currentNodes;
+    let complete = true;
+
+    normalizedNodes.forEach((normalized, index) => {
+        const captured = capturedNodes[index];
+        if (!captured || normalized === captured) return;
+        const currentEntry = currentById.get(captured.id);
+        const current = currentEntry?.node;
+        const sameLegacySource =
+            current?.type === CanvasNodeType.Image &&
+            captured.type === CanvasNodeType.Image &&
+            !current.metadata?.mediaId &&
+            !current.metadata?.publicImageId &&
+            current.metadata?.storageKey === captured.metadata?.storageKey &&
+            current.metadata?.content === captured.metadata?.content;
+        if (!currentEntry || !sameLegacySource) {
+            complete = false;
+            return;
+        }
+
+        const metadata = { ...current.metadata };
+        delete metadata.content;
+        for (const key of STABLE_IMAGE_METADATA_KEYS) {
+            const value = normalized.metadata?.[key];
+            if (value === undefined) delete metadata[key];
+            else Object.assign(metadata, { [key]: value });
+        }
+        if (nodes === currentNodes) nodes = [...currentNodes];
+        nodes[currentEntry.index] = { ...current, metadata };
+    });
+
+    return { nodes, complete };
+}
 
 type OnlineEventTarget = {
     addEventListener: (event: "online", listener: () => void) => void;
@@ -156,7 +194,10 @@ export async function bootstrapCanvasProjects(options: CanvasBootstrapOptions) {
     const normalizedProjects: CanvasProject[] = [];
     for (const project of missingLocalProjects) {
         const normalized = await normalizeLegacyCanvasProject(project, options.imageDependencies || defaultImageDependencies);
-        if (normalized.nodes.some((node, index) => node !== project.nodes[index])) options.persistNormalizedProject?.(project.id, normalized.nodes);
+        if (normalized.nodes.some((node, index) => node !== project.nodes[index])) {
+            const applied = options.persistNormalizedProject?.(project.id, project.nodes, normalized.nodes);
+            if (applied === false) throw new Error("画布图片已在迁移期间发生变化，请稍后重试");
+        }
         normalizedProjects.push(normalized);
     }
 

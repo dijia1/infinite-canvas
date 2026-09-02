@@ -7,6 +7,7 @@ import { localForageStorage } from "@/lib/localforage-storage";
 import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord, type CanvasProjectsApi } from "@/services/api/canvas-projects";
 import { ApiRequestError } from "@/services/api/request";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
+import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
 export type CanvasProject = {
@@ -46,6 +47,7 @@ export type CanvasStore = {
     markBootstrapUnavailable: (scope: string) => void;
     startSync: (scope: string) => void;
     adoptImportedProjects: (projects: CanvasProjectRecord[], snapshots: Map<string, CanvasProject>) => void;
+    applyLegacyImageNormalization: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean;
     replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
     refreshProjectFromServer: (id: string) => Promise<void>;
     retryPendingSaves: () => void;
@@ -420,6 +422,21 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             }
                             return { projectSync };
                         });
+                    },
+                    applyLegacyImageNormalization: (id, capturedNodes, normalizedNodes) => {
+                        let complete = false;
+                        let changed = false;
+                        set((state) => ({
+                            projects: state.projects.map((project) => {
+                                if (project.id !== id) return project;
+                                const merged = mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes);
+                                complete = merged.complete;
+                                changed = merged.nodes !== project.nodes;
+                                return changed ? { ...project, nodes: merged.nodes, updatedAt: new Date().toISOString() } : project;
+                            }),
+                        }));
+                        if (changed) queueChange(id);
+                        return complete;
                     },
                     replaceProjectsFromServer: (records) => {
                         set((state) => {

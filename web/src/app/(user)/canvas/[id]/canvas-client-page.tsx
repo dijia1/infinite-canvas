@@ -286,7 +286,11 @@ function InfiniteCanvasPage() {
         }),
         [],
     );
-    const canonicalRestore = useMemo(() => createCanvasCanonicalRestore<{ project: NonNullable<typeof currentProject>; nodes: CanvasNodeData[] }>(), []);
+    const canonicalRestore = useMemo(() => createCanvasCanonicalRestore(), []);
+    const readCanonicalIdentity = useCallback(() => {
+        const state = useCanvasStore.getState();
+        return state.projects.some((project) => project.id === projectId) ? { projectId, generation: state.canonicalGeneration } : null;
+    }, [projectId]);
 
     const resolveStoredImageReference = useCallback(async (storageKey: string) => {
         const cached = await resolveImageUrl(storageKey, "");
@@ -318,17 +322,19 @@ function InfiniteCanvasPage() {
     const restoreProject = useCallback(
         (project: NonNullable<typeof currentProject>) =>
             canonicalRestore.run(
+                { projectId, generation: canonicalGeneration },
                 async () => {
                     const initialNodes = resetInterruptedGeneration(project.nodes);
                     const rect = containerRef.current?.getBoundingClientRect();
                     const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
                     const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, project.viewport, initialViewportSize);
-                    pendingCanvasImageHydrationIdsRef.current = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
                     const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate });
-                    restoredNodes.filter(shouldHydrate).forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
-                    return { project, nodes: restoredNodes };
+                    const pendingImageIds = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
+                    restoredNodes.filter(shouldHydrate).forEach((node) => pendingImageIds.delete(node.id));
+                    return { project, nodes: restoredNodes, pendingImageIds };
                 },
-                ({ project: restoredProject, nodes: restoredNodes }) => {
+                ({ project: restoredProject, nodes: restoredNodes, pendingImageIds }) => {
+                    pendingCanvasImageHydrationIdsRef.current = pendingImageIds;
                     canonicalProjectSaveGenerationRef.current = canonicalGeneration;
                     canonicalViewportSaveGenerationRef.current = canonicalGeneration;
                     setNodes(restoredNodes);
@@ -340,8 +346,9 @@ function InfiniteCanvasPage() {
                     setLoadedCanonicalGeneration(canonicalGeneration);
                     setProjectLoaded(true);
                 },
+                readCanonicalIdentity,
             ),
-        [canonicalGeneration, canonicalRestore, canvasImageHydrationDependencies, replaceBaseline],
+        [canonicalGeneration, canonicalRestore, canvasImageHydrationDependencies, projectId, readCanonicalIdentity, replaceBaseline],
     );
 
     const cleanupCanvasFiles = useCallback(
@@ -578,29 +585,45 @@ function InfiniteCanvasPage() {
     }, [collapsingBatchIds, nodes, size.height, size.width, viewport.k, viewport.x, viewport.y]);
 
     useEffect(() => {
-        if (!projectLoaded) return;
+        if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration) return;
         const candidates = visibleNodes.filter((node) => pendingCanvasImageHydrationIdsRef.current.has(node.id));
         if (!candidates.length) return;
-        candidates.forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
+        const identity = { projectId, generation: canonicalGeneration };
+        const token = canonicalRestore.capture(identity);
+        if (!canonicalRestore.applyIfCurrent(token, readCanonicalIdentity, () => candidates.forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id)))) return;
 
-        void hydrateCanvasImages(candidates, canvasImageHydrationDependencies).then((restoredNodes) => {
-            const restoredById = new Map(restoredNodes.map((node) => [node.id, node]));
-            pause();
-            setNodes((current) => current.map((node) => restoredById.get(node.id) || node));
-            window.requestAnimationFrame(() => resume());
-        });
-    }, [canvasImageHydrationDependencies, pause, projectLoaded, resume, visibleNodes]);
+        void canonicalRestore
+            .runCurrent(
+                identity,
+                () => hydrateCanvasImages(candidates, canvasImageHydrationDependencies),
+                (restoredNodes, hydrationToken) => {
+                    const restoredById = new Map(restoredNodes.map((node) => [node.id, node]));
+                    setNodes((current) => {
+                        if (!canonicalRestore.isCurrent(hydrationToken, readCanonicalIdentity)) return current;
+                        pause();
+                        window.requestAnimationFrame(resume);
+                        return current.map((node) => restoredById.get(node.id) || node);
+                    });
+                },
+                readCanonicalIdentity,
+            )
+            .catch(() => canonicalRestore.applyIfCurrent(token, readCanonicalIdentity, () => candidates.forEach((node) => pendingCanvasImageHydrationIdsRef.current.add(node.id))));
+    }, [canonicalGeneration, canonicalRestore, canvasImageHydrationDependencies, loadedCanonicalGeneration, pause, projectId, projectLoaded, readCanonicalIdentity, resume, visibleNodes]);
 
     useEffect(() => {
-        const nextStorageById = new Map(visibleNodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storageKey).map((node) => [node.id, node.metadata!.storageKey!] as const));
-        const visibleStorageKeys = new Set(nextStorageById.values());
-        renderedCanvasImageStorageByIdRef.current.forEach((storageKey, nodeId) => {
-            if (nextStorageById.has(nodeId) || visibleStorageKeys.has(storageKey)) return;
-            releaseImageObjectURL(storageKey);
-            pendingCanvasImageHydrationIdsRef.current.add(nodeId);
+        if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration) return;
+        const token = canonicalRestore.capture({ projectId, generation: canonicalGeneration });
+        canonicalRestore.applyIfCurrent(token, readCanonicalIdentity, () => {
+            const nextStorageById = new Map(visibleNodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storageKey).map((node) => [node.id, node.metadata!.storageKey!] as const));
+            const visibleStorageKeys = new Set(nextStorageById.values());
+            renderedCanvasImageStorageByIdRef.current.forEach((storageKey, nodeId) => {
+                if (nextStorageById.has(nodeId) || visibleStorageKeys.has(storageKey)) return;
+                releaseImageObjectURL(storageKey);
+                pendingCanvasImageHydrationIdsRef.current.add(nodeId);
+            });
+            renderedCanvasImageStorageByIdRef.current = nextStorageById;
         });
-        renderedCanvasImageStorageByIdRef.current = nextStorageById;
-    }, [visibleNodes]);
+    }, [canonicalGeneration, canonicalRestore, loadedCanonicalGeneration, projectId, projectLoaded, readCanonicalIdentity, visibleNodes]);
     const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
     const visibleConnections = useMemo(
         () =>

@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { CanvasNodeType } from "@/app/(user)/canvas/types";
 import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
-import type { CanvasProjectRecord, CanvasProjectsApi } from "./api/canvas-projects";
-import { bootstrapCanvasProjects, normalizeLegacyCanvasProject, retryCanvasBootstrapOnOnline } from "./canvas-project-bootstrap.ts";
+import type { CanvasProjectRecord, CanvasProjectsApi, CreateCanvasProjectInput } from "./api/canvas-projects";
+import { bootstrapCanvasProjects, mergeNormalizedLegacyNodes, normalizeLegacyCanvasProject, retryCanvasBootstrapOnOnline } from "./canvas-project-bootstrap.ts";
 
 function localProject(overrides: Partial<CanvasProject> = {}): CanvasProject {
     return {
@@ -321,8 +321,8 @@ test("persists normalized legacy media locally so a failed import retry does not
                     return { items: [serverProject("local-project")], total: 1 };
                 },
             },
-            persistNormalizedProject: (id, nodes) => {
-                projects = projects.map((project) => (project.id === id ? { ...project, nodes } : project));
+            persistNormalizedProject: (id, capturedNodes, normalizedNodes) => {
+                projects = projects.map((project) => (project.id === id ? { ...project, nodes: mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes).nodes } : project));
             },
             replaceProjectsFromServer: () => undefined,
             startSync: () => undefined,
@@ -341,6 +341,83 @@ test("persists normalized legacy media locally so a failed import retry does not
 
     assert.equal(uploadCount, 1);
     assert.equal(projects[0]?.nodes[0]?.metadata?.mediaId, "stable-media");
+});
+
+test("merges delayed legacy media normalization into the current project without overwriting concurrent node work", async () => {
+    const legacy = {
+        id: "legacy-image",
+        type: CanvasNodeType.Image,
+        title: "旧图片",
+        position: { x: 0, y: 0 },
+        width: 10,
+        height: 10,
+        metadata: { content: "data:image/png;base64,c291cmNl", prompt: "旧提示" },
+    };
+    let projects = [localProject({ nodes: [legacy] })];
+    let releaseUpload!: () => void;
+    const uploadDelay = new Promise<void>((resolve) => (releaseUpload = resolve));
+    let uploadStarted!: () => void;
+    const started = new Promise<void>((resolve) => (uploadStarted = resolve));
+    let imported: CreateCanvasProjectInput | undefined;
+
+    const bootstrap = bootstrapCanvasProjects({
+        uid: "portal-user",
+        getProjects: () => projects,
+        api: {
+            list: async () => ({ items: [], total: 0 }),
+            importProjects: async (inputs) => {
+                imported = inputs[0];
+                return { items: [serverProject("local-project")], total: 1 };
+            },
+        },
+        persistNormalizedProject: (id, capturedNodes, normalizedNodes) => {
+            const project = projects.find((item) => item.id === id)!;
+            const merged = mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes);
+            projects = projects.map((item) => (item.id === id ? { ...item, nodes: merged.nodes } : item));
+            return merged.complete;
+        },
+        replaceProjectsFromServer: () => undefined,
+        startSync: () => undefined,
+        imageDependencies: {
+            getImageBlob: async () => null,
+            uploadUserImage: async () => {
+                uploadStarted();
+                await uploadDelay;
+                return { mediaId: "stable-media", url: "https://signed.example/image" };
+            },
+            primeStableImage: async (blob, mediaId) => ({ storageKey: `media:${mediaId}:v1:original`, width: 10, height: 10, bytes: blob.size, mimeType: blob.type }),
+        },
+    });
+
+    await started;
+    projects = projects.map((project) => ({
+        ...project,
+        nodes: [
+            { ...project.nodes[0]!, title: "并发改名", metadata: { ...project.nodes[0]!.metadata, prompt: "并发提示" } },
+            { id: "new-text", type: CanvasNodeType.Text, title: "新节点", position: { x: 20, y: 20 }, width: 100, height: 80, metadata: { content: "并发新增" } },
+        ],
+    }));
+    releaseUpload();
+    await bootstrap;
+
+    assert.equal(imported?.document.nodes.length, 2);
+    assert.equal(imported?.document.nodes[0]?.title, "并发改名");
+    assert.equal(imported?.document.nodes[0]?.metadata?.prompt, "并发提示");
+    assert.equal(imported?.document.nodes[0]?.metadata?.mediaId, "stable-media");
+    assert.equal(imported?.document.nodes[0]?.metadata?.content, undefined);
+    assert.equal(imported?.document.nodes[1]?.id, "new-text");
+});
+
+test("defers normalization when the captured legacy source changed incompatibly", () => {
+    const captured = localProject({ nodes: [{ id: "image", type: CanvasNodeType.Image, title: "图", position: { x: 0, y: 0 }, width: 10, height: 10, metadata: { content: "data:image/png;base64,b2xk" } }] }).nodes;
+    const normalized = [{ ...captured[0]!, metadata: { mediaId: "uploaded-old", storageKey: "media:uploaded-old:v1:original", status: "success" as const } }];
+    const current = [{ ...captured[0]!, metadata: { content: "data:image/png;base64,bmV3" } }];
+
+    const merged = mergeNormalizedLegacyNodes(current, captured, normalized);
+
+    assert.equal(merged.complete, false);
+    assert.equal(merged.nodes, current);
+    assert.equal(merged.nodes[0]?.metadata?.content, "data:image/png;base64,bmV3");
 });
 
 test("aborts bootstrap upload failures without replacing the original retryable local source", async () => {

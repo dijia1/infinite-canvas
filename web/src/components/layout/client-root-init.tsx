@@ -42,7 +42,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                 await bootstrapCanvasProjects({
                     uid,
                     getProjects: () => useCanvasStore.getState().projects,
-                    persistNormalizedProject: (id, nodes) => state.updateProject(id, { nodes }),
+                    persistNormalizedProject: state.applyLegacyImageNormalization,
                     adoptImportedProjects: state.adoptImportedProjects,
                     replaceProjectsFromServer: state.replaceProjectsFromServer,
                     startSync: state.startSync,
