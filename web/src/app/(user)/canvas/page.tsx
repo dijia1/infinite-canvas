@@ -21,6 +21,8 @@ export default function CanvasPage() {
     const router = useRouter();
     const inputRef = useRef<HTMLInputElement>(null);
     const hydrated = useCanvasStore((state) => state.hydrated);
+    const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
+    const ready = hydrated && readyForCanvasMutations;
     const projects = useCanvasStore((state) => state.projects);
     const createProject = useCanvasStore((state) => state.createProject);
     const importProject = useCanvasStore((state) => state.importProject);
@@ -69,30 +71,30 @@ export default function CanvasPage() {
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (
                             <>
-                                <Button disabled={!hydrated} icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects(projects.filter((project) => selectedIds.includes(project.id)), `无限画布-${selectedIds.length}个项目`)}>
+                                <Button disabled={!ready} icon={<Download className="size-4" />} onClick={() => void exportCanvasProjects(projects.filter((project) => selectedIds.includes(project.id)), `无限画布-${selectedIds.length}个项目`)}>
                                     导出选中
                                 </Button>
-                                <Button disabled={!hydrated} onClick={() => setDeleteIds(selectedIds)}>
+                                <Button disabled={!ready} onClick={() => setDeleteIds(selectedIds)}>
                                     删除选中
                                 </Button>
                             </>
                         ) : null}
                         {projects.length ? (
-                            <Button disabled={!hydrated} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
+                            <Button disabled={!ready} onClick={() => setDeleteIds(projects.map((project) => project.id))}>
                                 删除全部
                             </Button>
                         ) : null}
-                        <Button disabled={!hydrated} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
+                        <Button disabled={!ready} icon={<FileUp className="size-4" />} onClick={() => inputRef.current?.click()}>
                             导入画布
                         </Button>
-                        <Button disabled={!hydrated} type="primary" icon={<Plus className="size-4" />} onClick={createAndEnter}>
+                        <Button disabled={!ready} type="primary" icon={<Plus className="size-4" />} onClick={createAndEnter}>
                             新建画布
                         </Button>
                     </div>
                 </header>
 
-                {!hydrated ? (
-                    <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">正在加载画布...</section>
+                {!ready ? (
+                    <section className="flex min-h-[360px] items-center justify-center border-y border-stone-200 text-sm text-stone-500 dark:border-stone-800">{hydrated ? "正在同步画布..." : "正在加载画布..."}</section>
                 ) : projects.length ? (
                     <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                         {projects.map((project) => (

@@ -1,6 +1,7 @@
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/app/(user)/canvas/types";
 import { apiDelete, apiGet, apiPost, apiPut } from "./request";
+import { sanitizeCanvasProjectDocument } from "../canvas-project-document";
 
 export type CanvasProjectDocument = {
     nodes: CanvasNodeData[];
@@ -56,15 +57,15 @@ export function fetchCanvasProject(id: string) {
 }
 
 export function createCanvasProject(input: CreateCanvasProjectInput) {
-    return apiPost<CanvasProjectRecord>("/api/v1/canvas/projects", input);
+    return apiPost<CanvasProjectRecord>("/api/v1/canvas/projects", { ...input, document: sanitizeCanvasProjectDocument(input.document) });
 }
 
 export function importCanvasProjects(projects: CreateCanvasProjectInput[]) {
-    return apiPost<CanvasProjectList>("/api/v1/canvas/projects/import", { projects });
+    return apiPost<CanvasProjectList>("/api/v1/canvas/projects/import", { projects: projects.map((project) => ({ ...project, document: sanitizeCanvasProjectDocument(project.document) })) });
 }
 
 export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput) {
-    return apiPut<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, input);
+    return apiPut<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) });
 }
 
 export async function deleteCanvasProject(id: string, revision: number) {

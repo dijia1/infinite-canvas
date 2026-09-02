@@ -359,3 +359,150 @@ test("restores the local project when a stale delete conflicts", async () => {
     assert.equal(store.getState().projectSync[local.id]?.conflict, true);
     assert.equal(store.getState().projectSync[local.id]?.operation, "delete");
 });
+
+test("authenticated hydration blocks initial editing until bootstrap succeeds or falls back offline", async () => {
+    const { api } = apiDouble();
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, isOnline: () => false });
+
+    await store.getState().hydrate("portal-user");
+    assert.equal(store.getState().bootstrapStatus, "loading");
+    assert.equal(store.getState().readyForCanvasMutations, false);
+
+    const id = store.getState().createProject("bootstrap 中的项目");
+    assert.equal(store.getState().projectSync[id]?.dirty, true);
+    assert.equal(store.getState().projectSync[id]?.serverRevision, null);
+
+    store.getState().markBootstrapUnavailable("portal-user");
+    assert.equal(store.getState().bootstrapStatus, "offline");
+    assert.equal(store.getState().readyForCanvasMutations, true);
+});
+
+test("retains authenticated rename and delete races while adopting listed server revisions", async () => {
+    const local = serverProject({ title: "本地原始标题" });
+    const localValue = { ...local.document, id: local.id, title: local.title, createdAt: local.createdAt, updatedAt: local.updatedAt };
+    const storage: PersistStorage<CanvasStore> = {
+        getItem: async () => ({ state: { projects: [localValue], projectSync: {} } }) as never,
+        setItem: async () => undefined,
+        removeItem: async () => undefined,
+    };
+    const { api } = apiDouble();
+    const renamed = createCanvasStore({ api, storage, serverDebounceMs: 10_000, isOnline: () => false });
+    await renamed.getState().hydrate("portal-user");
+    renamed.getState().renameProject(local.id, "列表请求期间改名");
+    renamed.getState().replaceProjectsFromServer([serverProject({ revision: 4 })]);
+
+    assert.equal(renamed.getState().openProject(local.id)?.title, "列表请求期间改名");
+    assert.equal(renamed.getState().projectSync[local.id]?.dirty, true);
+    assert.equal(renamed.getState().projectSync[local.id]?.serverRevision, 4);
+
+    const deleted = createCanvasStore({ api, storage, serverDebounceMs: 10_000, isOnline: () => false });
+    await deleted.getState().hydrate("portal-user");
+    deleted.getState().deleteProjects([local.id]);
+    deleted.getState().replaceProjectsFromServer([serverProject({ revision: 5 })]);
+
+    assert.equal(deleted.getState().openProject(local.id), null);
+    assert.equal(deleted.getState().projectSync[local.id]?.operation, "delete");
+    assert.equal(deleted.getState().projectSync[local.id]?.serverRevision, 5);
+});
+
+test("adopts an imported revision cleanly only when the local snapshot has not changed", async () => {
+    const calls: string[] = [];
+    const { api } = apiDouble({
+        create: async () => {
+            calls.push("create");
+            return serverProject();
+        },
+        update: async (id, input) => {
+            calls.push(`update:${input.revision}:${input.title}`);
+            return serverProject({ id, revision: input.revision + 1, title: input.title, document: input.document });
+        },
+    });
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, serverDebounceMs: 10, isOnline: () => true });
+    await store.getState().hydrate("portal-user");
+    const id = store.getState().createProject("导入快照");
+    const snapshot = store.getState().openProject(id)!;
+
+    store.getState().renameProject(id, "导入期间的新标题");
+    store.getState().adoptImportedProjects([serverProject({ id, title: snapshot.title, revision: 7 })], new Map([[id, snapshot]]));
+
+    assert.equal(store.getState().openProject(id)?.title, "导入期间的新标题");
+    assert.equal(store.getState().projectSync[id]?.serverRevision, 7);
+    assert.equal(store.getState().projectSync[id]?.dirty, true);
+
+    store.getState().startSync("portal-user");
+    await waitForDebounce();
+    assert.deepEqual(calls, ["update:7:导入期间的新标题"]);
+
+    const cleanStore = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, serverDebounceMs: 10, isOnline: () => true });
+    await cleanStore.getState().hydrate("portal-user");
+    const cleanId = cleanStore.getState().createProject("未变化快照");
+    const cleanSnapshot = cleanStore.getState().openProject(cleanId)!;
+    cleanStore.getState().adoptImportedProjects([serverProject({ id: cleanId, title: cleanSnapshot.title, revision: 3 })], new Map([[cleanId, cleanSnapshot]]));
+    assert.equal(cleanStore.getState().projectSync[cleanId]?.dirty, false);
+    assert.equal(cleanStore.getState().projectSync[cleanId]?.serverRevision, 3);
+});
+
+test("waits for an in-flight save before conflict refresh and publishes one canonical generation", async () => {
+    let resolveUpdate!: (record: CanvasProjectRecord) => void;
+    const update = new Promise<CanvasProjectRecord>((resolve) => (resolveUpdate = resolve));
+    let getCount = 0;
+    const { api } = apiDouble({
+        update: async () => update,
+        get: async () => {
+            getCount += 1;
+            return serverProject({ title: "服务器最终版本", revision: 5 });
+        },
+    });
+    const store = createCanvasStore({ api, serverDebounceMs: 0, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+    const initialGeneration = store.getState().canonicalGeneration;
+    store.getState().renameProject("project-1", "保存中的本地版本");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const refresh = store.getState().refreshProjectFromServer("project-1");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(getCount, 0);
+    resolveUpdate(serverProject({ title: "已保存版本", revision: 2 }));
+    await refresh;
+
+    assert.equal(getCount, 1);
+    assert.equal(store.getState().openProject("project-1")?.title, "服务器最终版本");
+    assert.equal(store.getState().canonicalGeneration, initialGeneration + 1);
+    store.getState().renameProject("project-1", "普通本地修改");
+    assert.equal(store.getState().canonicalGeneration, initialGeneration + 1);
+});
+
+test("normal save strips transient image URLs from the request and keeps the local preview", async () => {
+    let requestDocument: CanvasProjectRecord["document"] | undefined;
+    const { api } = apiDouble({
+        update: async (id, input) => {
+            requestDocument = input.document;
+            return serverProject({ id, document: input.document, revision: 2 });
+        },
+    });
+    const store = createCanvasStore({ api, serverDebounceMs: 0, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+    const node = { id: "image", type: "image", title: "图片", position: { x: 0, y: 0 }, width: 10, height: 10, metadata: { mediaId: "media-1", content: "blob:local-preview" } } as never;
+    store.getState().updateProject("project-1", { nodes: [node] });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.equal(requestDocument?.nodes[0]?.metadata?.content, undefined);
+    assert.equal(store.getState().openProject("project-1")?.nodes[0]?.metadata?.content, "blob:local-preview");
+});
+
+test("a project deleted during import adopts the revision and next sync deletes instead of creating", async () => {
+    const calls: string[] = [];
+    const { api } = apiDouble({ delete: async (id, revision) => void calls.push(`delete:${id}:${revision}`) });
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, serverDebounceMs: 0, isOnline: () => true });
+    await store.getState().hydrate("portal-user");
+    const id = store.getState().createProject("导入后删除");
+    const snapshot = store.getState().openProject(id)!;
+    store.getState().deleteProjects([id]);
+    store.getState().adoptImportedProjects([serverProject({ id, revision: 9 })], new Map([[id, snapshot]]));
+    store.getState().startSync("portal-user");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    assert.deepEqual(calls, [`delete:${id}:9`]);
+});

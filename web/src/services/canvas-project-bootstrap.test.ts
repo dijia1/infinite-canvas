@@ -66,6 +66,9 @@ test("lists first, imports every missing local ID once, then replaces and enable
             events.push("replace");
             replacement = projects;
         },
+        adoptImportedProjects: (projects, snapshots) => {
+            events.push(`adopt:${projects[0]?.revision}:${snapshots.get("local-project")?.title}`);
+        },
         startSync: (uid) => events.push(`start:${uid}`),
         imageDependencies: {
             getImageBlob: async () => null,
@@ -78,11 +81,48 @@ test("lists first, imports every missing local ID once, then replaces and enable
         },
     });
 
-    assert.deepEqual(events, ["list", "projects", "import:local-project", "replace", "start:portal-user"]);
+    assert.deepEqual(events, ["list", "projects", "projects", "import:local-project", "adopt:1:本地画布", "replace", "start:portal-user"]);
     assert.deepEqual(
         replacement.map((project) => project.id),
         ["remote-project", "local-project"],
     );
+});
+
+test("imports a project created while listing and snapshots later rename/delete races for revision adoption", async () => {
+    let projects = [localProject({ id: "existing" })];
+    let resolveList!: (value: { items: CanvasProjectRecord[]; total: number }) => void;
+    const list = new Promise<{ items: CanvasProjectRecord[]; total: number }>((resolve) => (resolveList = resolve));
+    let resolveImport!: (value: { items: CanvasProjectRecord[]; total: number }) => void;
+    const importing = new Promise<{ items: CanvasProjectRecord[]; total: number }>((resolve) => (resolveImport = resolve));
+    let importedIds: string[] = [];
+    let adoptedSnapshot: CanvasProject | undefined;
+
+    const bootstrap = bootstrapCanvasProjects({
+        uid: "portal-user",
+        getProjects: () => projects,
+        api: {
+            list: async () => list,
+            importProjects: async (inputs) => {
+                importedIds = inputs.map((input) => input.id);
+                return importing;
+            },
+        },
+        adoptImportedProjects: (_records, snapshots) => {
+            adoptedSnapshot = snapshots.get("created-during-list");
+        },
+        replaceProjectsFromServer: () => undefined,
+        startSync: () => undefined,
+    });
+
+    projects = [...projects, localProject({ id: "created-during-list", title: "导入快照" })];
+    resolveList({ items: [serverProject("existing")], total: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(importedIds, ["created-during-list"]);
+    projects = projects.map((project) => (project.id === "created-during-list" ? { ...project, title: "导入中重命名" } : project));
+    resolveImport({ items: [serverProject("created-during-list")], total: 1 });
+    await bootstrap;
+
+    assert.equal(adoptedSnapshot?.title, "导入快照");
 });
 
 test("does not replace local data or enable sync when the initial server list fails", async () => {
@@ -301,4 +341,89 @@ test("persists normalized legacy media locally so a failed import retry does not
 
     assert.equal(uploadCount, 1);
     assert.equal(projects[0]?.nodes[0]?.metadata?.mediaId, "stable-media");
+});
+
+test("aborts bootstrap upload failures without replacing the original retryable local source", async () => {
+    const source = localProject({
+        nodes: [
+            {
+                id: "retryable-image",
+                type: CanvasNodeType.Image,
+                title: "可重试图片",
+                position: { x: 0, y: 0 },
+                width: 10,
+                height: 10,
+                metadata: { content: "data:image/png;base64,c291cmNl", storageKey: "image:retryable" },
+            },
+        ],
+    });
+
+    await assert.rejects(
+        () =>
+            normalizeLegacyCanvasProject(source, {
+                getImageBlob: async () => null,
+                uploadUserImage: async () => {
+                    throw new Error("network unavailable");
+                },
+                primeStableImage: async () => {
+                    throw new Error("不应写缓存");
+                },
+            }),
+        /network unavailable/,
+    );
+    assert.deepEqual(source.nodes[0]?.metadata, { content: "data:image/png;base64,c291cmNl", storageKey: "image:retryable" });
+});
+
+test("aborts bootstrap when the only possible cached source cannot be read", async () => {
+    const project = localProject({
+        nodes: [{ id: "legacy", type: CanvasNodeType.Image, title: "旧图", position: { x: 0, y: 0 }, width: 10, height: 10, metadata: { storageKey: "image:legacy" } }],
+    });
+    await assert.rejects(
+        () =>
+            normalizeLegacyCanvasProject(project, {
+                getImageBlob: async () => {
+                    throw new Error("indexeddb unavailable");
+                },
+                uploadUserImage: async () => ({ mediaId: "never", url: "" }),
+                primeStableImage: async () => ({ storageKey: "never", width: 1, height: 1, bytes: 1, mimeType: "image/png" }),
+            }),
+        /indexeddb unavailable/,
+    );
+    assert.deepEqual(project.nodes[0]?.metadata, { storageKey: "image:legacy" });
+});
+
+test("keeps uploaded stable media metadata when local cache priming fails", async () => {
+    const normalized = await normalizeLegacyCanvasProject(
+        localProject({
+            nodes: [
+                {
+                    id: "uploaded-image",
+                    type: CanvasNodeType.Image,
+                    title: "已上传图片",
+                    position: { x: 0, y: 0 },
+                    width: 320,
+                    height: 180,
+                    metadata: { content: "data:image/png;base64,c291cmNl", naturalWidth: 640, naturalHeight: 360, mimeType: "image/png" },
+                },
+            ],
+        }),
+        {
+            getImageBlob: async () => null,
+            uploadUserImage: async () => ({ mediaId: "uploaded-media", url: "https://signed.example/image", mediaExpiresAt: "2099-01-01T00:00:00Z" }),
+            primeStableImage: async () => {
+                throw new Error("indexeddb unavailable");
+            },
+        },
+    );
+
+    assert.deepEqual(normalized.nodes[0]?.metadata, {
+        mediaId: "uploaded-media",
+        storageKey: "media:uploaded-media:v1:original",
+        mediaExpiresAt: "2099-01-01T00:00:00Z",
+        naturalWidth: 640,
+        naturalHeight: 360,
+        bytes: 6,
+        mimeType: "image/png",
+        status: "success",
+    });
 });

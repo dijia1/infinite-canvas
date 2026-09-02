@@ -41,7 +41,8 @@ import { CanvasNode } from "../components/canvas-node";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
-import { CanvasSyncFeedback, refreshCanvasServerVersion } from "../components/canvas-sync-feedback";
+import { CanvasSyncFeedback } from "../components/canvas-sync-feedback";
+import { createCanvasCanonicalRestore } from "./canvas-canonical-restore";
 import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore } from "../stores/use-canvas-store";
@@ -216,7 +217,8 @@ function InfiniteCanvasPage() {
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const suppressNextProjectSaveRef = useRef(false);
+    const canonicalProjectSaveGenerationRef = useRef<number | null>(null);
+    const canonicalViewportSaveGenerationRef = useRef<number | null>(null);
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingCanvasImageHydrationIdsRef = useRef<Set<string>>(new Set());
@@ -230,10 +232,11 @@ function InfiniteCanvasPage() {
     const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
+    const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
+    const canonicalGeneration = useCanvasStore((state) => state.canonicalGeneration);
     const createProject = useCanvasStore((state) => state.createProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
-    const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -252,6 +255,7 @@ function InfiniteCanvasPage() {
     const [showImageInfo, setShowImageInfo] = useState(false);
     const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
     const [projectLoaded, setProjectLoaded] = useState(false);
+    const [loadedCanonicalGeneration, setLoadedCanonicalGeneration] = useState<number | null>(null);
     const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
     const [nodeImageSettingsOpen, setNodeImageSettingsOpen] = useState(false);
     const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
@@ -282,6 +286,7 @@ function InfiniteCanvasPage() {
         }),
         [],
     );
+    const canonicalRestore = useMemo(() => createCanvasCanonicalRestore<{ project: NonNullable<typeof currentProject>; nodes: CanvasNodeData[] }>(), []);
 
     const resolveStoredImageReference = useCallback(async (storageKey: string) => {
         const cached = await resolveImageUrl(storageKey, "");
@@ -311,28 +316,32 @@ function InfiniteCanvasPage() {
     });
 
     const restoreProject = useCallback(
-        async (project: NonNullable<typeof currentProject>) => {
-            const initialNodes = resetInterruptedGeneration(project.nodes);
-            const rect = containerRef.current?.getBoundingClientRect();
-            const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
-            const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, project.viewport, initialViewportSize);
-            pendingCanvasImageHydrationIdsRef.current = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
-            const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate });
-            restoredNodes.filter(shouldHydrate).forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
-            setNodes(restoredNodes);
-            setConnections(project.connections);
-            setBackgroundMode(project.backgroundMode);
-            setShowImageInfo(project.showImageInfo || false);
-            setViewport(project.viewport);
-            replaceBaseline({
-                nodes: restoredNodes,
-                connections: project.connections,
-                backgroundMode: project.backgroundMode,
-                showImageInfo: project.showImageInfo || false,
-            });
-            setProjectLoaded(true);
-        },
-        [canvasImageHydrationDependencies, replaceBaseline],
+        (project: NonNullable<typeof currentProject>) =>
+            canonicalRestore.run(
+                async () => {
+                    const initialNodes = resetInterruptedGeneration(project.nodes);
+                    const rect = containerRef.current?.getBoundingClientRect();
+                    const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
+                    const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, project.viewport, initialViewportSize);
+                    pendingCanvasImageHydrationIdsRef.current = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
+                    const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate });
+                    restoredNodes.filter(shouldHydrate).forEach((node) => pendingCanvasImageHydrationIdsRef.current.delete(node.id));
+                    return { project, nodes: restoredNodes };
+                },
+                ({ project: restoredProject, nodes: restoredNodes }) => {
+                    canonicalProjectSaveGenerationRef.current = canonicalGeneration;
+                    canonicalViewportSaveGenerationRef.current = canonicalGeneration;
+                    setNodes(restoredNodes);
+                    setConnections(restoredProject.connections);
+                    setBackgroundMode(restoredProject.backgroundMode);
+                    setShowImageInfo(restoredProject.showImageInfo || false);
+                    setViewport(restoredProject.viewport);
+                    replaceBaseline({ nodes: restoredNodes, connections: restoredProject.connections, backgroundMode: restoredProject.backgroundMode, showImageInfo: restoredProject.showImageInfo || false });
+                    setLoadedCanonicalGeneration(canonicalGeneration);
+                    setProjectLoaded(true);
+                },
+            ),
+        [canonicalGeneration, canonicalRestore, canvasImageHydrationDependencies, replaceBaseline],
     );
 
     const cleanupCanvasFiles = useCallback(
@@ -344,7 +353,7 @@ function InfiniteCanvasPage() {
     );
 
     useEffect(() => {
-        if (!hydrated) return;
+        if (!hydrated || !readyForCanvasMutations) return;
         setProjectLoaded(false);
         const project = openProject(projectId);
         if (!project) {
@@ -353,31 +362,17 @@ function InfiniteCanvasPage() {
         }
 
         void restoreProject(project);
-    }, [hydrated, openProject, projectId, restoreProject, router]);
+        return () => canonicalRestore.invalidate();
+    }, [canonicalGeneration, canonicalRestore, hydrated, openProject, projectId, readyForCanvasMutations, restoreProject, router]);
 
     useEffect(() => {
-        if (!projectLoaded || isPausedRef.current || isApplyingRef.current) return;
-        if (suppressNextProjectSaveRef.current) {
-            suppressNextProjectSaveRef.current = false;
+        if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration || isPausedRef.current || isApplyingRef.current) return;
+        if (canonicalProjectSaveGenerationRef.current === canonicalGeneration) {
+            canonicalProjectSaveGenerationRef.current = null;
             return;
         }
         updateProject(projectId, { nodes, connections, backgroundMode, showImageInfo });
-    }, [backgroundMode, connections, isApplyingRef, isPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
-
-    const loadServerVersion = useCallback(async () => {
-        suppressNextProjectSaveRef.current = true;
-        try {
-            const restored = await refreshCanvasServerVersion(projectId, {
-                refreshProjectFromServer,
-                readProject: (id) => useCanvasStore.getState().openProject(id),
-                restoreProject,
-            });
-            if (!restored) suppressNextProjectSaveRef.current = false;
-        } catch (error) {
-            suppressNextProjectSaveRef.current = false;
-            throw error;
-        }
-    }, [projectId, refreshProjectFromServer, restoreProject]);
+    }, [backgroundMode, canonicalGeneration, connections, isApplyingRef, isPausedRef, loadedCanonicalGeneration, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
 
 	useEffect(() => {
 		if (!projectLoaded || !aiStatus) return;
@@ -389,7 +384,11 @@ function InfiniteCanvasPage() {
     }, [dialogNodeId]);
 
     useEffect(() => {
-        if (!projectLoaded) return;
+        if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration) return;
+        if (canonicalViewportSaveGenerationRef.current === canonicalGeneration) {
+            canonicalViewportSaveGenerationRef.current = null;
+            return;
+        }
         if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         viewportSaveTimerRef.current = setTimeout(() => {
             updateProject(projectId, { viewport: viewportRef.current });
@@ -398,7 +397,7 @@ function InfiniteCanvasPage() {
         return () => {
             if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current);
         };
-    }, [projectId, projectLoaded, updateProject, viewport]);
+    }, [canonicalGeneration, loadedCanonicalGeneration, projectId, projectLoaded, updateProject, viewport]);
 
     useLayoutEffect(() => {
         nodesRef.current = nodes;
@@ -1600,7 +1599,7 @@ function InfiniteCanvasPage() {
         [createImageAssetNode, createImageFileNode, createPublicImageNode, createVideoFileNode, message, screenToCanvas],
     );
 
-    if (!projectLoaded) return <CanvasRefreshShell />;
+    if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration) return <CanvasRefreshShell />;
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
@@ -1608,7 +1607,6 @@ function InfiniteCanvasPage() {
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}
                     projectId={projectId}
-                    onRefreshServerVersion={loadServerVersion}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -1849,7 +1847,6 @@ function InfiniteCanvasPage() {
 function CanvasTopBar({
     title,
     projectId,
-    onRefreshServerVersion,
     titleDraft,
     isTitleEditing,
     onTitleDraftChange,
@@ -1867,7 +1864,6 @@ function CanvasTopBar({
 }: {
     title: string;
     projectId: string;
-    onRefreshServerVersion: () => Promise<void>;
     titleDraft: string;
     isTitleEditing: boolean;
     onTitleDraftChange: (value: string) => void;
@@ -1945,7 +1941,7 @@ function CanvasTopBar({
                                 {title}
                             </button>
                         )}
-                        <CanvasSyncFeedback projectId={projectId} onRefreshServerVersion={onRefreshServerVersion} />
+                        <CanvasSyncFeedback projectId={projectId} />
                     </div>
                 </div>
             </div>

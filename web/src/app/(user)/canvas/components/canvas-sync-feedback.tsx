@@ -20,21 +20,6 @@ export function describeCanvasSync(sync: CanvasProjectSync): CanvasSyncDescripti
     return { label: "已保存", kind: "saved", refreshable: false };
 }
 
-export async function refreshCanvasServerVersion<Project>(
-    projectId: string,
-    dependencies: {
-        refreshProjectFromServer: (id: string) => Promise<void>;
-        readProject: (id: string) => Project | null;
-        restoreProject: (project: Project) => Promise<void>;
-    },
-) {
-    await dependencies.refreshProjectFromServer(projectId);
-    const project = dependencies.readProject(projectId);
-    if (!project) return false;
-    await dependencies.restoreProject(project);
-    return true;
-}
-
 const syncAppearance = {
     saved: { color: "success", icon: <Check className="size-3" /> },
     saving: { color: "processing", icon: <LoaderCircle className="size-3 animate-spin" /> },
@@ -43,7 +28,7 @@ const syncAppearance = {
     conflict: { color: "warning", icon: <TriangleAlert className="size-3" /> },
 } as const;
 
-export function CanvasSyncFeedback({ projectId, onRefreshServerVersion }: { projectId: string; onRefreshServerVersion?: () => Promise<void> }) {
+export function CanvasSyncFeedback({ projectId }: { projectId: string }) {
     const syncEnabled = useCanvasStore((state) => state.syncEnabled);
     const sync = useCanvasStore((state) => state.projectSync[projectId]);
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
@@ -56,7 +41,7 @@ export function CanvasSyncFeedback({ projectId, onRefreshServerVersion }: { proj
     const refresh = async () => {
         setRefreshing(true);
         try {
-            await (onRefreshServerVersion ? onRefreshServerVersion() : refreshProjectFromServer(projectId));
+            await refreshProjectFromServer(projectId);
         } catch {
             // The store keeps the project and exposes the refresh error through sync metadata.
         } finally {
