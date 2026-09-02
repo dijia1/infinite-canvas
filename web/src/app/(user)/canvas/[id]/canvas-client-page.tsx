@@ -86,7 +86,15 @@ function isCanvasNodeNearViewport(node: CanvasNodeData, viewport: ViewportTransf
 function canHydrateCanvasImage(node: CanvasNodeData) {
     if (node.type !== CanvasNodeType.Image) return false;
     const metadata = node.metadata;
-    return Boolean(metadata?.mediaId || metadata?.storageKey || metadata?.content?.startsWith("data:image/"));
+    return Boolean(metadata?.mediaId || metadata?.publicImageId || metadata?.storageKey || metadata?.content?.startsWith("data:image/"));
+}
+
+export function createCanvasImageHydrationPlan(nodes: CanvasNodeData[], viewport: ViewportTransform, viewportSize: { width: number; height: number }) {
+    const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, viewport, viewportSize);
+    const initialNodes = nodes.filter(shouldHydrate);
+    const pendingImageIds = new Set(nodes.filter(canHydrateCanvasImage).map((node) => node.id));
+    initialNodes.forEach((node) => pendingImageIds.delete(node.id));
+    return { initialNodes, pendingImageIds, shouldHydrate };
 }
 
 function createCanvasNode(type: CanvasNodeType, position: Position, metadata?: CanvasNodeMetadata): CanvasNodeData {
@@ -327,10 +335,9 @@ function InfiniteCanvasPage() {
                     const initialNodes = resetInterruptedGeneration(project.nodes);
                     const rect = containerRef.current?.getBoundingClientRect();
                     const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
-                    const shouldHydrate = (node: CanvasNodeData) => canHydrateCanvasImage(node) && isCanvasNodeNearViewport(node, project.viewport, initialViewportSize);
-                    const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate });
-                    const pendingImageIds = new Set(initialNodes.filter(canHydrateCanvasImage).map((node) => node.id));
-                    restoredNodes.filter(shouldHydrate).forEach((node) => pendingImageIds.delete(node.id));
+                    const hydrationPlan = createCanvasImageHydrationPlan(initialNodes, project.viewport, initialViewportSize);
+                    const restoredNodes = await hydrateCanvasImages(initialNodes, canvasImageHydrationDependencies, { shouldHydrate: hydrationPlan.shouldHydrate });
+                    const pendingImageIds = hydrationPlan.pendingImageIds;
                     return { project, nodes: restoredNodes, pendingImageIds };
                 },
                 ({ project: restoredProject, nodes: restoredNodes, pendingImageIds }) => {

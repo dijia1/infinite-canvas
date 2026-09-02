@@ -69,11 +69,11 @@ func TestDBMigratesLegacyCanvasProjectPrimaryKeyForOwnerScopedImports(t *testing
 		t.Fatalf("repeat migration error = %v", err)
 	}
 
-	first, err := ImportCanvasProjects([]model.CanvasProject{{ID: "legacy-shared-id", OwnerUID: "legacy-owner", Title: "不应覆盖", Document: []byte(`{}`), Revision: 1}})
+	first, err := ImportCanvasProjects([]model.CanvasProject{{ID: "legacy-shared-id", OwnerUID: "legacy-owner", Title: "不应覆盖", Document: model.CanvasProjectDocument(`{}`), Revision: 1}})
 	if err != nil || len(first) != 1 || first[0].Title != "旧画布" {
 		t.Fatalf("legacy owner import = %#v, %v", first, err)
 	}
-	second, err := ImportCanvasProjects([]model.CanvasProject{{ID: "legacy-shared-id", OwnerUID: "second-owner", Title: "第二个用户画布", Document: []byte(`{}`), Revision: 1}})
+	second, err := ImportCanvasProjects([]model.CanvasProject{{ID: "legacy-shared-id", OwnerUID: "second-owner", Title: "第二个用户画布", Document: model.CanvasProjectDocument(`{}`), Revision: 1}})
 	if err != nil || len(second) != 1 || second[0].OwnerUID != "second-owner" {
 		t.Fatalf("second owner import = %#v, %v", second, err)
 	}
@@ -83,7 +83,7 @@ func TestDBMigratesLegacyCanvasProjectPrimaryKeyForOwnerScopedImports(t *testing
 	}
 }
 
-func TestCanvasProjectDocumentUsesMySQLTextStorageAboveTheValidationLimit(t *testing.T) {
+func TestCanvasProjectDocumentUsesMySQLLongTextWithoutNarrowingExistingColumns(t *testing.T) {
 	database, err := gorm.Open(mysql.New(mysql.Config{
 		DSN:                       "canvas:canvas@tcp(127.0.0.1:3306)/canvas",
 		SkipInitializeWithVersion: true,
@@ -100,26 +100,7 @@ func TestCanvasProjectDocumentUsesMySQLTextStorageAboveTheValidationLimit(t *tes
 		t.Fatal("CanvasProject.Document field was not found")
 	}
 	dataType := strings.ToLower(database.Migrator().FullDataTypeOf(field).SQL)
-	if dataType != "mediumtext" && dataType != "longtext" {
-		t.Fatalf("CanvasProject.Document MySQL type = %q, want MEDIUMTEXT or LONGTEXT", dataType)
-	}
-}
-
-func TestMySQLCanvasProjectDocumentMigrationDecisionIsIdempotent(t *testing.T) {
-	for _, test := range []struct {
-		dataType string
-		want     bool
-	}{
-		{dataType: "tinytext", want: true},
-		{dataType: "text", want: true},
-		{dataType: "varchar", want: true},
-		{dataType: "mediumtext", want: false},
-		{dataType: "longtext", want: false},
-	} {
-		t.Run(test.dataType, func(t *testing.T) {
-			if got := mysqlCanvasProjectDocumentNeedsMigration(test.dataType); got != test.want {
-				t.Fatalf("mysqlCanvasProjectDocumentNeedsMigration(%q) = %t, want %t", test.dataType, got, test.want)
-			}
-		})
+	if dataType != "longtext" {
+		t.Fatalf("CanvasProject.Document MySQL type = %q, want LONGTEXT so AutoMigrate preserves existing LONGTEXT columns", dataType)
 	}
 }

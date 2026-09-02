@@ -43,9 +43,6 @@ func DB() (*gorm.DB, error) {
 		if dbErr = migrateCanvasProjectPrimaryKey(db, driver); dbErr != nil {
 			return
 		}
-		if dbErr = migrateCanvasProjectDocumentColumn(db, driver); dbErr != nil {
-			return
-		}
 		dbErr = db.AutoMigrate(
 			&model.CanvasProject{},
 			&model.Media{},
@@ -59,29 +56,6 @@ func DB() (*gorm.DB, error) {
 		)
 	})
 	return db, dbErr
-}
-
-func migrateCanvasProjectDocumentColumn(database *gorm.DB, driver string) error {
-	if driver != "mysql" || !database.Migrator().HasTable("canvas_projects") {
-		return nil
-	}
-	var dataType string
-	result := database.Raw(`SELECT data_type
-		FROM information_schema.columns
-		WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, "canvas_projects", "document").Scan(&dataType)
-	if result.Error != nil || result.RowsAffected == 0 || !mysqlCanvasProjectDocumentNeedsMigration(dataType) {
-		return result.Error
-	}
-	return database.Migrator().AlterColumn(&model.CanvasProject{}, "Document")
-}
-
-func mysqlCanvasProjectDocumentNeedsMigration(dataType string) bool {
-	switch strings.ToLower(strings.TrimSpace(dataType)) {
-	case "mediumtext", "longtext":
-		return false
-	default:
-		return true
-	}
 }
 
 // migrateCanvasProjectPrimaryKey upgrades the short-lived first canvas schema,

@@ -83,7 +83,7 @@ func CreateCanvasProject(_ context.Context, user PortalUser, input CanvasProject
 	if createdAt == "" {
 		createdAt = now()
 	}
-	item := model.CanvasProject{ID: id, OwnerUID: user.UID, Title: title, Document: document, Revision: 1, CreatedAt: createdAt, UpdatedAt: now()}
+	item := model.CanvasProject{ID: id, OwnerUID: user.UID, Title: title, Document: model.CanvasProjectDocument(document), Revision: 1, CreatedAt: createdAt, UpdatedAt: now()}
 	created, _, err := repository.CreateCanvasProject(item)
 	if err != nil {
 		return model.CanvasProject{}, err
@@ -113,7 +113,7 @@ func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasP
 		if createdAt == "" {
 			createdAt = now()
 		}
-		items = append(items, model.CanvasProject{ID: id, OwnerUID: user.UID, Title: title, Document: document, Revision: 1, CreatedAt: createdAt, UpdatedAt: now()})
+		items = append(items, model.CanvasProject{ID: id, OwnerUID: user.UID, Title: title, Document: model.CanvasProjectDocument(document), Revision: 1, CreatedAt: createdAt, UpdatedAt: now()})
 	}
 	imported, err := repository.ImportCanvasProjects(items)
 	if err != nil {
@@ -199,6 +199,9 @@ func normalizeCanvasProjectID(value string) (string, error) {
 	}
 	if !canvasProjectIDPattern.MatchString(value) {
 		return "", canvasProjectValidationError{message: "画布 ID 包含不安全字符"}
+	}
+	if value == "." || value == ".." {
+		return "", canvasProjectValidationError{message: "画布 ID 包含不安全路径段"}
 	}
 	return value, nil
 }

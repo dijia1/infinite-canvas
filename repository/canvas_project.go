@@ -116,7 +116,7 @@ func UpdateCanvasProject(ownerUID, id string, revision int, title string, docume
 		ID:        id,
 		OwnerUID:  ownerUID,
 		Title:     title,
-		Document:  append([]byte(nil), document...),
+		Document:  model.CanvasProjectDocument(append([]byte(nil), document...)),
 		Revision:  revision + 1,
 		CreatedAt: existing.CreatedAt,
 		UpdatedAt: updatedAt,

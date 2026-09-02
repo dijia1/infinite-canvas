@@ -267,6 +267,38 @@ func TestCanvasProjectRejectsUnsafeIDsAndDocumentsTheFrontendCannotLoad(t *testi
 	}
 }
 
+func TestCanvasProjectRejectsDotPathSegmentsAcrossCRUD(t *testing.T) {
+	owner := "canvas-dot-id-owner-" + time.Now().Format("20060102150405.000000000")
+	validDocument := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+
+	for _, id := range []string{".", ".."} {
+		t.Run(id, func(t *testing.T) {
+			create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"非法路径段","document":`+validDocument+`}`)
+			if create.Code != http.StatusBadRequest || decodeCanvasResponse(t, create).Code != 1 {
+				t.Errorf("dot segment create = %d/%s", create.Code, create.Body.String())
+			}
+
+			for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+				pathID := "%2E"
+				if id == ".." {
+					pathID = "%2E%2E"
+				}
+				body := ""
+				if method == http.MethodPut {
+					body = `{"revision":1,"title":"非法路径段","document":` + validDocument + `}`
+				}
+				if method == http.MethodDelete {
+					body = `{"revision":1}`
+				}
+				response := canvasRequest(t, method, "/api/v1/canvas/projects/"+pathID, owner, body)
+				if response.Code != http.StatusBadRequest || decodeCanvasResponse(t, response).Code != 1 {
+					t.Fatalf("dot segment %s = %d/%s", method, response.Code, response.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestCanvasProjectUpdateReturnsTheExactSnapshotAcceptedBeforeALaterWriter(t *testing.T) {
 	id := "canvas-interleaved-" + time.Now().Format("20060102150405.000000000")
 	owner := "canvas-interleaved-owner-" + id
