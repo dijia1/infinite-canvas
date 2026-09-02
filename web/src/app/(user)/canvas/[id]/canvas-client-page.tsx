@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ImageIcon, Images, List, Menu, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, requestImageQuestion, uploadUserImage } from "@/services/api/image";
+import { deleteUserImage, getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, requestImageQuestion, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -24,6 +24,7 @@ import { cropDataUrl } from "../utils/canvas-image-data";
 import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
 import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
+import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canvas-file-drop";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -913,9 +914,15 @@ function InfiniteCanvasPage() {
         router.push(appPath("/canvas"));
     }, [cleanupAssetImages, deleteProjects, projectId, router]);
 
-    const createImageFileNode = useCallback(async (file: File, position: Position) => {
+    const createImageFileNode = useCallback(async (file: File, position: Position, options: { focus?: boolean; refreshAssets?: boolean } = {}) => {
         const remote = await uploadUserImage(file, "canvas");
-        const image = await uploadImage(file, remote.mediaId);
+        let image: UploadedImage;
+        try {
+            image = await uploadImage(file, remote.mediaId);
+        } catch (error) {
+            await deleteUserImage(remote.mediaId).catch(() => undefined);
+            throw error;
+        }
         const size = fitNodeSize(image.width, image.height);
         const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const newNode: CanvasNodeData = {
@@ -929,10 +936,13 @@ function InfiniteCanvasPage() {
         };
 
         setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(id);
-        void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+        if (options.focus !== false) {
+            setSelectedNodeIds(new Set([id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(id);
+        }
+        if (options.refreshAssets !== false) void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+        return id;
     }, []);
 
     const createImageAssetNode = useCallback(async (asset: ImageAsset, position: Position) => {
@@ -1535,9 +1545,31 @@ function InfiniteCanvasPage() {
                 void createPublicImageNode(publicPayload, position).catch((error) => message.error(error instanceof Error ? error.message : "公共素材插入失败"));
                 return;
             }
-            const file = Array.from(event.dataTransfer.files).find((item) => item.type.startsWith("image/") || item.type.startsWith("video/"));
+            const files = Array.from(event.dataTransfer.files);
+            const images = collectDroppedImageFiles(files);
+            if (images.files.length) {
+                if (images.files.length === 1 && images.omittedCount === 0) {
+                    void createImageFileNode(images.files[0]!, position);
+                    return;
+                }
+                void importDroppedImageFiles(files, position, (file, nodePosition) => createImageFileNode(file, nodePosition, { focus: false, refreshAssets: false })).then((result) => {
+                    if (result.nodeIds.length) {
+                        setSelectedNodeIds(new Set(result.nodeIds));
+                        setSelectedConnectionId(null);
+                        setDialogNodeId(null);
+                        void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+                    }
+                    const summary = [`已添加 ${result.nodeIds.length} 张图片`];
+                    if (result.failedCount) summary.push(`${result.failedCount} 张上传失败`);
+                    if (result.omittedCount) summary.push(`超过上限，已忽略 ${result.omittedCount} 张`);
+                    if (result.failedCount || result.omittedCount) message.warning(summary.join("；"));
+                    else message.success(summary[0]!);
+                });
+                return;
+            }
+            const file = files.find((item) => item.type.startsWith("video/"));
             if (!file) return;
-            void (file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
+            void createVideoFileNode(file, position);
         },
         [createImageAssetNode, createImageFileNode, createPublicImageNode, createVideoFileNode, message, screenToCanvas],
     );
