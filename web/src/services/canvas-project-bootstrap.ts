@@ -3,6 +3,7 @@ import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store"
 import { uploadUserImage } from "@/services/api/image";
 import { canvasProjectsApi, type CanvasProjectRecord, type CanvasProjectsApi, type CreateCanvasProjectInput } from "@/services/api/canvas-projects";
 import { getImageBlob, imageStorageKeyForMedia, uploadImage } from "@/services/image-storage";
+import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
 
 type StableImage = {
     storageKey: string;
@@ -84,13 +85,13 @@ function projectImportInput(project: CanvasProject): CreateCanvasProjectInput {
         title: project.title,
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
-        document: {
+        document: sanitizeCanvasProjectDocument({
             nodes: project.nodes,
             connections: project.connections,
             backgroundMode: project.backgroundMode,
             showImageInfo: project.showImageInfo,
             viewport: project.viewport,
-        },
+        }),
     };
 }
 
@@ -111,15 +112,9 @@ async function legacyImageBlob(node: CanvasNodeData, dependencies: LegacyCanvasI
     return blob.type.startsWith("image/") ? blob : null;
 }
 
-function withoutTransientImageContent(node: CanvasNodeData): CanvasNodeData {
-    if (!node.metadata?.content) return node;
-    const { content: _content, ...metadata } = node.metadata;
-    return { ...node, metadata };
-}
-
 async function normalizeLegacyImageNode(node: CanvasNodeData, dependencies: LegacyCanvasImageDependencies): Promise<CanvasNodeData> {
     if (node.type !== CanvasNodeType.Image) return node;
-    if (node.metadata?.mediaId || node.metadata?.publicImageId) return withoutTransientImageContent(node);
+    if (node.metadata?.mediaId || node.metadata?.publicImageId) return node;
 
     const metadata = node.metadata || {};
     const blob = await legacyImageBlob(node, dependencies);

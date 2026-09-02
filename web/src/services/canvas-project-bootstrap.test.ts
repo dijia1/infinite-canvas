@@ -206,6 +206,58 @@ test("normalizes a legacy cached image into long-lived library media without tra
     });
 });
 
+test("bypasses stable media nodes with local blob previews while importing a sanitized document", async () => {
+    const stable = localProject({
+        nodes: [
+            {
+                id: "stable-image",
+                type: CanvasNodeType.Image,
+                title: "稳定图片",
+                position: { x: 0, y: 0 },
+                width: 10,
+                height: 10,
+                metadata: { mediaId: "media-stable", storageKey: "media:media-stable:v1:original", content: "blob:local-preview", status: "success" },
+            },
+        ],
+    });
+    let persisted = false;
+    let imported: CreateCanvasProjectInput | undefined;
+
+    await bootstrapCanvasProjects({
+        uid: "portal-user",
+        getProjects: () => [stable],
+        api: {
+            list: async () => ({ items: [], total: 0 }),
+            importProjects: async (inputs) => {
+                imported = inputs[0];
+                return { items: [serverProject(stable.id)], total: 1 };
+            },
+        },
+        persistNormalizedProject: () => {
+            persisted = true;
+            return false;
+        },
+        replaceProjectsFromServer: () => undefined,
+        startSync: () => undefined,
+        imageDependencies: {
+            getImageBlob: async () => {
+                throw new Error("稳定节点不应读取 legacy 缓存");
+            },
+            uploadUserImage: async () => {
+                throw new Error("稳定节点不应重新上传");
+            },
+            primeStableImage: async () => {
+                throw new Error("稳定节点不应重写缓存");
+            },
+        },
+    });
+
+    assert.equal(persisted, false);
+    assert.equal(stable.nodes[0]?.metadata?.content, "blob:local-preview");
+    assert.equal(imported?.document.nodes[0]?.metadata?.mediaId, "media-stable");
+    assert.equal(imported?.document.nodes[0]?.metadata?.content, undefined);
+});
+
 test("uses an embedded data image when cache recovery misses and marks unrecoverable nodes clearly", async () => {
     const project = localProject({
         nodes: [
@@ -255,7 +307,7 @@ test("uses an embedded data image when cache recovery misses and marks unrecover
     assert.equal(normalized.nodes[1]?.metadata?.status, "error");
     assert.match(normalized.nodes[1]?.metadata?.errorDetails || "", /本地图片无法恢复/);
     assert.equal(normalized.nodes[1]?.metadata?.content, undefined);
-    assert.deepEqual(normalized.nodes[2]?.metadata, { publicImageId: "public-1" });
+    assert.deepEqual(normalized.nodes[2]?.metadata, { content: "blob:public", publicImageId: "public-1" });
 });
 
 test("retries a failed authenticated bootstrap on the next online event and stops after success", async () => {
