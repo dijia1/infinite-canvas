@@ -8,6 +8,7 @@ import { appPath } from "@/lib/app-path";
 import { useCanvasStore, type CanvasProject } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { exportCanvasProjects } from "../utils/canvas-export";
+import { CanvasSyncFeedback } from "./canvas-sync-feedback";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const router = useRouter();
@@ -58,7 +59,10 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                 )}
             </div>
             <div className="mt-8 flex items-end justify-between gap-3">
-                <p className="text-xs text-stone-500">更新于 {new Date(project.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</p>
+                <div className="flex min-w-0 flex-col gap-1">
+                    <p className="text-xs text-stone-500">更新于 {new Date(project.updatedAt).toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</p>
+                    <CanvasSyncFeedback projectId={project.id} />
+                </div>
                 <div className="flex items-center gap-1" onClick={(event) => event.stopPropagation()}>
                     {editing ? (
                         <>

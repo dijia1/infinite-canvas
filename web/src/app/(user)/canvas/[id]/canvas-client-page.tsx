@@ -41,6 +41,7 @@ import { CanvasNode } from "../components/canvas-node";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
+import { CanvasSyncFeedback, refreshCanvasServerVersion } from "../components/canvas-sync-feedback";
 import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore } from "../stores/use-canvas-store";
@@ -215,6 +216,7 @@ function InfiniteCanvasPage() {
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
     const clipboardRef = useRef<CanvasClipboard | null>(null);
     const viewportSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const suppressNextProjectSaveRef = useRef(false);
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingCanvasImageHydrationIdsRef = useRef<Set<string>>(new Set());
@@ -231,6 +233,7 @@ function InfiniteCanvasPage() {
     const createProject = useCanvasStore((state) => state.createProject);
     const openProject = useCanvasStore((state) => state.openProject);
     const updateProject = useCanvasStore((state) => state.updateProject);
+    const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -307,24 +310,8 @@ function InfiniteCanvasPage() {
         isSameSnapshot: (left, right) => left.nodes === right.nodes && left.connections === right.connections && left.backgroundMode === right.backgroundMode && left.showImageInfo === right.showImageInfo,
     });
 
-    const cleanupCanvasFiles = useCallback(
-        (extra?: unknown) => {
-            const { history, lastHistory } = getRetainedHistory();
-            cleanupAssetImages({ extra, history, lastHistory });
-        },
-        [cleanupAssetImages, getRetainedHistory],
-    );
-
-    useEffect(() => {
-        if (!hydrated) return;
-        setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            router.replace(appPath("/canvas"));
-            return;
-        }
-
-        const restore = async () => {
+    const restoreProject = useCallback(
+        async (project: NonNullable<typeof currentProject>) => {
             const initialNodes = resetInterruptedGeneration(project.nodes);
             const rect = containerRef.current?.getBoundingClientRect();
             const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
@@ -344,14 +331,53 @@ function InfiniteCanvasPage() {
                 showImageInfo: project.showImageInfo || false,
             });
             setProjectLoaded(true);
-        };
-        void restore();
-    }, [canvasImageHydrationDependencies, hydrated, openProject, projectId, replaceBaseline, router]);
+        },
+        [canvasImageHydrationDependencies, replaceBaseline],
+    );
+
+    const cleanupCanvasFiles = useCallback(
+        (extra?: unknown) => {
+            const { history, lastHistory } = getRetainedHistory();
+            cleanupAssetImages({ extra, history, lastHistory });
+        },
+        [cleanupAssetImages, getRetainedHistory],
+    );
+
+    useEffect(() => {
+        if (!hydrated) return;
+        setProjectLoaded(false);
+        const project = openProject(projectId);
+        if (!project) {
+            router.replace(appPath("/canvas"));
+            return;
+        }
+
+        void restoreProject(project);
+    }, [hydrated, openProject, projectId, restoreProject, router]);
 
     useEffect(() => {
         if (!projectLoaded || isPausedRef.current || isApplyingRef.current) return;
+        if (suppressNextProjectSaveRef.current) {
+            suppressNextProjectSaveRef.current = false;
+            return;
+        }
         updateProject(projectId, { nodes, connections, backgroundMode, showImageInfo });
     }, [backgroundMode, connections, isApplyingRef, isPausedRef, nodes, projectId, projectLoaded, showImageInfo, updateProject]);
+
+    const loadServerVersion = useCallback(async () => {
+        suppressNextProjectSaveRef.current = true;
+        try {
+            const restored = await refreshCanvasServerVersion(projectId, {
+                refreshProjectFromServer,
+                readProject: (id) => useCanvasStore.getState().openProject(id),
+                restoreProject,
+            });
+            if (!restored) suppressNextProjectSaveRef.current = false;
+        } catch (error) {
+            suppressNextProjectSaveRef.current = false;
+            throw error;
+        }
+    }, [projectId, refreshProjectFromServer, restoreProject]);
 
 	useEffect(() => {
 		if (!projectLoaded || !aiStatus) return;
@@ -1581,6 +1607,8 @@ function InfiniteCanvasPage() {
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || "未命名画布"}
+                    projectId={projectId}
+                    onRefreshServerVersion={loadServerVersion}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -1820,6 +1848,8 @@ function InfiniteCanvasPage() {
 
 function CanvasTopBar({
     title,
+    projectId,
+    onRefreshServerVersion,
     titleDraft,
     isTitleEditing,
     onTitleDraftChange,
@@ -1836,6 +1866,8 @@ function CanvasTopBar({
     onRedo,
 }: {
     title: string;
+    projectId: string;
+    onRefreshServerVersion: () => Promise<void>;
     titleDraft: string;
     isTitleEditing: boolean;
     onTitleDraftChange: (value: string) => void;
@@ -1913,6 +1945,7 @@ function CanvasTopBar({
                                 {title}
                             </button>
                         )}
+                        <CanvasSyncFeedback projectId={projectId} onRefreshServerVersion={onRefreshServerVersion} />
                     </div>
                 </div>
             </div>
