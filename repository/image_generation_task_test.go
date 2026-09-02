@@ -99,6 +99,69 @@ func TestClaimNextImageGenerationTaskOrdersEqualCreatedAtByID(t *testing.T) {
 	}
 }
 
+func TestClaimNextImageGenerationTaskDoesNotOverwriteALeaseRenewedAfterSelection(t *testing.T) {
+	useImageTaskTestDB(t)
+	item := model.ImageGenerationTask{
+		ID:              "task-stale",
+		OwnerUID:        "user-1",
+		ClientRequestID: "client-stale",
+		Status:          model.ImageTaskSubmitting,
+		CreatedAt:       "2026-09-02T11:00:00Z",
+		UpdatedAt:       "2026-09-02T11:00:00Z",
+	}
+	if _, _, err := CreateImageGenerationTask(item); err != nil {
+		t.Fatalf("CreateImageGenerationTask() error = %v", err)
+	}
+
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const callbackName = "test:renew_image_task_lease_after_claim_selection"
+	const renewedAt = "2026-09-02T12:00:05Z"
+	var callbackErr error
+	callbackFired := false
+	if err := database.Callback().Query().After("gorm:query").Register(callbackName, func(transaction *gorm.DB) {
+		if callbackFired || transaction.Statement.Table != "image_generation_tasks" {
+			return
+		}
+		candidate, ok := transaction.Statement.Dest.(*model.ImageGenerationTask)
+		if !ok || candidate.ID != item.ID {
+			return
+		}
+		callbackFired = true
+		callbackErr = transaction.Session(&gorm.Session{NewDB: true}).Exec(
+			"UPDATE image_generation_tasks SET updated_at = ? WHERE id = ?",
+			renewedAt,
+			item.ID,
+		).Error
+	}); err != nil {
+		t.Fatalf("register query callback: %v", err)
+	}
+
+	claimed, found, err := ClaimNextImageGenerationTask("2026-09-02T11:30:00Z", "2026-09-02T12:00:10Z")
+	if err != nil {
+		t.Fatalf("ClaimNextImageGenerationTask() error = %v", err)
+	}
+	if callbackErr != nil {
+		t.Fatalf("simulated lease renewal error = %v", callbackErr)
+	}
+	if !callbackFired {
+		t.Fatal("simulated lease renewal did not run")
+	}
+	if found {
+		t.Fatalf("ClaimNextImageGenerationTask() overwrote a renewed lease: %#v", claimed)
+	}
+
+	stored, found, err := GetImageGenerationTask(item.ID)
+	if err != nil || !found {
+		t.Fatalf("GetImageGenerationTask() = %#v, %v, %v", stored, found, err)
+	}
+	if stored.UpdatedAt != renewedAt {
+		t.Fatalf("renewed lease updated_at = %q, want %q", stored.UpdatedAt, renewedAt)
+	}
+}
+
 func TestRenewImageGenerationTaskLeasePreventsASecondWorkerFromReclaimingAnActiveTask(t *testing.T) {
 	useImageTaskTestDB(t)
 	item := model.ImageGenerationTask{

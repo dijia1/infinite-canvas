@@ -117,7 +117,7 @@ func ClaimNextImageGenerationTask(staleBefore, updatedAt string) (model.ImageGen
 			return nil
 		}
 		result = transaction.Model(&model.ImageGenerationTask{}).
-			Where("id = ? AND status = ?", candidate.ID, candidate.Status).
+			Where("id = ? AND status = ? AND updated_at = ?", candidate.ID, candidate.Status, candidate.UpdatedAt).
 			Updates(map[string]any{"status": model.ImageTaskSubmitting, "updated_at": updatedAt})
 		if result.Error != nil {
 			return result.Error
