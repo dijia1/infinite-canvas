@@ -13,7 +13,7 @@ func CreateCanvasProject(item model.CanvasProject) (model.CanvasProject, bool, e
 	if err != nil {
 		return model.CanvasProject{}, false, err
 	}
-	result := database.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(&item)
+	result := database.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}, {Name: "owner_uid"}}, DoNothing: true}).Create(&item)
 	if result.Error != nil {
 		return model.CanvasProject{}, false, result.Error
 	}
@@ -25,7 +25,7 @@ func CreateCanvasProject(item model.CanvasProject) (model.CanvasProject, bool, e
 		return model.CanvasProject{}, false, err
 	}
 	if !found {
-		return model.CanvasProject{}, false, errors.New("canvas project ID already belongs to another user")
+		return model.CanvasProject{}, false, errors.New("canvas project was not found after insert conflict")
 	}
 	return existing, false, nil
 }
@@ -41,7 +41,7 @@ func ImportCanvasProjects(items []model.CanvasProject) ([]model.CanvasProject, e
 	resultItems := make([]model.CanvasProject, 0, len(items))
 	err = database.Transaction(func(transaction *gorm.DB) error {
 		for _, item := range items {
-			result := transaction.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}}, DoNothing: true}).Create(&item)
+			result := transaction.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "id"}, {Name: "owner_uid"}}, DoNothing: true}).Create(&item)
 			if result.Error != nil {
 				return result.Error
 			}
@@ -52,7 +52,7 @@ func ImportCanvasProjects(items []model.CanvasProject) ([]model.CanvasProject, e
 			existing := model.CanvasProject{}
 			if err := transaction.Where("id = ? AND owner_uid = ?", item.ID, item.OwnerUID).First(&existing).Error; err != nil {
 				if errors.Is(err, gorm.ErrRecordNotFound) {
-					return errors.New("canvas project ID already belongs to another user")
+					return errors.New("canvas project was not found after import conflict")
 				}
 				return err
 			}

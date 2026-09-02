@@ -6,7 +6,7 @@ import "encoding/json"
 // Media remains in the media library; deleting a project never deletes media.
 type CanvasProject struct {
 	ID        string          `json:"id" gorm:"primaryKey"`
-	OwnerUID  string          `json:"-" gorm:"index"`
+	OwnerUID  string          `json:"-" gorm:"primaryKey;index"`
 	Title     string          `json:"title"`
 	Document  json.RawMessage `json:"document" gorm:"type:text"`
 	Revision  int             `json:"revision"`

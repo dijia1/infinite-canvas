@@ -254,7 +254,7 @@ func isTransientCanvasImageContent(value string) bool {
 	}
 	for key := range parsed.Query() {
 		key = strings.ToLower(key)
-		if strings.HasPrefix(key, "x-amz-") || strings.HasPrefix(key, "x-oss-") || key == "signature" || key == "ossaccesskeyid" || key == "security-token" || key == "expires" {
+		if strings.HasPrefix(key, "x-amz-") || strings.HasPrefix(key, "x-oss-") || strings.HasPrefix(key, "x-goog-") || key == "signature" || key == "sig" || key == "ossaccesskeyid" || key == "security-token" || key == "expires" {
 			return true
 		}
 	}
