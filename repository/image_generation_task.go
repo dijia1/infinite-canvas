@@ -109,7 +109,7 @@ func ClaimNextImageGenerationTask(staleBefore, updatedAt string) (model.ImageGen
 		if staleBefore != "" {
 			query = query.Or("status IN ? AND updated_at < ?", []model.ImageGenerationTaskStatus{model.ImageTaskSubmitting, model.ImageTaskRunning}, staleBefore)
 		}
-		result := query.Order("created_at asc").Limit(1).Find(&candidate)
+		result := query.Order("created_at asc").Order("id asc").Limit(1).Find(&candidate)
 		if result.Error != nil {
 			return result.Error
 		}

@@ -81,6 +81,24 @@ func TestClaimNextImageGenerationTaskDoesNotLogAnEmptyQueueAsAnError(t *testing.
 	}
 }
 
+func TestClaimNextImageGenerationTaskOrdersEqualCreatedAtByID(t *testing.T) {
+	useImageTaskTestDB(t)
+	createdAt := "2026-09-02T12:00:00Z"
+	for _, item := range []model.ImageGenerationTask{
+		{ID: "task-z", OwnerUID: "user-1", ClientRequestID: "client-z", Status: model.ImageTaskQueued, CreatedAt: createdAt, UpdatedAt: createdAt},
+		{ID: "task-a", OwnerUID: "user-1", ClientRequestID: "client-a", Status: model.ImageTaskQueued, CreatedAt: createdAt, UpdatedAt: createdAt},
+	} {
+		if _, _, err := CreateImageGenerationTask(item); err != nil {
+			t.Fatalf("CreateImageGenerationTask(%q) error = %v", item.ID, err)
+		}
+	}
+
+	claimed, found, err := ClaimNextImageGenerationTask("", "2026-09-02T12:00:01Z")
+	if err != nil || !found || claimed.ID != "task-a" {
+		t.Fatalf("ClaimNextImageGenerationTask() = %#v, %v, %v", claimed, found, err)
+	}
+}
+
 func TestRenewImageGenerationTaskLeasePreventsASecondWorkerFromReclaimingAnActiveTask(t *testing.T) {
 	useImageTaskTestDB(t)
 	item := model.ImageGenerationTask{
