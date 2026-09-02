@@ -1,9 +1,11 @@
-import { create } from "zustand";
+import { nanoid } from "nanoid";
+import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
-import { nanoid } from "nanoid";
-import { localForageStorage } from "@/lib/localforage-storage";
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
+import { localForageStorage } from "@/lib/localforage-storage";
+import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord, type CanvasProjectsApi } from "@/services/api/canvas-projects";
+import { ApiRequestError } from "@/services/api/request";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
 export type CanvasProject = {
@@ -18,10 +20,28 @@ export type CanvasProject = {
     viewport: ViewportTransform;
 };
 
-type CanvasStore = {
+export type CanvasProjectSync = {
+    serverRevision: number | null;
+    dirty: boolean;
+    pending: boolean;
+    saving: boolean;
+    offline: boolean;
+    error: string | null;
+    conflict: boolean;
+    operation: "save" | "delete";
+};
+
+export type CanvasStore = {
     hydrated: boolean;
     projects: CanvasProject[];
+    projectSync: Record<string, CanvasProjectSync>;
+    syncScope: string | null;
+    syncEnabled: boolean;
     hydrate: (scope?: string) => Promise<void>;
+    startSync: (scope: string) => void;
+    replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
+    refreshProjectFromServer: (id: string) => Promise<void>;
+    retryPendingSaves: () => void;
     createProject: (title?: string) => string;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
@@ -30,13 +50,93 @@ type CanvasStore = {
     updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
 };
 
+type CanvasStoreOptions = {
+    api?: CanvasProjectsApi;
+    storage?: PersistStorage<CanvasStore>;
+    serverDebounceMs?: number;
+    isOnline?: () => boolean;
+};
+
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
 const CANVAS_STORE_KEY = "infinite-canvas:canvas_store";
 const CANVAS_GUEST_SCOPE = "guest";
-type PersistedCanvasState = Pick<CanvasStore, "projects">;
-let saveTimer: ReturnType<typeof setTimeout> | null = null;
-let queuedPersistState: PersistedCanvasState | null = null;
-const canvasStoreName = `${CANVAS_STORE_KEY}:${CANVAS_GUEST_SCOPE}`;
+const DEFAULT_SERVER_DEBOUNCE_MS = 300;
+
+const onlineCallbacks = new Set<() => void>();
+let onlineListenerInstalled = false;
+
+function subscribeToBrowserOnline(callback: () => void) {
+    onlineCallbacks.add(callback);
+    if (typeof window === "undefined" || onlineListenerInstalled) return;
+    window.addEventListener("online", () => onlineCallbacks.forEach((listener) => listener()));
+    onlineListenerInstalled = true;
+}
+
+function browserIsOnline() {
+    return typeof navigator === "undefined" || navigator.onLine;
+}
+
+function cleanSyncState(serverRevision: number | null): CanvasProjectSync {
+    return {
+        serverRevision,
+        dirty: false,
+        pending: false,
+        saving: false,
+        offline: false,
+        error: null,
+        conflict: false,
+        operation: "save",
+    };
+}
+
+function pendingSyncState(previous?: CanvasProjectSync, operation: CanvasProjectSync["operation"] = "save"): CanvasProjectSync {
+    return {
+        ...(previous || cleanSyncState(null)),
+        dirty: true,
+        pending: true,
+        error: null,
+        operation,
+    };
+}
+
+function canvasDocument(project: CanvasProject): CanvasProjectDocument {
+    return {
+        nodes: project.nodes,
+        connections: project.connections,
+        backgroundMode: project.backgroundMode,
+        showImageInfo: project.showImageInfo,
+        viewport: project.viewport,
+    };
+}
+
+function localProject(project: CanvasProjectRecord): CanvasProject {
+    return {
+        id: project.id,
+        title: project.title,
+        createdAt: project.createdAt,
+        updatedAt: project.updatedAt,
+        nodes: project.document.nodes,
+        connections: project.document.connections,
+        backgroundMode: project.document.backgroundMode,
+        showImageInfo: project.document.showImageInfo,
+        viewport: project.document.viewport,
+    };
+}
+
+function createCanvasStorage(): PersistStorage<CanvasStore> {
+    return {
+        getItem: async (name) => {
+            const value = await localForageStorage.getItem(name);
+            if (!value) return null;
+            const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
+            parsed.state.projects = (parsed.state.projects || []).map(sanitizeCanvasProject);
+            parsed.state.projectSync = Object.fromEntries(Object.entries(parsed.state.projectSync || {}).map(([id, metadata]) => [id, metadata.saving ? { ...metadata, saving: false, dirty: true, pending: true } : metadata]));
+            return parsed;
+        },
+        setItem: (name, value) => localForageStorage.setItem(name, JSON.stringify(value)),
+        removeItem: (name) => localForageStorage.removeItem(name),
+    };
+}
 
 export function sanitizeCanvasProject(project: CanvasProject): CanvasProject {
     return {
@@ -52,101 +152,280 @@ export function sanitizeCanvasProject(project: CanvasProject): CanvasProject {
     };
 }
 
-const canvasStorage: PersistStorage<CanvasStore> = {
-    getItem: async (name) => {
-        const value = await localForageStorage.getItem(name);
-        if (!value) return null;
-        const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
-        parsed.state.projects = parsed.state.projects.map(sanitizeCanvasProject);
-        queuedPersistState = parsed.state as PersistedCanvasState;
-        return parsed;
-    },
-    setItem: (name, value) => {
-        const nextState = value.state as PersistedCanvasState;
-        if (queuedPersistState && queuedPersistState.projects === nextState.projects) return;
-        queuedPersistState = nextState;
-        if (saveTimer) clearTimeout(saveTimer);
-        saveTimer = setTimeout(() => {
-            saveTimer = null;
-            void localForageStorage.setItem(name, JSON.stringify(value));
-        }, 400);
-    },
-    removeItem: (name) => localForageStorage.removeItem(name),
-};
+export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundStore<StoreApi<CanvasStore>> {
+    const api = options.api || canvasProjectsApi;
+    const serverDebounceMs = options.serverDebounceMs ?? DEFAULT_SERVER_DEBOUNCE_MS;
+    const isOnline = options.isOnline || browserIsOnline;
+    const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const inFlight = new Set<string>();
+    let subscribedToOnline = false;
 
-export const useCanvasStore = create<CanvasStore>()(
-    persist(
-        (set, get) => ({
-            hydrated: false,
-            projects: [],
-            hydrate: async (scope = CANVAS_GUEST_SCOPE) => {
-                if (get().hydrated) return;
-                queuedPersistState = null;
-                useCanvasStore.persist.setOptions({ name: `${CANVAS_STORE_KEY}:${scope}` });
-                try {
-                    await useCanvasStore.persist.rehydrate();
-                } finally {
-                    set({ hydrated: true });
-                }
-            },
-            createProject: (title = "未命名画布") => {
-                const now = new Date().toISOString();
-                const id = nanoid();
-                const project: CanvasProject = {
-                    id,
-                    title,
-                    createdAt: now,
-                    updatedAt: now,
-                    nodes: [],
-                    connections: [],
-                    backgroundMode: "lines",
-                    showImageInfo: false,
-                    viewport: initialViewport,
+    const store = create<CanvasStore>()(
+        persist(
+            (set, get) => {
+                const updateSync = (id: string, updater: (current: CanvasProjectSync | undefined) => CanvasProjectSync | undefined) => {
+                    set((state) => {
+                        const next = updater(state.projectSync[id]);
+                        const projectSync = { ...state.projectSync };
+                        if (next) projectSync[id] = next;
+                        else delete projectSync[id];
+                        return { projectSync };
+                    });
                 };
-                set((state) => ({ projects: [project, ...state.projects] }));
-                return id;
-            },
-            importProject: (source) => {
-                const now = new Date().toISOString();
-                const project: CanvasProject = {
-                    id: nanoid(),
-                    title: source.title || "导入画布",
-                    createdAt: source.createdAt || now,
-                    updatedAt: now,
-                    nodes: source.nodes || [],
-                    connections: source.connections || [],
-                    backgroundMode: source.backgroundMode || "lines",
-                    showImageInfo: source.showImageInfo || false,
-                    viewport: source.viewport || initialViewport,
+
+                const scheduleSave = (id: string, delay = serverDebounceMs) => {
+                    if (!get().syncEnabled) return;
+                    const currentTimer = saveTimers.get(id);
+                    if (currentTimer) clearTimeout(currentTimer);
+                    saveTimers.set(
+                        id,
+                        setTimeout(() => {
+                            saveTimers.delete(id);
+                            void saveProject(id);
+                        }, delay),
+                    );
                 };
-                set((state) => ({ projects: [project, ...state.projects] }));
-                return project.id;
+
+                const queueChange = (id: string, operation: CanvasProjectSync["operation"] = "save") => {
+                    if (!get().syncEnabled) return;
+                    let conflict = false;
+                    updateSync(id, (current) => {
+                        conflict = current?.conflict || false;
+                        const next = pendingSyncState(current, operation);
+                        return conflict ? { ...next, pending: false } : next;
+                    });
+                    if (!conflict) scheduleSave(id);
+                };
+
+                const saveProject = async (id: string) => {
+                    const state = get();
+                    const metadata = state.projectSync[id];
+                    if (!state.syncEnabled || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
+                    if (!isOnline()) {
+                        updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
+                        return;
+                    }
+                    if (inFlight.has(id)) {
+                        updateSync(id, (current) => (current ? { ...current, pending: true } : current));
+                        return;
+                    }
+
+                    const operation = metadata.operation;
+                    const project = state.projects.find((item) => item.id === id);
+                    if (operation === "save" && !project) return;
+                    if (operation === "delete" && metadata.serverRevision === null) {
+                        updateSync(id, () => undefined);
+                        return;
+                    }
+
+                    inFlight.add(id);
+                    updateSync(id, (current) => (current ? { ...current, saving: true, dirty: false, pending: false, offline: false, error: null } : current));
+                    let completed = false;
+                    try {
+                        if (operation === "delete") {
+                            await api.delete(id, metadata.serverRevision as number);
+                            updateSync(id, () => undefined);
+                        } else if (project) {
+                            const record =
+                                metadata.serverRevision === null
+                                    ? await api.create({
+                                          id: project.id,
+                                          title: project.title,
+                                          document: canvasDocument(project),
+                                          createdAt: project.createdAt,
+                                          updatedAt: project.updatedAt,
+                                      })
+                                    : await api.update(id, {
+                                          revision: metadata.serverRevision,
+                                          title: project.title,
+                                          document: canvasDocument(project),
+                                      });
+                            updateSync(id, (current) => {
+                                if (!current) return cleanSyncState(record.revision);
+                                const changedWhileSaving = current.dirty || current.pending || current.operation !== operation;
+                                return {
+                                    ...current,
+                                    serverRevision: record.revision,
+                                    saving: false,
+                                    dirty: changedWhileSaving,
+                                    pending: changedWhileSaving,
+                                    offline: false,
+                                    error: null,
+                                };
+                            });
+                        }
+                        completed = true;
+                    } catch (error) {
+                        const conflict = error instanceof ApiRequestError && error.status === 409;
+                        updateSync(id, (current) =>
+                            current
+                                ? {
+                                      ...current,
+                                      saving: false,
+                                      dirty: true,
+                                      pending: !conflict,
+                                      offline: !isOnline(),
+                                      error: error instanceof Error ? error.message : "画布保存失败",
+                                      conflict,
+                                  }
+                                : current,
+                        );
+                    } finally {
+                        inFlight.delete(id);
+                        const current = get().projectSync[id];
+                        if (completed && current && !current.conflict && (current.dirty || current.pending)) scheduleSave(id, 0);
+                    }
+                };
+
+                return {
+                    hydrated: false,
+                    projects: [],
+                    projectSync: {},
+                    syncScope: null,
+                    syncEnabled: false,
+                    hydrate: async (scope = CANVAS_GUEST_SCOPE) => {
+                        if (get().hydrated) return;
+                        store.persist.setOptions({ name: `${CANVAS_STORE_KEY}:${scope}` });
+                        try {
+                            await store.persist.rehydrate();
+                        } finally {
+                            set({ hydrated: true, syncScope: scope, syncEnabled: false });
+                        }
+                    },
+                    startSync: (scope) => {
+                        const enabled = Boolean(scope) && scope !== CANVAS_GUEST_SCOPE;
+                        set({ syncScope: scope || null, syncEnabled: enabled });
+                        if (!enabled) return;
+                        if (!subscribedToOnline) {
+                            subscribeToBrowserOnline(() => get().retryPendingSaves());
+                            subscribedToOnline = true;
+                        }
+                        get().retryPendingSaves();
+                    },
+                    replaceProjectsFromServer: (records) => {
+                        set({
+                            projects: records.map(localProject),
+                            projectSync: Object.fromEntries(records.map((record) => [record.id, cleanSyncState(record.revision)])),
+                        });
+                    },
+                    refreshProjectFromServer: async (id) => {
+                        try {
+                            const record = await api.get(id);
+                            const project = localProject(record);
+                            const currentTimer = saveTimers.get(id);
+                            if (currentTimer) clearTimeout(currentTimer);
+                            saveTimers.delete(id);
+                            set((state) => {
+                                const index = state.projects.findIndex((item) => item.id === id);
+                                const projects = [...state.projects];
+                                if (index >= 0) projects[index] = project;
+                                else projects.unshift(project);
+                                return { projects, projectSync: { ...state.projectSync, [id]: cleanSyncState(record.revision) } };
+                            });
+                        } catch (error) {
+                            updateSync(id, (current) => (current ? { ...current, saving: false, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
+                            throw error;
+                        }
+                    },
+                    retryPendingSaves: () => {
+                        if (!get().syncEnabled || !isOnline()) return;
+                        set((state) => ({
+                            projectSync: Object.fromEntries(Object.entries(state.projectSync).map(([id, metadata]) => [id, { ...metadata, offline: false }])),
+                        }));
+                        for (const [id, metadata] of Object.entries(get().projectSync)) {
+                            if (!metadata.conflict && (metadata.dirty || metadata.pending)) scheduleSave(id, 0);
+                        }
+                    },
+                    createProject: (title = "未命名画布") => {
+                        const now = new Date().toISOString();
+                        const id = nanoid();
+                        const project: CanvasProject = {
+                            id,
+                            title,
+                            createdAt: now,
+                            updatedAt: now,
+                            nodes: [],
+                            connections: [],
+                            backgroundMode: "lines",
+                            showImageInfo: false,
+                            viewport: initialViewport,
+                        };
+                        set((state) => ({ projects: [project, ...state.projects] }));
+                        queueChange(id);
+                        return id;
+                    },
+                    importProject: (source) => {
+                        const now = new Date().toISOString();
+                        const project: CanvasProject = {
+                            id: nanoid(),
+                            title: source.title || "导入画布",
+                            createdAt: source.createdAt || now,
+                            updatedAt: now,
+                            nodes: source.nodes || [],
+                            connections: source.connections || [],
+                            backgroundMode: source.backgroundMode || "lines",
+                            showImageInfo: source.showImageInfo || false,
+                            viewport: source.viewport || initialViewport,
+                        };
+                        set((state) => ({ projects: [project, ...state.projects] }));
+                        queueChange(project.id);
+                        return project.id;
+                    },
+                    openProject: (id) => get().projects.find((item) => item.id === id) || null,
+                    renameProject: (id, title) => {
+                        let changed = false;
+                        set((state) => ({
+                            projects: state.projects.map((project) => {
+                                if (project.id !== id) return project;
+                                changed = true;
+                                return { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() };
+                            }),
+                        }));
+                        if (changed) queueChange(id);
+                    },
+                    deleteProjects: (ids) => {
+                        const current = get();
+                        set((state) => ({ projects: state.projects.filter((project) => !ids.includes(project.id)) }));
+                        for (const id of ids) {
+                            const metadata = current.projectSync[id];
+                            const timer = saveTimers.get(id);
+                            if (timer) clearTimeout(timer);
+                            saveTimers.delete(id);
+                            if (!get().syncEnabled) continue;
+                            if (!metadata || (metadata.serverRevision === null && !inFlight.has(id))) {
+                                updateSync(id, () => undefined);
+                                continue;
+                            }
+                            queueChange(id, "delete");
+                        }
+                    },
+                    updateProject: (id, patch) => {
+                        let changed = false;
+                        set((state) => ({
+                            projects: state.projects.map((project) => {
+                                if (project.id !== id) return project;
+                                changed = true;
+                                return { ...project, ...patch, updatedAt: new Date().toISOString() };
+                            }),
+                        }));
+                        if (changed) queueChange(id);
+                    },
+                };
             },
-            openProject: (id) => {
-                return get().projects.find((item) => item.id === id) || null;
+            {
+                name: `${CANVAS_STORE_KEY}:${CANVAS_GUEST_SCOPE}`,
+                storage: options.storage || createCanvasStorage(),
+                skipHydration: true,
+                partialize: (state) =>
+                    ({
+                        projects: state.projects,
+                        projectSync: state.projectSync,
+                    }) as StorageValue<CanvasStore>["state"],
             },
-            renameProject: (id, title) =>
-                set((state) => ({
-                    projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
-                })),
-            deleteProjects: (ids) =>
-                set((state) => {
-                    const projects = state.projects.filter((project) => !ids.includes(project.id));
-                    return { projects };
-                }),
-            updateProject: (id, patch) =>
-                set((state) => ({
-                    projects: state.projects.map((project) => (project.id === id ? { ...project, ...patch, updatedAt: new Date().toISOString() } : project)),
-                })),
-        }),
-        {
-            name: canvasStoreName,
-            storage: canvasStorage,
-            skipHydration: true,
-            partialize: (state) =>
-                ({
-                    projects: state.projects,
-                }) as StorageValue<CanvasStore>["state"],
-        },
-    ),
-);
+        ),
+    );
+
+    return store;
+}
+
+export const useCanvasStore = createCanvasStore();

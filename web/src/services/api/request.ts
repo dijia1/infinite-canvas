@@ -10,6 +10,17 @@ type ApiResponse<T> = {
     msg: string;
 };
 
+export class ApiRequestError extends Error {
+    constructor(
+        message: string,
+        readonly status: number,
+        readonly code: number,
+    ) {
+        super(message);
+        this.name = "ApiRequestError";
+    }
+}
+
 export function compactApiParams(params: ApiParams) {
     return Object.fromEntries(Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && (!Array.isArray(value) || value.length > 0))) as ApiParams;
 }
@@ -74,11 +85,12 @@ export async function apiPost<T>(url: string, body?: unknown, token?: string) {
     });
 }
 
-export async function apiDelete<T>(url: string, token?: string) {
+export async function apiDelete<T>(url: string, token?: string, body?: unknown) {
     return apiRequest<T>({
         url,
         method: "DELETE",
-        headers: authorizationHeaders(token),
+        data: body,
+        headers: jsonRequestHeaders(body, token),
     });
 }
 
@@ -91,7 +103,16 @@ export async function apiPatch<T>(url: string, body: unknown, token?: string) {
     });
 }
 
-async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "PATCH" | "DELETE"; params?: ApiParams; data?: unknown; headers?: Record<string, string> }) {
+export async function apiPut<T>(url: string, body: unknown, token?: string) {
+    return apiRequest<T>({
+        url,
+        method: "PUT",
+        data: body,
+        headers: jsonRequestHeaders(body, token),
+    });
+}
+
+async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; params?: ApiParams; data?: unknown; headers?: Record<string, string> }) {
     let response;
     try {
         response = await axios.request<ApiResponse<T>>({
@@ -114,7 +135,7 @@ async function apiRequest<T>(config: { url: string; method: "GET" | "POST" | "PA
 
     const payload = result as ApiResponse<T>;
     if (response.status < 200 || response.status >= 300 || payload.code !== 0) {
-        throw new Error(payload.msg || "请求失败");
+        throw new ApiRequestError(payload.msg || "请求失败", response.status, payload.code);
     }
 
     return payload.data;
