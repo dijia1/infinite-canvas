@@ -377,6 +377,34 @@ test("authenticated hydration blocks initial editing until bootstrap succeeds or
     assert.equal(store.getState().readyForCanvasMutations, true);
 });
 
+test("keeps an authenticated online bootstrap failure distinct and exposes a retry", async () => {
+    let retryCount = 0;
+    const retryFinished = Promise.withResolvers<void>();
+    const { api } = apiDouble();
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, isOnline: () => true });
+
+    await store.getState().hydrate("portal-user");
+    store.getState().setBootstrapRetry(async () => {
+        retryCount += 1;
+        await retryFinished.promise;
+    });
+    store.getState().markBootstrapUnavailable("portal-user", new Error("网关超时"));
+
+    assert.equal(store.getState().bootstrapStatus, "error");
+    assert.equal(store.getState().bootstrapError, "网关超时");
+    assert.equal(store.getState().syncEnabled, false);
+    assert.equal(store.getState().readyForCanvasMutations, true);
+
+    const retry = store.getState().retryBootstrap();
+    assert.equal(retryCount, 1);
+    assert.equal(store.getState().bootstrapStatus, "loading");
+    assert.equal(store.getState().bootstrapError, null);
+    retryFinished.resolve();
+    await retry;
+    assert.equal(store.getState().bootstrapStatus, "error");
+    assert.equal(store.getState().bootstrapError, "网关超时");
+});
+
 test("retains authenticated rename and delete races while adopting listed server revisions", async () => {
     const local = serverProject({ title: "本地原始标题" });
     const localValue = { ...local.document, id: local.id, title: local.title, createdAt: local.createdAt, updatedAt: local.updatedAt };
@@ -505,4 +533,71 @@ test("a project deleted during import adopts the revision and next sync deletes 
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     assert.deepEqual(calls, [`delete:${id}:9`]);
+});
+
+test("reconciles an accepted create after its response is lost and then saves newer local edits", async () => {
+    let remote: CanvasProjectRecord | undefined;
+    let createCount = 0;
+    const calls: string[] = [];
+    const { api } = apiDouble({
+        create: async (input) => {
+            createCount += 1;
+            calls.push(`create:${input.title}`);
+            if (!remote) remote = serverProject({ ...input, revision: 1 });
+            if (createCount === 1) throw new Error("create response lost");
+            return remote;
+        },
+        update: async (id, input) => {
+            calls.push(`update:${input.revision}:${input.title}`);
+            remote = serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
+            return remote;
+        },
+    });
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, serverDebounceMs: 0, isOnline: () => true });
+    await store.getState().hydrate("portal-user");
+    store.getState().startSync("portal-user");
+    const id = store.getState().createProject("首次快照");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    store.getState().renameProject(id, "响应丢失后的编辑");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.deepEqual(calls, ["create:首次快照", "create:响应丢失后的编辑", "update:1:响应丢失后的编辑"]);
+    assert.equal(remote?.title, "响应丢失后的编辑");
+    assert.equal(store.getState().projectSync[id]?.serverRevision, 2);
+    assert.equal(store.getState().projectSync[id]?.pending, false);
+});
+
+test("deletes a remotely accepted create when the create response is lost after a local delete", async () => {
+    const createResponse = Promise.withResolvers<CanvasProjectRecord>();
+    const createStarted = Promise.withResolvers<void>();
+    let remoteExists = false;
+    const calls: string[] = [];
+    const { api } = apiDouble({
+        create: async (input) => {
+            remoteExists = true;
+            calls.push(`create:${input.id}`);
+            createStarted.resolve();
+            return createResponse.promise;
+        },
+        delete: async (id, revision) => {
+            calls.push(`delete:${id}:${revision}`);
+            assert.equal(revision, 1);
+            remoteExists = false;
+        },
+    });
+    const store = createCanvasStore({ api, storage: { getItem: async () => null, setItem: async () => undefined, removeItem: async () => undefined }, serverDebounceMs: 0, isOnline: () => true });
+    await store.getState().hydrate("portal-user");
+    store.getState().startSync("portal-user");
+    const id = store.getState().createProject("创建后立即删除");
+    await createStarted.promise;
+
+    store.getState().deleteProjects([id]);
+    createResponse.reject(new Error("create response lost"));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.deepEqual(calls, [`create:${id}`, `delete:${id}:1`]);
+    assert.equal(remoteExists, false);
+    assert.equal(store.getState().openProject(id), null);
+    assert.equal(store.getState().projectSync[id], undefined);
 });

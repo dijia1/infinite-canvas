@@ -88,6 +88,39 @@ test("lists first, imports every missing local ID once, then replaces and enable
     );
 });
 
+test("chunks more than two hundred legacy projects to the backend import limit", async () => {
+    const local = Array.from({ length: 205 }, (_, index) => localProject({ id: `legacy-${String(index).padStart(3, "0")}` }));
+    const chunkSizes: number[] = [];
+    let adopted: CanvasProjectRecord[] = [];
+    let replacement: CanvasProjectRecord[] = [];
+
+    await bootstrapCanvasProjects({
+        uid: "portal-user",
+        getProjects: () => local,
+        api: {
+            list: async () => ({ items: [], total: 0 }),
+            importProjects: async (projects) => {
+                chunkSizes.push(projects.length);
+                const items = projects.map((project) => serverProject(project.id));
+                return { items, total: items.length };
+            },
+        },
+        adoptImportedProjects: (projects, snapshots) => {
+            adopted = projects;
+            assert.equal(snapshots.size, 205);
+        },
+        replaceProjectsFromServer: (projects) => {
+            replacement = projects;
+        },
+        startSync: () => undefined,
+    });
+
+    assert.deepEqual(chunkSizes, [200, 5]);
+    assert.equal(adopted.length, 205);
+    assert.equal(replacement.length, 205);
+    assert.equal(new Set(replacement.map((project) => project.id)).size, 205);
+});
+
 test("imports a project created while listing and snapshots later rename/delete races for revision adoption", async () => {
     let projects = [localProject({ id: "existing" })];
     let resolveList!: (value: { items: CanvasProjectRecord[]; total: number }) => void;

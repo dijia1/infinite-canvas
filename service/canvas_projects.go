@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/url"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -16,6 +18,8 @@ import (
 const maxCanvasDocumentBytes = 2 << 20
 
 var ErrCanvasProjectConflict = errors.New("canvas project revision conflict")
+
+var canvasProjectIDPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 
 type CanvasProjectInput struct {
 	ID        string          `json:"id"`
@@ -53,7 +57,11 @@ func ListCanvasProjects(_ context.Context, user PortalUser) (model.CanvasProject
 }
 
 func GetCanvasProject(_ context.Context, user PortalUser, id string) (model.CanvasProject, error) {
-	item, found, err := repository.GetCanvasProject(user.UID, strings.TrimSpace(id))
+	id, err := normalizeCanvasProjectID(id)
+	if err != nil {
+		return model.CanvasProject{}, err
+	}
+	item, found, err := repository.GetCanvasProject(user.UID, id)
 	if err != nil {
 		return model.CanvasProject{}, err
 	}
@@ -76,12 +84,9 @@ func CreateCanvasProject(_ context.Context, user PortalUser, input CanvasProject
 		createdAt = now()
 	}
 	item := model.CanvasProject{ID: id, OwnerUID: user.UID, Title: title, Document: document, Revision: 1, CreatedAt: createdAt, UpdatedAt: now()}
-	created, inserted, err := repository.CreateCanvasProject(item)
+	created, _, err := repository.CreateCanvasProject(item)
 	if err != nil {
 		return model.CanvasProject{}, err
-	}
-	if !inserted {
-		return model.CanvasProject{}, canvasProjectValidationError{message: "画布已存在"}
 	}
 	return created, nil
 }
@@ -118,6 +123,10 @@ func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasP
 }
 
 func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput) (model.CanvasProject, error) {
+	id, err := normalizeCanvasProjectID(id)
+	if err != nil {
+		return model.CanvasProject{}, err
+	}
 	if input.Revision < 1 {
 		return model.CanvasProject{}, ErrCanvasProjectConflict
 	}
@@ -129,20 +138,14 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 	if err != nil {
 		return model.CanvasProject{}, err
 	}
-	updated, err := repository.UpdateCanvasProject(user.UID, strings.TrimSpace(id), input.Revision, title, document, now())
+	updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
 	if err != nil {
 		return model.CanvasProject{}, err
 	}
-	if updated {
-		item, found, err := repository.GetCanvasProject(user.UID, strings.TrimSpace(id))
-		if err != nil {
-			return model.CanvasProject{}, err
-		}
-		if found {
-			return item, nil
-		}
+	if accepted {
+		return updated, nil
 	}
-	if _, found, err := repository.GetCanvasProject(user.UID, strings.TrimSpace(id)); err != nil {
+	if _, found, err := repository.GetCanvasProject(user.UID, id); err != nil {
 		return model.CanvasProject{}, err
 	} else if !found {
 		return model.CanvasProject{}, safeMessageError{message: "画布不存在"}
@@ -151,28 +154,32 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 }
 
 func DeleteCanvasProject(_ context.Context, user PortalUser, id string, revision int) error {
+	id, err := normalizeCanvasProjectID(id)
+	if err != nil {
+		return err
+	}
 	if revision < 1 {
 		return ErrCanvasProjectConflict
 	}
-	deleted, err := repository.DeleteCanvasProject(user.UID, strings.TrimSpace(id), revision)
+	deleted, err := repository.DeleteCanvasProject(user.UID, id, revision)
 	if err != nil {
 		return err
 	}
 	if deleted {
 		return nil
 	}
-	if _, found, err := repository.GetCanvasProject(user.UID, strings.TrimSpace(id)); err != nil {
+	if _, found, err := repository.GetCanvasProject(user.UID, id); err != nil {
 		return err
 	} else if !found {
-		return safeMessageError{message: "画布不存在"}
+		return nil
 	}
 	return ErrCanvasProjectConflict
 }
 
 func normalizeCanvasProjectInput(input CanvasProjectInput) (string, string, json.RawMessage, error) {
-	id := strings.TrimSpace(input.ID)
-	if length := utf8.RuneCountInString(id); length < 1 || length > 128 {
-		return "", "", nil, canvasProjectValidationError{message: "画布 ID 长度应为 1-128 个字符"}
+	id, err := normalizeCanvasProjectID(input.ID)
+	if err != nil {
+		return "", "", nil, err
 	}
 	title, err := normalizeCanvasProjectTitle(input.Title)
 	if err != nil {
@@ -183,6 +190,17 @@ func normalizeCanvasProjectInput(input CanvasProjectInput) (string, string, json
 		return "", "", nil, err
 	}
 	return id, title, document, nil
+}
+
+func normalizeCanvasProjectID(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if length := utf8.RuneCountInString(value); length < 1 || length > 128 {
+		return "", canvasProjectValidationError{message: "画布 ID 长度应为 1-128 个字符"}
+	}
+	if !canvasProjectIDPattern.MatchString(value) {
+		return "", canvasProjectValidationError{message: "画布 ID 包含不安全字符"}
+	}
+	return value, nil
 }
 
 func normalizeCanvasProjectTitle(value string) (string, error) {
@@ -206,10 +224,14 @@ func sanitizeCanvasDocument(document json.RawMessage) (json.RawMessage, error) {
 	if decoder.More() {
 		return nil, canvasProjectValidationError{message: "画布内容格式无效"}
 	}
-	if _, ok := value.(map[string]any); !ok {
+	documentObject, ok := value.(map[string]any)
+	if !ok {
 		return nil, canvasProjectValidationError{message: "画布内容必须是对象"}
 	}
-	cleaned := sanitizeCanvasValue(value)
+	if err := validateCanvasDocument(documentObject); err != nil {
+		return nil, err
+	}
+	cleaned := sanitizeCanvasValue(documentObject)
 	encoded, err := json.Marshal(cleaned)
 	if err != nil {
 		return nil, err
@@ -217,35 +239,149 @@ func sanitizeCanvasDocument(document json.RawMessage) (json.RawMessage, error) {
 	return encoded, nil
 }
 
+func validateCanvasDocument(document map[string]any) error {
+	nodes, ok := document["nodes"].([]any)
+	if !ok {
+		return canvasProjectValidationError{message: "画布节点必须是数组"}
+	}
+	for _, value := range nodes {
+		node, ok := value.(map[string]any)
+		if !ok || !nonEmptyCanvasString(node["id"]) || !canvasNodeType(node["type"]) {
+			return canvasProjectValidationError{message: "画布节点格式无效"}
+		}
+		if _, ok := node["title"].(string); !ok || !canvasPoint(node["position"], false) || !canvasNumber(node["width"]) || !canvasNumber(node["height"]) {
+			return canvasProjectValidationError{message: "画布节点格式无效"}
+		}
+		if metadata, exists := node["metadata"]; exists && metadata != nil {
+			if _, ok := metadata.(map[string]any); !ok {
+				return canvasProjectValidationError{message: "画布节点格式无效"}
+			}
+		}
+	}
+
+	connections, ok := document["connections"].([]any)
+	if !ok {
+		return canvasProjectValidationError{message: "画布连线必须是数组"}
+	}
+	for _, value := range connections {
+		connection, ok := value.(map[string]any)
+		if !ok || !nonEmptyCanvasString(connection["id"]) || !nonEmptyCanvasString(connection["fromNodeId"]) || !nonEmptyCanvasString(connection["toNodeId"]) {
+			return canvasProjectValidationError{message: "画布连线格式无效"}
+		}
+	}
+
+	backgroundMode, ok := document["backgroundMode"].(string)
+	if !ok || (backgroundMode != "dots" && backgroundMode != "lines" && backgroundMode != "blank") {
+		return canvasProjectValidationError{message: "画布背景模式无效"}
+	}
+	if _, ok := document["showImageInfo"].(bool); !ok {
+		return canvasProjectValidationError{message: "画布图片信息设置无效"}
+	}
+	if !canvasPoint(document["viewport"], true) {
+		return canvasProjectValidationError{message: "画布视口格式无效"}
+	}
+	return nil
+}
+
+func nonEmptyCanvasString(value any) bool {
+	text, ok := value.(string)
+	return ok && strings.TrimSpace(text) != ""
+}
+
+func canvasNodeType(value any) bool {
+	text, ok := value.(string)
+	return ok && (text == "image" || text == "text" || text == "config" || text == "video")
+}
+
+func canvasPoint(value any, viewport bool) bool {
+	point, ok := value.(map[string]any)
+	if !ok || !canvasNumber(point["x"]) || !canvasNumber(point["y"]) {
+		return false
+	}
+	if !viewport {
+		return true
+	}
+	return canvasPositiveNumber(point["k"])
+}
+
+func canvasNumber(value any) bool {
+	number, ok := value.(json.Number)
+	if !ok {
+		return false
+	}
+	parsed, err := number.Float64()
+	return err == nil && !math.IsInf(parsed, 0) && !math.IsNaN(parsed)
+}
+
+func canvasPositiveNumber(value any) bool {
+	if !canvasNumber(value) {
+		return false
+	}
+	parsed, _ := value.(json.Number).Float64()
+	return parsed > 0
+}
+
 func sanitizeCanvasValue(value any) any {
-	switch current := value.(type) {
-	case map[string]any:
-		cleaned := make(map[string]any, len(current))
-		for key, child := range current {
-			if text, ok := child.(string); ok && isTransientCanvasImageContent(text) {
-				continue
-			}
-			cleaned[key] = sanitizeCanvasValue(child)
-		}
-		return cleaned
-	case []any:
-		cleaned := make([]any, len(current))
-		for index, child := range current {
-			if text, ok := child.(string); ok && isTransientCanvasImageContent(text) {
-				continue
-			}
-			cleaned[index] = sanitizeCanvasValue(child)
-		}
-		return cleaned
-	default:
+	document, ok := value.(map[string]any)
+	if !ok {
 		return value
 	}
+	nodes, ok := document["nodes"].([]any)
+	if !ok {
+		return document
+	}
+	for _, item := range nodes {
+		node, ok := item.(map[string]any)
+		if !ok || (node["type"] != "image" && node["type"] != "video") {
+			continue
+		}
+		metadata, ok := node["metadata"].(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"content", "url", "previewUrl", "thumbnailUrl", "coverUrl"} {
+			if text, ok := metadata[key].(string); ok && isTransientCanvasImageContent(text) {
+				delete(metadata, key)
+			}
+		}
+		if access, ok := metadata["access"].(map[string]any); ok {
+			for key, child := range access {
+				if text, ok := child.(string); ok && isTransientCanvasImageContent(text) {
+					delete(access, key)
+				}
+			}
+		}
+		if references, ok := metadata["references"].([]any); ok {
+			retained := make([]any, 0, len(references))
+			retainedIndexes := make([]int, 0, len(references))
+			for index, child := range references {
+				if text, ok := child.(string); ok && isTransientCanvasImageContent(text) {
+					continue
+				}
+				retained = append(retained, child)
+				retainedIndexes = append(retainedIndexes, index)
+			}
+			if len(retained) != len(references) {
+				metadata["references"] = retained
+				if masks, ok := metadata["referenceMasks"].([]any); ok {
+					retainedMasks := make([]any, 0, len(retainedIndexes))
+					for _, index := range retainedIndexes {
+						if index < len(masks) {
+							retainedMasks = append(retainedMasks, masks[index])
+						}
+					}
+					metadata["referenceMasks"] = retainedMasks
+				}
+			}
+		}
+	}
+	return document
 }
 
 func isTransientCanvasImageContent(value string) bool {
 	value = strings.TrimSpace(value)
 	lower := strings.ToLower(value)
-	if strings.HasPrefix(lower, "blob:") || strings.HasPrefix(lower, "data:image/") {
+	if strings.HasPrefix(lower, "blob:") || strings.HasPrefix(lower, "data:") {
 		return true
 	}
 	parsed, err := url.Parse(value)

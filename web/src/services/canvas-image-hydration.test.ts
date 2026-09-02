@@ -3,6 +3,8 @@ import test from "node:test";
 
 import { CanvasNodeType, type CanvasNodeData } from "../app/(user)/canvas/types";
 import { hydrateCanvasImages, type CanvasImageMetadata } from "./canvas-image-hydration.ts";
+import { sanitizeCanvasProjectDocument } from "./canvas-project-document.ts";
+import type { CanvasProjectDocument } from "./api/canvas-projects";
 
 type Equal<Actual, Expected> = (<Value>() => Value extends Actual ? 1 : 2) extends <Value>() => Value extends Expected ? 1 : 2 ? true : false;
 type Assert<Value extends true> = Value;
@@ -122,6 +124,53 @@ test("uses public image access when restoring a missing cached public image", as
         naturalHeight: 800,
         bytes: 2048,
         mimeType: "image/webp",
+        status: "success",
+        errorDetails: undefined,
+    });
+});
+
+test("hydrates a sanitized public image with no media ID into a stable media cache reference", async () => {
+    const document = sanitizeCanvasProjectDocument({
+        nodes: [imageNode({ content: "https://public.example/image?X-Amz-Signature=temporary", publicImageId: "public-only" })],
+        connections: [],
+        backgroundMode: "lines",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+    } satisfies CanvasProjectDocument);
+    assert.equal(document.nodes[0]?.metadata?.content, undefined);
+    assert.equal(document.nodes[0]?.metadata?.mediaId, undefined);
+
+    const [restored] = await hydrateCanvasImages(document.nodes, {
+        resolveMediaUrl: async () => "",
+        readCachedImage: async () => {
+            throw new Error("没有稳定缓存键时不应读取缓存");
+        },
+        resolveRemoteImage: async () => {
+            throw new Error("公共图片不应使用私有媒体地址");
+        },
+        fetchPublicImageAccess: async (publicImageId) => {
+            assert.equal(publicImageId, "public-only");
+            return { mediaId: "public-media", url: "https://public.example/fresh" };
+        },
+        loadMediaImage: async (mediaId, remoteURL) => {
+            assert.equal(mediaId, "public-media");
+            assert.equal(await remoteURL(), "https://public.example/fresh");
+            return { url: "blob:hydrated", storageKey: "media:public-media:v1:original", mediaId, width: 800, height: 600, bytes: 1024, mimeType: "image/png" };
+        },
+        uploadImage: async () => {
+            throw new Error("公共图片恢复不应上传图片");
+        },
+    });
+
+    assert.deepEqual(restored.metadata, {
+        publicImageId: "public-only",
+        content: "blob:hydrated",
+        storageKey: "media:public-media:v1:original",
+        mediaId: "public-media",
+        naturalWidth: 800,
+        naturalHeight: 600,
+        bytes: 1024,
+        mimeType: "image/png",
         status: "success",
         errorDetails: undefined,
     });

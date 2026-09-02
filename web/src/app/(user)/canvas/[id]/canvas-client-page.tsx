@@ -41,7 +41,7 @@ import { CanvasNode } from "../components/canvas-node";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
-import { CanvasSyncFeedback } from "../components/canvas-sync-feedback";
+import { CanvasBootstrapFeedback, CanvasSyncFeedback } from "../components/canvas-sync-feedback";
 import { createCanvasCanonicalRestore } from "./canvas-canonical-restore";
 import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
@@ -1964,6 +1964,7 @@ function CanvasTopBar({
                                 {title}
                             </button>
                         )}
+                        <CanvasBootstrapFeedback />
                         <CanvasSyncFeedback projectId={projectId} />
                     </div>
                 </div>

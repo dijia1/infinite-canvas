@@ -2,12 +2,14 @@ package repository
 
 import (
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/glebarez/sqlite"
+	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
@@ -78,5 +80,46 @@ func TestDBMigratesLegacyCanvasProjectPrimaryKeyForOwnerScopedImports(t *testing
 	firstProject, found, err := GetCanvasProject("legacy-owner", "legacy-shared-id")
 	if err != nil || !found || firstProject.Title != "旧画布" {
 		t.Fatalf("legacy project after migration = %#v, found=%t, err=%v", firstProject, found, err)
+	}
+}
+
+func TestCanvasProjectDocumentUsesMySQLTextStorageAboveTheValidationLimit(t *testing.T) {
+	database, err := gorm.Open(mysql.New(mysql.Config{
+		DSN:                       "canvas:canvas@tcp(127.0.0.1:3306)/canvas",
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DryRun: true, DisableAutomaticPing: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := &gorm.Statement{DB: database}
+	if err := statement.Parse(&model.CanvasProject{}); err != nil {
+		t.Fatal(err)
+	}
+	field := statement.Schema.LookUpField("Document")
+	if field == nil {
+		t.Fatal("CanvasProject.Document field was not found")
+	}
+	dataType := strings.ToLower(database.Migrator().FullDataTypeOf(field).SQL)
+	if dataType != "mediumtext" && dataType != "longtext" {
+		t.Fatalf("CanvasProject.Document MySQL type = %q, want MEDIUMTEXT or LONGTEXT", dataType)
+	}
+}
+
+func TestMySQLCanvasProjectDocumentMigrationDecisionIsIdempotent(t *testing.T) {
+	for _, test := range []struct {
+		dataType string
+		want     bool
+	}{
+		{dataType: "tinytext", want: true},
+		{dataType: "text", want: true},
+		{dataType: "varchar", want: true},
+		{dataType: "mediumtext", want: false},
+		{dataType: "longtext", want: false},
+	} {
+		t.Run(test.dataType, func(t *testing.T) {
+			if got := mysqlCanvasProjectDocumentNeedsMigration(test.dataType); got != test.want {
+				t.Fatalf("mysqlCanvasProjectDocumentNeedsMigration(%q) = %t, want %t", test.dataType, got, test.want)
+			}
+		})
 	}
 }

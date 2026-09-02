@@ -47,17 +47,21 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                     replaceProjectsFromServer: state.replaceProjectsFromServer,
                     startSync: state.startSync,
                 }).catch((error) => {
-                    useCanvasStore.getState().markBootstrapUnavailable(uid);
+                    useCanvasStore.getState().markBootstrapUnavailable(uid, error);
                     throw error;
                 });
             });
             if (disposed) bootstrapRetry.dispose();
-            else void bootstrapRetry.attempt();
+            else {
+                useCanvasStore.getState().setBootstrapRetry(() => bootstrapRetry?.attempt() || Promise.resolve());
+                void bootstrapRetry.attempt();
+            }
         })();
 
         return () => {
             disposed = true;
             bootstrapRetry?.dispose();
+            useCanvasStore.getState().setBootstrapRetry(null);
         };
     }, [hydrateAssets, hydrateCanvas]);
 

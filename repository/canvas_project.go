@@ -89,10 +89,17 @@ func ListCanvasProjects(ownerUID string) ([]model.CanvasProject, error) {
 	return items, err
 }
 
-func UpdateCanvasProject(ownerUID, id string, revision int, title string, document []byte, updatedAt string) (bool, error) {
+func UpdateCanvasProject(ownerUID, id string, revision int, title string, document []byte, updatedAt string) (model.CanvasProject, bool, error) {
 	database, err := DB()
 	if err != nil {
-		return false, err
+		return model.CanvasProject{}, false, err
+	}
+	existing := model.CanvasProject{}
+	if err := database.Select("created_at").Where("id = ? AND owner_uid = ?", id, ownerUID).First(&existing).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return model.CanvasProject{}, false, nil
+		}
+		return model.CanvasProject{}, false, err
 	}
 	result := database.Model(&model.CanvasProject{}).
 		Where("id = ? AND owner_uid = ? AND revision = ?", id, ownerUID, revision).
@@ -102,7 +109,18 @@ func UpdateCanvasProject(ownerUID, id string, revision int, title string, docume
 			"revision":   gorm.Expr("revision + ?", 1),
 			"updated_at": updatedAt,
 		})
-	return result.RowsAffected > 0, result.Error
+	if result.Error != nil || result.RowsAffected == 0 {
+		return model.CanvasProject{}, false, result.Error
+	}
+	return model.CanvasProject{
+		ID:        id,
+		OwnerUID:  ownerUID,
+		Title:     title,
+		Document:  append([]byte(nil), document...),
+		Revision:  revision + 1,
+		CreatedAt: existing.CreatedAt,
+		UpdatedAt: updatedAt,
+	}, true, nil
 }
 
 func DeleteCanvasProject(ownerUID, id string, revision int) (bool, error) {

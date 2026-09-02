@@ -3,11 +3,16 @@ package router
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/basketikun/infinite-canvas/repository"
+	"gorm.io/gorm"
 )
 
 func canvasRequest(t *testing.T, method, path, owner, body string) *httptest.ResponseRecorder {
@@ -49,7 +54,7 @@ func TestCanvasProjectRoutesRequirePortalIdentity(t *testing.T) {
 func TestCanvasProjectOwnerCRUDSanitizesTransientImageContent(t *testing.T) {
 	id := "canvas-crud-" + time.Now().Format("20060102150405.000000000")
 	owner := "canvas-owner-" + id
-	document := `{"nodes":[{"id":"image-1","type":"image","metadata":{"content":"blob:https://canvas.local/1","mediaId":"media-1","publicImageId":"public-image-1","mimeType":"image/png","bytes":12,"access":{"url":"https://bucket.example/image.png?X-Amz-Signature=secret","google":"https://storage.googleapis.com/bucket/image.png?X-Goog-Signature=secret","azure":"https://account.blob.core.windows.net/images/image.png?sv=2025-01-05&sig=secret"}}},{"id":"text-1","type":"text","metadata":{"content":"keep this text"}}],"connections":[{"id":"line-1","fromNodeId":"image-1","toNodeId":"text-1"}],"backgroundMode":"dots","showImageInfo":true,"viewport":{"x":5,"y":8,"k":1.5},"legacyPreview":"data:image/png;base64,abc"}`
+	document := `{"nodes":[{"id":"image-1","type":"image","title":"图片","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"content":"blob:https://canvas.local/1","url":"blob:direct","previewUrl":"data:image/png;base64,preview","thumbnailUrl":"https://bucket.example/thumb.png?sig=secret","coverUrl":"https://cdn.example/stable-cover.png","references":["image:stable","blob:reference","data:image/png;base64,reference","https://bucket.example/ref.png?Expires=1","https://cdn.example/stable-reference.png"],"mediaId":"media-1","publicImageId":"public-image-1","mimeType":"image/png","bytes":12,"access":{"url":"https://bucket.example/image.png?X-Amz-Signature=secret","mediaId":"media-1"}}},{"id":"video-1","type":"video","title":"视频","position":{"x":10,"y":10},"width":120,"height":90,"metadata":{"content":"data:video/mp4;base64,abc","storageKey":"video:stable"}},{"id":"text-1","type":"text","title":"文本","position":{"x":20,"y":20},"width":100,"height":60,"metadata":{"content":"https://copy.example/text?X-Goog-Signature=keep-as-text"}},{"id":"config-1","type":"config","title":"配置","position":{"x":30,"y":30},"width":100,"height":60,"metadata":{"content":"data:image/png;base64,keep-as-config"}}],"connections":[{"id":"line-1","fromNodeId":"image-1","toNodeId":"text-1"}],"backgroundMode":"dots","showImageInfo":true,"viewport":{"x":5,"y":8,"k":1.5},"legacyPreview":"data:image/png;base64,keep-as-document-text"}`
 	create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"  我的画布  ","createdAt":"2026-09-02T01:00:00Z","updatedAt":"2026-09-02T01:00:00Z","document":`+document+`}`)
 	if create.Code != http.StatusOK {
 		t.Fatalf("create canvas project = %d/%s", create.Code, create.Body.String())
@@ -128,6 +133,31 @@ func TestCanvasProjectImportIsIdempotentAndDoesNotOverwriteExistingProject(t *te
 	}
 }
 
+func TestCanvasProjectCreateAndDeleteAreIdempotentAfterAmbiguousResponses(t *testing.T) {
+	id := "canvas-idempotent-" + time.Now().Format("20060102150405.000000000")
+	owner := "canvas-idempotent-owner-" + id
+	body := `{"id":"` + id + `","title":"首次创建","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`
+	first := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, body)
+	if first.Code != http.StatusOK || decodeCanvasResponse(t, first).Code != 0 {
+		t.Fatalf("first create = %d/%s", first.Code, first.Body.String())
+	}
+	repeated := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, strings.Replace(body, "首次创建", "重试不得覆盖", 1))
+	var existing struct {
+		Title    string `json:"title"`
+		Revision int    `json:"revision"`
+	}
+	if repeated.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, repeated).Data, &existing) != nil || existing.Title != "首次创建" || existing.Revision != 1 {
+		t.Fatalf("repeated create = %d/%s, decoded=%#v", repeated.Code, repeated.Body.String(), existing)
+	}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		deleted := canvasRequest(t, http.MethodDelete, "/api/v1/canvas/projects/"+id, owner, `{"revision":1}`)
+		if deleted.Code != http.StatusOK || decodeCanvasResponse(t, deleted).Code != 0 {
+			t.Fatalf("delete attempt %d = %d/%s", attempt, deleted.Code, deleted.Body.String())
+		}
+	}
+}
+
 func TestCanvasProjectImportAllowsDifferentOwnersToUseTheSameClientID(t *testing.T) {
 	id := "canvas-shared-" + time.Now().Format("20060102150405.000000000")
 	firstOwner := "canvas-shared-first-" + id
@@ -179,11 +209,11 @@ func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 	if create.Code != http.StatusOK {
 		t.Fatal(create.Body.String())
 	}
-	freshUpdate := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"服务器版本","document":{"nodes":[{"id":"server-node"}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
+	freshUpdate := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"服务器版本","document":{"nodes":[{"id":"server-node","type":"text","title":"服务器节点","position":{"x":0,"y":0},"width":100,"height":80}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
 	if freshUpdate.Code != http.StatusOK || decodeCanvasResponse(t, freshUpdate).Code != 0 {
 		t.Fatalf("fresh update = %d/%s", freshUpdate.Code, freshUpdate.Body.String())
 	}
-	staleUpdate := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"不应保存","document":{"nodes":[{"id":"stale-node"}],"connections":[],"backgroundMode":"blank","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
+	staleUpdate := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"不应保存","document":{"nodes":[{"id":"stale-node","type":"text","title":"过期节点","position":{"x":0,"y":0},"width":100,"height":80}],"connections":[],"backgroundMode":"blank","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
 	if staleUpdate.Code != http.StatusConflict || decodeCanvasResponse(t, staleUpdate).Code != 1 {
 		t.Fatalf("stale update = %d/%s", staleUpdate.Code, staleUpdate.Body.String())
 	}
@@ -202,15 +232,143 @@ func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 	}
 }
 
+func TestCanvasProjectRejectsUnsafeIDsAndDocumentsTheFrontendCannotLoad(t *testing.T) {
+	owner := "canvas-validation-owner-" + time.Now().Format("20060102150405.000000000")
+	validDocument := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	unsafeID := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"unsafe/id","title":"非法 ID","document":`+validDocument+`}`)
+	if unsafeID.Code != http.StatusBadRequest || decodeCanvasResponse(t, unsafeID).Code != 1 {
+		t.Fatalf("unsafe create ID = %d/%s", unsafeID.Code, unsafeID.Body.String())
+	}
+	unsafePath := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/unsafe%20id", owner, "")
+	if unsafePath.Code != http.StatusBadRequest || decodeCanvasResponse(t, unsafePath).Code != 1 {
+		t.Fatalf("unsafe path ID = %d/%s", unsafePath.Code, unsafePath.Body.String())
+	}
+
+	invalidDocuments := []struct {
+		name     string
+		document string
+	}{
+		{name: "missing required document fields", document: `{}`},
+		{name: "nodes must be an array", document: `{"nodes":{},"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "node minimum fields", document: `{"nodes":[{"id":"node-only"}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "connection minimum fields", document: `{"nodes":[],"connections":[{"id":"connection-only"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "viewport numeric fields", document: `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0}}`},
+		{name: "supported background mode", document: `{"nodes":[],"connections":[],"backgroundMode":"rainbow","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "show image info boolean", document: `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":"false","viewport":{"x":0,"y":0,"k":1}}`},
+	}
+	for index, test := range invalidDocuments {
+		t.Run(test.name, func(t *testing.T) {
+			id := fmt.Sprintf("invalid-document-%d-%d", time.Now().UnixNano(), index)
+			response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"非法文档","document":`+test.document+`}`)
+			if response.Code != http.StatusBadRequest || decodeCanvasResponse(t, response).Code != 1 {
+				t.Fatalf("invalid document accepted = %d/%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestCanvasProjectUpdateReturnsTheExactSnapshotAcceptedBeforeALaterWriter(t *testing.T) {
+	id := "canvas-interleaved-" + time.Now().Format("20060102150405.000000000")
+	owner := "canvas-interleaved-owner-" + id
+	create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"初始版本","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
+	if create.Code != http.StatusOK || decodeCanvasResponse(t, create).Code != 0 {
+		t.Fatalf("create canvas project = %d/%s", create.Code, create.Body.String())
+	}
+
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousSkipDefaultTransaction := database.Config.SkipDefaultTransaction
+	database.Config.SkipDefaultTransaction = true
+	callbackName := "test:block-first-canvas-update-return"
+	firstWriteApplied := make(chan struct{})
+	releaseFirstWriter := make(chan struct{})
+	var updateCount atomic.Int32
+	if err := database.Callback().Update().After("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table != "canvas_projects" || updateCount.Add(1) != 1 {
+			return
+		}
+		close(firstWriteApplied)
+		<-releaseFirstWriter
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database.Config.SkipDefaultTransaction = previousSkipDefaultTransaction
+		_ = database.Callback().Update().Remove(callbackName)
+	})
+
+	firstResponse := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		firstResponse <- canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"第一个写入","document":{"nodes":[],"connections":[],"backgroundMode":"dots","showImageInfo":false,"viewport":{"x":1,"y":2,"k":1}}}`)
+	}()
+	select {
+	case <-firstWriteApplied:
+	case <-time.After(2 * time.Second):
+		close(releaseFirstWriter)
+		t.Fatal("first conditional update did not reach the synchronization point")
+	}
+
+	second := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":2,"title":"第二个写入","document":{"nodes":[],"connections":[],"backgroundMode":"blank","showImageInfo":true,"viewport":{"x":3,"y":4,"k":2}}}`)
+	if second.Code != http.StatusOK || decodeCanvasResponse(t, second).Code != 0 {
+		close(releaseFirstWriter)
+		t.Fatalf("second update = %d/%s", second.Code, second.Body.String())
+	}
+	close(releaseFirstWriter)
+
+	first := <-firstResponse
+	var accepted struct {
+		Title    string          `json:"title"`
+		Revision int             `json:"revision"`
+		Document json.RawMessage `json:"document"`
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, first).Data, &accepted); err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Title != "第一个写入" || accepted.Revision != 2 || !bytes.Contains(accepted.Document, []byte(`"backgroundMode":"dots"`)) {
+		t.Fatalf("first response exposed a later writer snapshot: %#v, document=%s", accepted, accepted.Document)
+	}
+}
+
 func assertCanvasDocumentSanitized(t *testing.T, document json.RawMessage) {
 	t.Helper()
-	text := string(document)
-	for _, forbidden := range []string{"blob:", "data:image/", "X-Amz-Signature", "X-Goog-Signature", "sig=secret"} {
-		if strings.Contains(text, forbidden) {
-			t.Fatalf("stored document leaks transient image content %q: %s", forbidden, text)
-		}
+	var decoded struct {
+		Nodes []struct {
+			ID       string         `json:"id"`
+			Metadata map[string]any `json:"metadata"`
+		} `json:"nodes"`
+		LegacyPreview string `json:"legacyPreview"`
 	}
-	for _, required := range []string{"media-1", "public-image-1", "image/png", "keep this text", "line-1", "dots"} {
+	if err := json.Unmarshal(document, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	metadata := make(map[string]map[string]any, len(decoded.Nodes))
+	for _, node := range decoded.Nodes {
+		metadata[node.ID] = node.Metadata
+	}
+	if _, exists := metadata["image-1"]["content"]; exists {
+		t.Fatalf("stored image node kept blob preview: %s", document)
+	}
+	if _, exists := metadata["video-1"]["content"]; exists {
+		t.Fatalf("stored video node kept data preview: %s", document)
+	}
+	if access, ok := metadata["image-1"]["access"].(map[string]any); !ok || access["url"] != nil || access["mediaId"] != "media-1" {
+		t.Fatalf("stored image access was not selectively sanitized: %#v", metadata["image-1"]["access"])
+	}
+	if metadata["image-1"]["url"] != nil || metadata["image-1"]["previewUrl"] != nil || metadata["image-1"]["thumbnailUrl"] != nil || metadata["image-1"]["coverUrl"] != "https://cdn.example/stable-cover.png" {
+		t.Fatalf("stored image preview fields were not selectively sanitized: %#v", metadata["image-1"])
+	}
+	if references, ok := metadata["image-1"]["references"].([]any); !ok || len(references) != 2 || references[0] != "image:stable" || references[1] != "https://cdn.example/stable-reference.png" {
+		t.Fatalf("stored image references were not selectively sanitized: %#v", metadata["image-1"]["references"])
+	}
+	if metadata["text-1"]["content"] != "https://copy.example/text?X-Goog-Signature=keep-as-text" || metadata["config-1"]["content"] != "data:image/png;base64,keep-as-config" {
+		t.Fatalf("stored document lost text/config content: %s", document)
+	}
+	if decoded.LegacyPreview != "data:image/png;base64,keep-as-document-text" {
+		t.Fatalf("stored document lost non-media text field: %s", document)
+	}
+	for _, required := range []string{"media-1", "public-image-1", "image/png", "line-1", "dots"} {
 		if !bytes.Contains(document, []byte(required)) {
 			t.Fatalf("stored document lost stable canvas state %q: %s", required, document)
 		}

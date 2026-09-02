@@ -11,6 +11,7 @@ import { setMediaBlob } from "@/services/file-storage";
 import { setImageBlob } from "@/services/image-storage";
 import { CanvasDeleteProjectsDialog } from "./components/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "./components/canvas-project-card";
+import { CanvasBootstrapFeedback } from "./components/canvas-sync-feedback";
 import type { CanvasExportFile } from "./export-types";
 import { useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
@@ -67,6 +68,9 @@ export default function CanvasPage() {
                     <div>
                         <p className="text-xs text-stone-500">画布库</p>
                         <h1 className="mt-3 text-3xl font-semibold">无限画布</h1>
+                        <div className="mt-2">
+                            <CanvasBootstrapFeedback />
+                        </div>
                     </div>
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (

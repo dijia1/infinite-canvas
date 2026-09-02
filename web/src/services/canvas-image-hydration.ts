@@ -29,7 +29,7 @@ export type CanvasImageHydrationDependencies = {
     resolveMediaUrl: (storageKey: string, fallback: string) => Promise<string>;
     readCachedImage: (storageKey: string) => Promise<string>;
     resolveRemoteImage: (mediaId: string) => Promise<string>;
-    fetchPublicImageAccess: (publicImageId: string) => Promise<{ url: string }>;
+    fetchPublicImageAccess: (publicImageId: string) => Promise<{ url: string; mediaId?: string }>;
     loadMediaImage: (mediaId: string, remoteURL: () => Promise<string>) => Promise<StoredCanvasImage>;
     uploadImage: (source: string, mediaId?: string) => Promise<StoredCanvasImage>;
 };
@@ -69,18 +69,30 @@ export async function hydrateCanvasImages(
             }
             if (node.type !== "image") return node;
 
-            const recovery = await recoverPersistedImage(metadata || {}, {
+            let mediaId = metadata?.mediaId;
+            let publicAccess: { url: string; mediaId?: string } | undefined;
+            if (!mediaId && metadata?.publicImageId) {
+                try {
+                    publicAccess = await dependencies.fetchPublicImageAccess(metadata.publicImageId);
+                    if (!publicAccess.mediaId) throw new Error("公共图片缺少媒体标识");
+                    mediaId = publicAccess.mediaId;
+                } catch (error) {
+                    return { ...node, metadata: { ...metadata, status: "error", errorDetails: `恢复图片失败：${error instanceof Error ? error.message : "公共图片无法访问"}` } };
+                }
+            }
+
+            const recovery = await recoverPersistedImage({ ...(metadata || {}), ...(mediaId ? { mediaId } : {}) }, {
                 readCachedImage: dependencies.readCachedImage,
-                downloadMediaImage: async (mediaId) => {
-                    const image = await dependencies.loadMediaImage(mediaId, async () =>
-                        metadata?.publicImageId ? (await dependencies.fetchPublicImageAccess(metadata.publicImageId)).url : dependencies.resolveRemoteImage(mediaId),
+                downloadMediaImage: async (resolvedMediaId) => {
+                    const image = await dependencies.loadMediaImage(resolvedMediaId, async () =>
+                        metadata?.publicImageId ? (publicAccess || (await dependencies.fetchPublicImageAccess(metadata.publicImageId))).url : dependencies.resolveRemoteImage(resolvedMediaId),
                     );
                     return restoredImageMetadata(image);
                 },
             });
 
             if (recovery.status === "cached" || recovery.status === "remote") {
-                return { ...node, metadata: { ...metadata, ...recovery, status: "success", errorDetails: undefined } };
+                return { ...node, metadata: { ...metadata, ...(mediaId ? { mediaId } : {}), ...recovery, status: "success", errorDetails: undefined } };
             }
             if (recovery.status === "error") {
                 return { ...node, metadata: { ...metadata, status: "error", errorDetails: `恢复图片失败：${recovery.error}` } };

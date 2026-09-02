@@ -31,6 +31,7 @@ type CanvasBootstrapOptions = {
 };
 
 const STABLE_IMAGE_METADATA_KEYS = ["mediaId", "storageKey", "mediaExpiresAt", "naturalWidth", "naturalHeight", "bytes", "mimeType", "status", "errorDetails"] as const;
+const CANVAS_IMPORT_BATCH_SIZE = 200;
 
 export function mergeNormalizedLegacyNodes(currentNodes: CanvasNodeData[], capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) {
     const currentById = new Map(currentNodes.map((node, index) => [node.id, { node, index }]));
@@ -198,10 +199,15 @@ export async function bootstrapCanvasProjects(options: CanvasBootstrapOptions) {
 
     const normalizedIds = new Set(normalizedProjects.map((project) => project.id));
     const importSnapshots = new Map(options.getProjects().filter((project) => normalizedIds.has(project.id)).map((project) => [project.id, project]));
-    const imported = importSnapshots.size ? await api.importProjects(Array.from(importSnapshots.values()).map(projectImportInput)) : { items: [], total: 0 };
-    options.adoptImportedProjects?.(imported.items, importSnapshots);
+    const importInputs = Array.from(importSnapshots.values()).map(projectImportInput);
+    const importedItems: CanvasProjectRecord[] = [];
+    for (let index = 0; index < importInputs.length; index += CANVAS_IMPORT_BATCH_SIZE) {
+        const imported = await api.importProjects(importInputs.slice(index, index + CANVAS_IMPORT_BATCH_SIZE));
+        importedItems.push(...imported.items);
+    }
+    options.adoptImportedProjects?.(importedItems, importSnapshots);
     const combined = new Map(server.items.map((project) => [project.id, project]));
-    imported.items.forEach((project) => combined.set(project.id, project));
+    importedItems.forEach((project) => combined.set(project.id, project));
     options.replaceProjectsFromServer(Array.from(combined.values()));
     options.startSync(options.uid);
     return true;
