@@ -34,7 +34,7 @@ function createTestOperations(options: {
     scopeVersion?: number;
     store?: MemoryStore;
     isActive?: () => boolean;
-    fetchImageBlob?: (url: string) => Promise<Blob>;
+    fetchImageBlob?: (url: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
     createPreviewBlob?: (blob: Blob) => Promise<Blob>;
     cacheBudgetBytes?: number;
     cacheHighWatermarkBytes?: number;
@@ -173,6 +173,56 @@ test("does not re-sign an original request for a non-403 failure", async () => {
     assert.equal(signedURLRequests, 1);
 });
 
+test("aborting an original remote load leaves IndexedDB unchanged", async () => {
+    const store = new MemoryStore();
+    const controller = new AbortController();
+    let observedSignal: AbortSignal | undefined;
+    const { operations } = createTestOperations({
+        store,
+        fetchImageBlob: async (_url, options) => {
+            observedSignal = options?.signal;
+            return new Promise<Blob>((_resolve, reject) => {
+                options?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+            });
+        },
+    });
+
+    const pending = operations.loadMediaImage("abort-media", "https://oss.example/original.png", { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(observedSignal, controller.signal);
+    assert.equal(await store.getItem(imageStorageKeyForMedia("abort-media")), null);
+});
+
+test("an aborted 403 request does not ask for a fresh signed URL", async () => {
+    const controller = new AbortController();
+    let accessRequests = 0;
+    let fetches = 0;
+    const { operations } = createTestOperations({
+        fetchImageBlob: async () => {
+            fetches += 1;
+            controller.abort();
+            throw Object.assign(new Error("expired"), { status: 403, name: "AbortError" });
+        },
+    });
+
+    await assert.rejects(
+        operations.loadMediaImage(
+            "abort-403",
+            () => {
+                accessRequests += 1;
+                return Promise.resolve(`https://oss.example/image?Signature=${accessRequests}`);
+            },
+            { signal: controller.signal },
+        ),
+        { name: "AbortError" },
+    );
+    assert.equal(fetches, 1);
+    assert.equal(accessRequests, 1);
+});
+
 test("global LRU evicts inactive cache entries when the entry watermark is exceeded", async () => {
     let timestamp = 0;
     const store = new MemoryStore();
@@ -297,6 +347,33 @@ test("loadMediaThumbnail derives and stores a WebP thumbnail from the local orig
     assert.equal(derivedFrom, original);
     assert.equal(await store.getItem(imageThumbnailStorageKey("media-2")), derived);
     assert.equal(remoteCalls, 0);
+});
+
+test("thumbnail-first canvas loads prefer the OSS preview over decoding a cached original", async () => {
+    const store = new MemoryStore();
+    const original = new Blob(["cached-4k-original"], { type: "image/png" });
+    const remotePreview = new Blob(["remote-preview"], { type: "image/webp" });
+    await store.setItem(imageStorageKeyForMedia("media-preview-first"), original);
+    let remoteCalls = 0;
+    let previewConversions = 0;
+    const { operations } = createTestOperations({
+        store,
+        createPreviewBlob: async () => {
+            previewConversions += 1;
+            return new Blob(["derived-preview"], { type: "image/webp" });
+        },
+        fetchImageBlob: async () => {
+            remoteCalls += 1;
+            return remotePreview;
+        },
+    });
+
+    const image = await operations.loadMediaThumbnail("media-preview-first", "https://oss.example/thumbnail.webp", { preferRemoteThumbnail: true });
+
+    assert.equal(image.storageKey, imageThumbnailStorageKey("media-preview-first"));
+    assert.equal(await store.getItem(imageThumbnailStorageKey("media-preview-first")), remotePreview);
+    assert.equal(remoteCalls, 1);
+    assert.equal(previewConversions, 0);
 });
 
 test("loadMediaThumbnail falls back to the cached original when browser conversion fails", async () => {

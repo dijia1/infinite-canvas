@@ -51,6 +51,8 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
         if (node.type !== CanvasNodeType.Image) setPrompt("");
     };
 
+    if (node.type === CanvasNodeType.Text) return null;
+
     return (
         <div
             className="rounded-2xl border p-3 shadow-2xl backdrop-blur"
@@ -69,7 +71,7 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
                 }}
                 className="thin-scrollbar h-24 w-full resize-none rounded-xl border px-3 py-2 text-sm leading-5 outline-none"
                 style={{ background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text }}
-                placeholder={mode === "video" ? "描述要生成的视频内容" : mode === "image" ? (hasImageContent ? "请输入你想要把这张图修改成什么" : "描述要生成的图片内容") : hasTextContent ? "请输入你想要将本段文本修改成什么" : "请输入你想要生成的文本内容"}
+                placeholder={mode === "video" ? "描述要生成的视频内容" : hasImageContent ? "请输入你想要把这张图修改成什么" : "描述要生成的图片内容"}
             />
 
             <div className="mt-2 flex min-w-0 items-center justify-between gap-2">
@@ -104,6 +106,6 @@ export function CanvasNodePromptPanel({ node, isRunning, onPromptChange, onConfi
     );
 }
 
-function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
-    return type === CanvasNodeType.Text ? "text" : type === CanvasNodeType.Video ? "video" : "image";
+export function defaultMode(type: CanvasNodeData["type"]): CanvasNodeGenerationMode {
+    return type === CanvasNodeType.Video ? "video" : "image";
 }

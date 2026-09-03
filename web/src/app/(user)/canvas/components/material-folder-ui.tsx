@@ -17,6 +17,11 @@ export function materialThumbnailColumns(stage: number) {
     return MATERIAL_THUMBNAIL_COLUMNS[Math.max(0, Math.min(MATERIAL_THUMBNAIL_COLUMNS.length - 1, Math.round(stage)))] || MATERIAL_THUMBNAIL_COLUMNS[DEFAULT_MATERIAL_THUMBNAIL_STAGE];
 }
 
+export function materialThumbnailGridClass(stage: number) {
+    const columns = materialThumbnailColumns(stage);
+    return columns === 6 ? "grid-cols-6" : columns === 4 ? "grid-cols-4" : columns === 3 ? "grid-cols-3" : "grid-cols-2";
+}
+
 export function folderChildren<T extends MaterialFolder>(folders: T[], parentId?: string) {
     return folders.filter((folder) => (folder.parentId || undefined) === parentId);
 }

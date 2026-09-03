@@ -3,7 +3,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { getConnectionCurve } from "../utils/canvas-connection-geometry";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "../types";
 
-export function ConnectionPath({ connection, from, to, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; pendingCut?: boolean; onSelect: () => void }) {
+export const ConnectionPath = memo(function ConnectionPath({ connection, from, to, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; pendingCut?: boolean; onSelect: (connectionId: string) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const { pathD } = getConnectionCurve(from, to);
     const highlight = pendingCut || active;
@@ -19,7 +19,7 @@ export function ConnectionPath({ connection, from, to, active, pendingCut, onSel
                 style={{ cursor: "pointer", pointerEvents: "stroke" }}
                 onClick={(event) => {
                     event.stopPropagation();
-                    onSelect();
+                    onSelect(connection.id);
                 }}
             />
             <path
@@ -33,7 +33,7 @@ export function ConnectionPath({ connection, from, to, active, pendingCut, onSel
             />
         </g>
     );
-}
+});
 
 export function ActiveConnectionPath({ node, handle, mouseWorld }: { node?: CanvasNodeData; handle: ConnectionHandle; mouseWorld: Position }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -48,3 +48,4 @@ export function ActiveConnectionPath({ node, handle, mouseWorld }: { node?: Canv
 
     return <path d={pathD} stroke={theme.node.activeStroke} strokeWidth="2" fill="none" strokeDasharray="5,5" />;
 }
+import { memo } from "react";

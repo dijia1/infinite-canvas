@@ -17,7 +17,7 @@ export enum CanvasNodeType {
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
-export type CanvasGenerationMode = "text" | "image" | "video";
+export type CanvasGenerationMode = "image" | "video";
 export type CanvasImageGenerationType = "generation" | "edit";
 
 export type CanvasNodeMetadata = {

@@ -1,4 +1,4 @@
-import type { ChatCompletionMessage } from "@/services/api/image";
+import { imageToDataUrl, type UploadedImage } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
@@ -44,22 +44,20 @@ export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[
     });
 }
 
-export function buildNodeChatMessages(context: NodeGenerationContext): ChatCompletionMessage[] {
-    if (!context.referenceImages.length) {
-        return [{ role: "user", content: context.prompt }];
-    }
-
-    return [
-        {
-            role: "user",
-            content: [{ type: "text" as const, text: context.prompt }, ...context.referenceImages.map((image) => ({ type: "image_url" as const, image_url: { url: image.dataUrl } }))],
-        },
-    ];
-}
-
-export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {
-    const { imageToDataUrl } = await import("@/services/image-storage");
-    return { ...context, referenceImages: await Promise.all(context.referenceImages.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) }))) };
+export async function hydrateNodeGenerationContext(context: NodeGenerationContext, loadOriginalMedia?: (mediaId: string) => Promise<UploadedImage>) {
+    if (context.referenceImages.length > 0 && context.referenceImages.every((image) => image.mediaId)) return context;
+    return {
+        ...context,
+        referenceImages: await Promise.all(
+            context.referenceImages.map(async (image) => {
+                const loaded = !image.dataUrl && image.mediaId && loadOriginalMedia ? await loadOriginalMedia(image.mediaId) : undefined;
+                const reference = loaded ? { ...image, storageKey: loaded.storageKey, url: loaded.url } : image;
+                const dataUrl = await imageToDataUrl(reference);
+                if (!dataUrl) throw new Error("参考图片无法恢复");
+                return { ...reference, dataUrl };
+            }),
+        ),
+    };
 }
 
 function readNodeTextInput(node: CanvasNodeData) {
@@ -68,14 +66,15 @@ function readNodeTextInput(node: CanvasNodeData) {
 }
 
 function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
-    if (node.type !== CanvasNodeType.Image || !node.metadata?.content) return null;
+    if (node.type !== CanvasNodeType.Image || (!node.metadata?.content && !node.metadata?.mediaId)) return null;
     const mask = normalizeImageMask(node.metadata.imageMask);
     return {
         id: node.id,
         name: `${node.title || node.id}.png`,
         type: node.metadata.mimeType || "image/png",
-        dataUrl: node.metadata.content,
+        dataUrl: node.metadata.content || "",
         storageKey: node.metadata.storageKey,
+        ...(node.metadata.mediaId ? { mediaId: node.metadata.mediaId } : {}),
         ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
         ...(mask ? { mask } : {}),
     };

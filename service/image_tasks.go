@@ -19,12 +19,13 @@ const (
 )
 
 type CreateImageTaskRequest struct {
-	ClientRequestID string
-	ProviderID      string
-	Mode            string
-	Request         ai.ImageRequest
-	References      []ai.ImageReference
-	Mask            *ai.ImageReference
+	ClientRequestID   string
+	ProviderID        string
+	Mode              string
+	Request           ai.ImageRequest
+	References        []ai.ImageReference
+	ReferenceMediaIDs []string
+	Mask              *ai.ImageReference
 }
 
 type ImageTaskView struct {
@@ -53,6 +54,13 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	} else if found {
 		return imageTaskView(ctx, user, existing)
+	}
+	if len(request.ReferenceMediaIDs) > 0 {
+		references, err := resolveImageTaskMediaReferences(ctx, user, request.ReferenceMediaIDs)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		request.References = references
 	}
 
 	provider, err := selectedImageTaskProvider(request.Mode, request.ProviderID)
@@ -148,7 +156,16 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 	if request.Request.Count != 1 {
 		return CreateImageTaskRequest{}, safeMessageError{message: "单次图片任务只能生成一张图片"}
 	}
-	if request.Mode == ImageTaskModeEdit && len(request.References) < 1 {
+	if len(request.References) > 0 && len(request.ReferenceMediaIDs) > 0 {
+		return CreateImageTaskRequest{}, safeMessageError{message: "参考图片请求格式无效"}
+	}
+	for index, mediaID := range request.ReferenceMediaIDs {
+		request.ReferenceMediaIDs[index] = strings.TrimSpace(mediaID)
+		if request.ReferenceMediaIDs[index] == "" || len(request.ReferenceMediaIDs[index]) > 128 {
+			return CreateImageTaskRequest{}, safeMessageError{message: "参考图片无效"}
+		}
+	}
+	if request.Mode == ImageTaskModeEdit && len(request.References) == 0 && len(request.ReferenceMediaIDs) == 0 {
 		return CreateImageTaskRequest{}, safeMessageError{message: "图像编辑需要参考图"}
 	}
 	if request.Mask != nil && request.Mode != ImageTaskModeEdit {

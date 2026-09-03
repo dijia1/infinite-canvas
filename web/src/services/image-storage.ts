@@ -33,6 +33,12 @@ type LegacyCacheMetadata = Omit<Partial<CacheMetadata>, "variant"> & { lastAcces
 type CacheTotal = { bytes: number; entries: number };
 type CachedVariant = { blob: Blob; storageKey: string; generation: number };
 export type RemoteMediaURL = string | (() => Promise<string>);
+export type MediaLoadOptions = {
+    signal?: AbortSignal;
+    // Canvas overview rendering must not decode a cached 4K original merely to
+    // synthesize a preview when OSS can provide one directly.
+    preferRemoteThumbnail?: boolean;
+};
 
 export type ImageStorageOperationsOptions = {
     scope: string;
@@ -41,7 +47,7 @@ export type ImageStorageOperationsOptions = {
     cacheIndexStore?: ImageCacheStore;
     objectUrls: Map<string, string>;
     isActive: () => boolean;
-    fetchImageBlob?: (url: string) => Promise<Blob>;
+    fetchImageBlob?: (url: string, options?: MediaLoadOptions) => Promise<Blob>;
     createPreviewBlob?: (blob: Blob) => Promise<Blob>;
     createObjectURL?: (blob: Blob) => string;
     revokeObjectURL?: (url: string) => void;
@@ -204,8 +210,16 @@ function imageFetchStatus(error: unknown) {
     return typeof status === "number" ? status : undefined;
 }
 
+function isImageFetchAbort(error: unknown, signal?: AbortSignal) {
+    return Boolean(signal?.aborted || (error && typeof error === "object" && "name" in error && (error as { name?: unknown }).name === "AbortError"));
+}
+
+function throwIfImageLoadAborted(signal?: AbortSignal) {
+    if (signal?.aborted) throw Object.assign(new Error("图片加载已取消"), { name: "AbortError" });
+}
+
 export function createImageStorageOperations(options: ImageStorageOperationsOptions) {
-    const fetchImageBlob = options.fetchImageBlob || (async (url: string) => imageBlobFromResponse(await fetch(appApiPath(url))));
+    const fetchImageBlob = options.fetchImageBlob || (async (url: string, loadOptions?: MediaLoadOptions) => imageBlobFromResponse(await fetch(appApiPath(url), { signal: loadOptions?.signal })));
     const createPreviewBlob = options.createPreviewBlob || createImagePreview;
     const createObjectURL = options.createObjectURL || ((blob: Blob) => URL.createObjectURL(blob));
     const revokeObjectURL = options.revokeObjectURL || ((url: string) => URL.revokeObjectURL(url));
@@ -394,13 +408,17 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
     };
     const writeBlob = async (storageKey: string, blob: Blob, generation = currentGeneration(storageKey)) =>
         withStorageMutation(storageKey, () => writeBlobUnlocked(storageKey, blob, generation));
-    const fetchRemoteBlob = async (remoteURL: RemoteMediaURL) => {
+    const fetchRemoteBlob = async (remoteURL: RemoteMediaURL, loadOptions: MediaLoadOptions = {}) => {
         let lastError: unknown;
         for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-                return await fetchImageBlob(await resolveRemoteURL(remoteURL));
+                throwIfImageLoadAborted(loadOptions.signal);
+                const url = await resolveRemoteURL(remoteURL);
+                throwIfImageLoadAborted(loadOptions.signal);
+                return await fetchImageBlob(url, loadOptions);
             } catch (error) {
                 lastError = error;
+                if (isImageFetchAbort(error, loadOptions.signal)) throw error;
                 if (attempt === 0 && imageFetchStatus(error) === 403) continue;
                 throw error;
             }
@@ -433,7 +451,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         }
     };
 
-    const loadMediaImage = (mediaId: string, remoteURL: RemoteMediaURL) => {
+    const loadMediaImage = (mediaId: string, remoteURL: RemoteMediaURL, loadOptions: MediaLoadOptions = {}) => {
         const storageKey = imageStorageKeyForMedia(mediaId);
         const generation = currentGeneration(storageKey);
         return coalesceMediaLoad(`${scopedLoadKey(options, storageKey)}#${generation}`, async () => {
@@ -445,7 +463,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                         return blob ? { blob, storageKey, generation } : undefined;
                     },
                     loadRemoteOriginal: async () => {
-                        const blob = await fetchRemoteBlob(remoteURL);
+                        const blob = await fetchRemoteBlob(remoteURL, loadOptions);
                         ensureActive(options);
                         await writeBlob(storageKey, blob, generation);
                         return { blob, storageKey, generation };
@@ -458,7 +476,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         });
     };
 
-    const loadMediaThumbnail = (mediaId: string, remoteThumbnailURL: RemoteMediaURL) => {
+    const loadMediaThumbnail = (mediaId: string, remoteThumbnailURL: RemoteMediaURL, loadOptions: MediaLoadOptions = {}) => {
         const previewKey = imageThumbnailStorageKey(mediaId);
         const originalKey = imageStorageKeyForMedia(mediaId);
         const previewGeneration = currentGeneration(previewKey);
@@ -466,11 +484,36 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         return coalesceMediaLoad(`${scopedLoadKey(options, previewKey)}#${previewGeneration}.${originalGeneration}`, async () => {
             const finish = markInFlight([previewKey, originalKey]);
             try {
+                const cachedPreview = async () => {
+                    const blob = await readBlob(previewKey, previewGeneration);
+                    return blob ? { blob, storageKey: previewKey, generation: previewGeneration } : undefined;
+                };
+                const remotePreview = async () => {
+                    const blob = await fetchRemoteBlob(remoteThumbnailURL, loadOptions);
+                    ensureActive(options);
+                    await writeBlob(previewKey, blob, previewGeneration);
+                    return { blob, storageKey: previewKey, generation: previewGeneration };
+                };
+                if (loadOptions.preferRemoteThumbnail) {
+                    const preview = await cachedPreview();
+                    if (preview) return await toUploadedImage(preview, mediaId);
+                    try {
+                        return await toUploadedImage(await remotePreview(), mediaId);
+                    } catch (remoteError) {
+                        if (isImageFetchAbort(remoteError, loadOptions.signal)) throw remoteError;
+                        const original = await readBlob(originalKey, originalGeneration);
+                        if (!original) throw remoteError;
+                        try {
+                            const blob = await createPreviewBlob(original);
+                            await writeBlob(previewKey, blob, previewGeneration);
+                            return await toUploadedImage({ blob, storageKey: previewKey, generation: previewGeneration }, mediaId);
+                        } catch {
+                            return await toUploadedImage({ blob: original, storageKey: originalKey, generation: originalGeneration }, mediaId);
+                        }
+                    }
+                }
                 const variant = await resolvePreview<CachedVariant>({
-                    readPreview: async () => {
-                        const blob = await readBlob(previewKey, previewGeneration);
-                        return blob ? { blob, storageKey: previewKey, generation: previewGeneration } : undefined;
-                    },
+                    readPreview: cachedPreview,
                     readOriginal: async () => {
                         const blob = await readBlob(originalKey, originalGeneration);
                         return blob ? { blob, storageKey: originalKey, generation: originalGeneration } : undefined;
@@ -480,12 +523,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                         await writeBlob(previewKey, blob, previewGeneration);
                         return { blob, storageKey: previewKey, generation: previewGeneration };
                     },
-                    loadRemotePreview: async () => {
-                        const blob = await fetchRemoteBlob(remoteThumbnailURL);
-                        ensureActive(options);
-                        await writeBlob(previewKey, blob, previewGeneration);
-                        return { blob, storageKey: previewKey, generation: previewGeneration };
-                    },
+                    loadRemotePreview: remotePreview,
                 });
                 return await toUploadedImage(variant, mediaId);
             } finally {
@@ -711,12 +749,12 @@ export async function uploadImage(input: string | Blob, mediaId?: string): Promi
     return operations.storeImage(input, storageKey, mediaId);
 }
 
-export async function loadMediaImage(mediaId: string, remoteURL: RemoteMediaURL): Promise<UploadedImage> {
-    return currentOperations().loadMediaImage(mediaId, remoteURL);
+export async function loadMediaImage(mediaId: string, remoteURL: RemoteMediaURL, loadOptions?: MediaLoadOptions): Promise<UploadedImage> {
+    return currentOperations().loadMediaImage(mediaId, remoteURL, loadOptions);
 }
 
-export async function loadMediaThumbnail(mediaId: string, remoteThumbnailURL: RemoteMediaURL): Promise<UploadedImage> {
-    return currentOperations().loadMediaThumbnail(mediaId, remoteThumbnailURL);
+export async function loadMediaThumbnail(mediaId: string, remoteThumbnailURL: RemoteMediaURL, loadOptions?: MediaLoadOptions): Promise<UploadedImage> {
+    return currentOperations().loadMediaThumbnail(mediaId, remoteThumbnailURL, loadOptions);
 }
 
 export async function promoteImageStorageKey(image: UploadedImage, mediaId: string): Promise<UploadedImage> {

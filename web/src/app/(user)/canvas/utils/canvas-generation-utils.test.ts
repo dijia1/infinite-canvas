@@ -291,7 +291,7 @@ test("ends retry traversal for cycles without a config node", () => {
     assert.equal(findRetrySourceNode(failed.id, [first, second, failed], connections), null);
 });
 
-test("creates a reference image only from image nodes with content", () => {
+test("creates a reference image from inline content or a persistent media ID", () => {
     const image = node("image-id", CanvasNodeType.Image, { content: "data:image/png;base64,content", storageKey: "image:stored", mimeType: "image/webp" });
     image.title = "Source image";
 
@@ -299,6 +299,9 @@ test("creates a reference image only from image nodes with content", () => {
     assert.deepEqual(sourceNodeReferenceImages(node("text", CanvasNodeType.Text, { content: "text" })), []);
     assert.deepEqual(sourceNodeReferenceImages(node("empty", CanvasNodeType.Image)), []);
     assert.deepEqual(sourceNodeReferenceImages(null), []);
+
+    const persisted = node("persisted", CanvasNodeType.Image, { mediaId: "media-1", storageKey: "media:media-1:v1:original", mimeType: "image/png" });
+    assert.deepEqual(sourceNodeReferenceImages(persisted), [{ id: "persisted", name: "persisted.png", type: "image/png", dataUrl: "", storageKey: "media:media-1:v1:original", mediaId: "media-1" }]);
 });
 
 test("carries an image node's hand-drawn mask into image editing", () => {

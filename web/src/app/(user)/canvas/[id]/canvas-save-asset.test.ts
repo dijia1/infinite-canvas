@@ -1,21 +1,23 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("saving a generated image to private assets preserves its media identity", async () => {
-    const source = await readFile(new URL("./canvas-client-page.tsx", import.meta.url), "utf8");
-    const saveAssetStart = source.indexOf("const saveNodeAsset");
-    const saveAssetEnd = source.indexOf("const cropImageNode", saveAssetStart);
-    const saveAsset = source.slice(saveAssetStart, saveAssetEnd);
+import { canOpenNodeGenerationDialog, canSaveNodeAsAsset } from "../components/canvas-node-actions.ts";
+import { defaultMode } from "../components/canvas-node-prompt-panel.tsx";
+import { CanvasNodeType, type CanvasNodeData } from "../types.ts";
 
-    assert.match(saveAsset, /metadata: \{[\s\S]*mediaId: node\.metadata\?\.mediaId/);
+function node(type: CanvasNodeType, content?: string): CanvasNodeData {
+    return { id: type, type, title: type, position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { content } };
+}
+
+test("saving a non-image node does not create an invisible private asset", () => {
+    assert.equal(canSaveNodeAsAsset(node(CanvasNodeType.Text, "note")), false);
+    assert.equal(canSaveNodeAsAsset(node(CanvasNodeType.Video, "blob:video")), false);
+    assert.equal(canSaveNodeAsAsset(node(CanvasNodeType.Image)), false);
+    assert.equal(canSaveNodeAsAsset(node(CanvasNodeType.Image, "blob:image")), true);
 });
 
-test("saving a public canvas image to private assets preserves its public access identity", async () => {
-    const source = await readFile(new URL("./canvas-client-page.tsx", import.meta.url), "utf8");
-    const saveAssetStart = source.indexOf("const saveNodeAsset");
-    const saveAssetEnd = source.indexOf("const cropImageNode", saveAssetStart);
-    const saveAsset = source.slice(saveAssetStart, saveAssetEnd);
-
-    assert.match(saveAsset, /metadata: \{[\s\S]*publicImageId: node\.metadata\?\.publicImageId/);
+test("text nodes cannot enter an unavailable text-model generation path", () => {
+    assert.equal(defaultMode(CanvasNodeType.Text), "image");
+    assert.equal(canOpenNodeGenerationDialog(node(CanvasNodeType.Text, "note")), false);
+    assert.equal(canOpenNodeGenerationDialog(node(CanvasNodeType.Image, "blob:image")), true);
 });

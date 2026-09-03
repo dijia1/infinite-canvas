@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -29,7 +30,15 @@ func AdminSettings(w http.ResponseWriter, r *http.Request) {
 
 func AdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	var settings model.Settings
-	_ = json.NewDecoder(r.Body).Decode(&settings)
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&settings); err != nil {
+		Fail(w, "系统设置请求无效")
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		Fail(w, "系统设置请求无效")
+		return
+	}
 	result, err := service.SaveSettings(settings)
 	if err != nil {
 		FailError(w, err)

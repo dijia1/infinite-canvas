@@ -62,6 +62,34 @@ test("hydrates cached images and clears stale recovery errors", async () => {
     });
 });
 
+test("defers stable remote media to the canvas runtime resource controller", async () => {
+    const original = imageNode({ content: "blob:expired", storageKey: "media:remote:v1:original", mediaId: "media-remote", status: "success" });
+    const [restored] = await hydrateCanvasImages(
+        [original],
+        {
+            resolveMediaUrl: async () => "",
+            readCachedImage: async () => {
+                throw new Error("deferred media must not read IndexedDB during project restoration");
+            },
+            resolveRemoteImage: async () => {
+                throw new Error("deferred media must not request an original during project restoration");
+            },
+            fetchPublicImageAccess: async () => {
+                throw new Error("deferred media must not request public access during project restoration");
+            },
+            loadMediaImage: async () => {
+                throw new Error("deferred media must not download an original during project restoration");
+            },
+            uploadImage: async () => {
+                throw new Error("deferred media must not upload during project restoration");
+            },
+        },
+        { deferRemoteMedia: true },
+    );
+
+    assert.equal(restored, original);
+});
+
 test("leaves offscreen images untouched until the canvas requests their hydration", async () => {
     let readCount = 0;
     const [visible, offscreen] = await hydrateCanvasImages(

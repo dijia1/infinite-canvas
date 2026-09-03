@@ -3,7 +3,6 @@ package repository
 import (
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/config"
@@ -15,7 +14,6 @@ import (
 
 func useLegacyCanvasProjectTestDB(t *testing.T) {
 	t.Helper()
-	previousConfig, previousDB, previousErr, previousOnce := config.Cfg, db, dbErr, dbOnce
 	path := filepath.Join(t.TempDir(), "legacy-canvas.db")
 	legacy, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 	if err != nil {
@@ -47,16 +45,7 @@ func useLegacyCanvasProjectTestDB(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	config.Cfg = config.Config{StorageDriver: "sqlite", DatabaseDSN: path}
-	db = nil
-	dbErr = nil
-	dbOnce = sync.Once{}
-	t.Cleanup(func() {
-		config.Cfg = previousConfig
-		db = previousDB
-		dbErr = previousErr
-		dbOnce = previousOnce
-	})
+	useRepositoryTestDB(t, config.Config{StorageDriver: "sqlite", DatabaseDSN: path})
 }
 
 func TestDBMigratesLegacyCanvasProjectPrimaryKeyForOwnerScopedImports(t *testing.T) {

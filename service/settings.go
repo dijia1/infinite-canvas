@@ -216,10 +216,6 @@ func providerAvailable(settings model.AISettings, id string, capability ai.Capab
 	return ok && typeInfo.Supports(capability)
 }
 
-func resolveProvider(capability ai.Capability) (ai.Provider, error) {
-	return resolveProviderForID(capability, "")
-}
-
 func resolveProviderForID(capability ai.Capability, requestedProviderID string) (ai.Provider, error) {
 	provider, _, err := resolveProviderAndID(capability, requestedProviderID)
 	return provider, err

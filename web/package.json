@@ -20,7 +20,6 @@
         "antd": "^6.4.2",
         "axios": "^1.16.0",
         "clsx": "^2.1.1",
-        "copy-to-clipboard": "^4.0.2",
         "fflate": "^0.8.3",
         "file-saver": "^2.0.5",
         "localforage": "^1.10.0",

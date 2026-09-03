@@ -56,6 +56,13 @@ func TestNormalizeImageTaskRequestDefaultsAndValidatesImageAndMaskCounts(t *test
 	if _, err := normalizeImageTaskRequest(providerSizedRequest); err != nil {
 		t.Fatalf("normalizeImageTaskRequest() rejected an image count that a provider may support: %v", err)
 	}
+
+	if _, err := normalizeImageTaskRequest(CreateImageTaskRequest{ClientRequestID: "request-media-reference", Mode: ImageTaskModeEdit, Request: ai.ImageRequest{Prompt: "编辑", Count: 1}, ReferenceMediaIDs: []string{"media-a"}}); err != nil {
+		t.Fatalf("normalizeImageTaskRequest() rejected a stable media reference: %v", err)
+	}
+	if _, err := normalizeImageTaskRequest(CreateImageTaskRequest{ClientRequestID: "request-mixed-reference", Mode: ImageTaskModeEdit, Request: ai.ImageRequest{Prompt: "编辑", Count: 1}, References: []ai.ImageReference{{ContentType: "image/png", Data: tinyPNG}}, ReferenceMediaIDs: []string{"media-a"}}); err == nil {
+		t.Fatal("normalizeImageTaskRequest() accepted mixed uploaded and stable media references")
+	}
 }
 
 func TestImageTaskRequestRestoresPersistedProviderOptions(t *testing.T) {

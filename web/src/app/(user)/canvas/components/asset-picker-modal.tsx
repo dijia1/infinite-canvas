@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { App, Empty, Input, Modal, Pagination } from "antd";
-import { Folder, ImageOff, RefreshCw } from "lucide-react";
+import { Folder, RefreshCw } from "lucide-react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
@@ -13,7 +13,8 @@ import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailS
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
-import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns } from "./material-folder-ui";
+import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailGridClass } from "./material-folder-ui";
+import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal } from "./material-image-preview";
 import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload } from "./material-image-drag";
 import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
@@ -404,9 +405,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                     </>
                 </MaterialContextMenu>
             </MaterialDrawer>
-            <Modal open={Boolean(preview)} title={preview?.title} footer={null} onCancel={() => setPreview(undefined)} width="min(90vw, 72rem)">
-                {preview ? <img src={preview.url} alt={preview.title} className="max-h-[75vh] w-full object-contain" /> : null}
-            </Modal>
+            <MaterialImagePreviewModal preview={preview} onClose={() => setPreview(undefined)} />
             <Modal
                 open={Boolean(editor)}
                 title={editor?.kind === "folder" ? "新建文件夹" : editor?.kind === "folderRename" ? "重命名文件夹" : editor?.kind === "move" ? "移动到文件夹" : "重命名图片"}
@@ -502,7 +501,7 @@ function MyAssetsTab({
     useEffect(() => {
         setPage((value) => Math.min(value, Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))));
     }, [filtered.length]);
-    const gridClass = `grid gap-3 ${gridColumnClass(thumbnailStage)}`;
+    const gridClass = `grid gap-3 ${materialThumbnailGridClass(thumbnailStage)}`;
     return (
         <div className="space-y-4">
             <MaterialDrawerToolbar
@@ -586,10 +585,6 @@ function PrivateSystemFolderTree({ currentSource, onNavigate }: { currentSource?
     );
 }
 
-function gridColumnClass(stage: number) {
-    const columns = materialThumbnailColumns(stage);
-    return columns === 6 ? "grid-cols-6" : columns === 4 ? "grid-cols-4" : columns === 3 ? "grid-cols-3" : "grid-cols-2";
-}
 function imageTitle(filename: string) {
     return filename.replace(/\.[^.]+$/, "") || "剪贴板图片";
 }
@@ -668,7 +663,7 @@ function PickerCard({
             onContextMenu={(event: MouseEvent) => onImageContextMenu(asset, event)}
             title={previewError || (preview ? "点击查看，拖入画布使用；右键管理" : "图片已损坏，可删除")}
         >
-            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <BrokenImagePlaceholder />}
+            {preview ? <img src={preview} alt="" className="aspect-[4/3] w-full object-cover" onError={() => setLoadFailed(true)} /> : loading ? <div className="aspect-[4/3] animate-pulse bg-stone-100 dark:bg-stone-800" /> : <MaterialBrokenImagePlaceholder />}
             {uploadState === "pending" ? <div className="absolute inset-0 animate-pulse bg-black/15" aria-label="图片上传中" /> : null}
             {previewError ? (
                 <div className="absolute inset-x-0 bottom-0 truncate bg-amber-100/95 px-1.5 py-1 text-[10px] leading-3 text-amber-950 dark:bg-amber-950/95 dark:text-amber-100" aria-label="缩略图加载失败" title={previewError}>
@@ -689,14 +684,6 @@ function PickerCard({
                     <RefreshCw className="size-3.5" />
                 </button>
             ) : null}
-        </div>
-    );
-}
-function BrokenImagePlaceholder() {
-    return (
-        <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 bg-stone-100 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-            <ImageOff className="size-5" aria-hidden />
-            <span>图片已损坏</span>
         </div>
     );
 }

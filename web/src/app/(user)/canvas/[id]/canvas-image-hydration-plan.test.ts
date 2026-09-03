@@ -49,3 +49,23 @@ test("page hydration sends public-image-only nodes through initial and lazy reco
         ["media-public-near", "media-public-far"],
     );
 });
+
+test("runtime-managed media IDs bypass hydration while legacy public nodes still recover", () => {
+    const stable = {
+        ...publicImage("stable", 0),
+        metadata: { mediaId: "media-stable", storageKey: "media:media-stable:v1:original" },
+    } satisfies CanvasNodeData;
+    const legacyPublic = publicImage("legacy", 160);
+
+    const plan = createCanvasImageHydrationPlan(
+        [stable, legacyPublic],
+        { x: 0, y: 0, k: 1 },
+        { width: 1200, height: 720 },
+        { deferRemoteMedia: true },
+    );
+
+    assert.deepEqual(plan.initialNodes.map((node) => node.id), ["legacy"]);
+    assert.deepEqual([...plan.pendingImageIds], []);
+    assert.equal(plan.shouldHydrate(stable), false);
+    assert.equal(plan.shouldHydrate(legacyPublic), true);
+});

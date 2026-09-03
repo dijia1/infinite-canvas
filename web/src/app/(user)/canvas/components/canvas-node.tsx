@@ -16,7 +16,10 @@ const selectionBlue = "#2f80ff";
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
-    scale: number;
+    getScale: () => number;
+    imageSource?: string;
+    imageStorageKey?: string;
+    imageSourceManaged?: boolean;
     inputBadgeLabel?: string;
     panelVersion?: string;
     contentVersion?: string;
@@ -41,17 +44,23 @@ type CanvasNodeProps = {
     onHoverEnd: (nodeId: string) => void;
     onConnectStart: (event: React.MouseEvent, nodeId: string, handleType: "source" | "target") => void;
     onResize: (nodeId: string, width: number, height: number, position?: Position) => void;
+    onResizeStart?: () => void;
+    onResizeEnd?: () => void;
     onContentChange: (nodeId: string, content: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onImageLoaded?: (nodeId: string, storageKey: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
 type NodeContentRendererProps = {
     node: CanvasNodeData;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
+    imageSource?: string;
+    imageStorageKey?: string;
+    imageSourceManaged?: boolean;
     isEditingContent: boolean;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
     isBatchRoot: boolean;
@@ -64,13 +73,17 @@ type NodeContentRendererProps = {
     onStopEditing: () => void;
     onRetry?: (node: CanvasNodeData) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
+    onImageLoaded?: (nodeId: string, storageKey: string) => void;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
 };
 
 export const CanvasNode = React.memo(function CanvasNode({
     data,
-    scale,
+    getScale,
+    imageSource,
+    imageStorageKey,
+    imageSourceManaged = false,
     inputBadgeLabel,
     isSelected,
     isRelated,
@@ -93,11 +106,14 @@ export const CanvasNode = React.memo(function CanvasNode({
     onHoverEnd,
     onConnectStart,
     onResize,
+    onResizeStart,
+    onResizeEnd,
     onContentChange,
     onToggleBatch,
     onSetBatchPrimary,
     onRetry,
     onGenerateImage,
+    onImageLoaded,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -110,7 +126,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     }));
     const [hovered, setHovered] = useState(false);
     const [isEditingContent, setIsEditingContent] = useState(false);
-    const hasImageContent = data.type === CanvasNodeType.Image && Boolean(data.metadata?.content);
+    const resolvedImageSource = imageSourceManaged ? imageSource : data.metadata?.content;
+    const hasImageContent = data.type === CanvasNodeType.Image && Boolean(resolvedImageSource);
     const hasVideoContent = data.type === CanvasNodeType.Video && Boolean(data.metadata?.content);
     const isBatchRoot = data.type === CanvasNodeType.Image && Boolean(data.metadata?.isBatchRoot) && batchCount > 1;
     const isBatchChild = data.type === CanvasNodeType.Image && Boolean(data.metadata?.batchRootId);
@@ -129,6 +146,8 @@ export const CanvasNode = React.memo(function CanvasNode({
         keepRatio: false,
         ratio: 1,
     });
+    const resizeFrameRef = useRef<number | null>(null);
+    const pendingResizeRef = useRef<{ width: number; height: number; position: Position } | null>(null);
 
     useEffect(() => {
         const textarea = textareaRef.current;
@@ -166,10 +185,19 @@ export const CanvasNode = React.memo(function CanvasNode({
         return () => window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
     }, [isEditingContent]);
 
+    const flushPendingResize = useCallback(() => {
+        if (resizeFrameRef.current) cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+        const pending = pendingResizeRef.current;
+        pendingResizeRef.current = null;
+        if (pending) onResize(data.id, pending.width, pending.height, pending.position);
+    }, [data.id, onResize]);
+
     const handleResizeMove = useCallback(
         (event: MouseEvent) => {
             if (!resizeRef.current.isResizing) return;
 
+            const scale = getScale();
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
             const minWidth = 220;
@@ -199,19 +227,27 @@ export const CanvasNode = React.memo(function CanvasNode({
                 }
             }
 
-            onResize(data.id, width, height, {
-                x: fromLeft ? startRight - width : resizeRef.current.startLeft,
-                y: fromTop ? startBottom - height : resizeRef.current.startTop,
-            });
+            pendingResizeRef.current = {
+                width,
+                height,
+                position: {
+                    x: fromLeft ? startRight - width : resizeRef.current.startLeft,
+                    y: fromTop ? startBottom - height : resizeRef.current.startTop,
+                },
+            };
+            if (resizeFrameRef.current) return;
+            resizeFrameRef.current = requestAnimationFrame(flushPendingResize);
         },
-        [data.id, onResize, scale],
+        [flushPendingResize, getScale],
     );
 
     const handleResizeUp = useCallback(() => {
         resizeRef.current.isResizing = false;
+        flushPendingResize();
+        onResizeEnd?.();
         window.removeEventListener("mousemove", handleResizeMove);
         window.removeEventListener("mouseup", handleResizeUp);
-    }, [handleResizeMove]);
+    }, [flushPendingResize, handleResizeMove, onResizeEnd]);
 
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
@@ -228,6 +264,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
             ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
         };
+        onResizeStart?.();
         window.addEventListener("mousemove", handleResizeMove);
         window.addEventListener("mouseup", handleResizeUp);
     };
@@ -236,8 +273,10 @@ export const CanvasNode = React.memo(function CanvasNode({
         return () => {
             window.removeEventListener("mousemove", handleResizeMove);
             window.removeEventListener("mouseup", handleResizeUp);
+            if (resizeFrameRef.current) cancelAnimationFrame(resizeFrameRef.current);
+            if (resizeRef.current.isResizing) onResizeEnd?.();
         };
-    }, [handleResizeMove, handleResizeUp]);
+    }, [handleResizeMove, handleResizeUp, onResizeEnd]);
 
     return (
         <div
@@ -309,6 +348,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onGenerateImage={onGenerateImage}
                         onToggleBatch={() => onToggleBatch?.(data.id)}
                         onSetBatchPrimary={() => onSetBatchPrimary?.(data)}
+                        imageSource={resolvedImageSource}
+                        imageStorageKey={imageStorageKey}
+                        imageSourceManaged={imageSourceManaged}
+                        onImageLoaded={onImageLoaded}
                     />
                 </div>
 
@@ -335,7 +378,9 @@ export const CanvasNode = React.memo(function CanvasNode({
 function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         prev.data === next.data &&
-        prev.scale === next.scale &&
+        prev.imageSource === next.imageSource &&
+        prev.imageStorageKey === next.imageStorageKey &&
+        prev.imageSourceManaged === next.imageSourceManaged &&
         prev.inputBadgeLabel === next.inputBadgeLabel &&
         prev.panelVersion === next.panelVersion &&
         prev.contentVersion === next.contentVersion &&
@@ -479,7 +524,8 @@ function TextContent({ node, theme, isEditingContent, textareaRef, onContentChan
 }
 
 function ImageNodeContent(props: NodeContentRendererProps) {
-    if (!props.node.metadata?.content && props.isBatchRoot) {
+    const content = props.imageSourceManaged ? props.imageSource : props.node.metadata?.content;
+    if (!content && props.isBatchRoot) {
         const content =
             props.node.metadata?.status === "loading" ? (
                 <LoadingContent theme={props.theme} />
@@ -494,7 +540,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             </BatchFrame>
         );
     }
-    if (!props.node.metadata?.content) return <EmptyImageContent {...props} />;
+    if (!content) return props.imageSourceManaged ? <LoadingContent theme={props.theme} /> : <EmptyImageContent {...props} />;
 
     return (
         <ImageContent
@@ -506,6 +552,9 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             batchRecovering={props.batchRecovering}
             onToggleBatch={props.onToggleBatch}
             onSetBatchPrimary={props.onSetBatchPrimary}
+            imageSource={content}
+            imageStorageKey={props.imageStorageKey}
+            onImageLoaded={props.onImageLoaded}
         />
     );
 }
@@ -541,6 +590,8 @@ function VideoNodeContent({ node, theme }: NodeContentRendererProps) {
 
 function ImageContent({
     node,
+    imageSource,
+    imageStorageKey,
     isBatchRoot,
     batchCount,
     batchExpanded,
@@ -548,8 +599,11 @@ function ImageContent({
     batchRecovering,
     onToggleBatch,
     onSetBatchPrimary,
+    onImageLoaded,
 }: {
     node: CanvasNodeData;
+    imageSource: string;
+    imageStorageKey?: string;
     isBatchRoot: boolean;
     batchCount: number;
     batchExpanded: boolean;
@@ -557,6 +611,7 @@ function ImageContent({
     batchRecovering: boolean;
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
+    onImageLoaded?: (nodeId: string, storageKey: string) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
@@ -565,9 +620,13 @@ function ImageContent({
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="relative h-full w-full overflow-hidden rounded-3xl">
                 <img
-                    src={node.metadata!.content!}
+                    src={imageSource}
                     alt={node.title}
                     draggable={false}
+                    decoding="async"
+                    onLoad={() => {
+                        if (imageStorageKey) onImageLoaded?.(node.id, imageStorageKey);
+                    }}
                     onDragStart={(event) => event.preventDefault()}
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />

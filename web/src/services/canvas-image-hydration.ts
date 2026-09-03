@@ -57,7 +57,7 @@ function restoredImageMetadata(image: StoredCanvasImage): RestoredCanvasImageMet
 export async function hydrateCanvasImages(
     nodes: CanvasNodeData[],
     dependencies: CanvasImageHydrationDependencies,
-    options: { shouldHydrate?: (node: CanvasNodeData) => boolean } = {},
+    options: { shouldHydrate?: (node: CanvasNodeData) => boolean; deferRemoteMedia?: boolean } = {},
 ): Promise<CanvasNodeData[]> {
     return Promise.all(
         nodes.map(async (node) => {
@@ -68,6 +68,8 @@ export async function hydrateCanvasImages(
                 return { ...node, metadata: { ...metadata, content: await dependencies.resolveMediaUrl(metadata.storageKey, content || "") } };
             }
             if (node.type !== "image") return node;
+
+            if (options.deferRemoteMedia && metadata?.mediaId) return node;
 
             let mediaId = metadata?.mediaId;
             let publicAccess: { url: string; mediaId?: string } | undefined;

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"mime/multipart"
+	"net/http"
 	"net/http/httptest"
 	"net/textproto"
 	"testing"
@@ -48,4 +49,43 @@ func TestImageMaskFromFormRejectsMoreThanOneMask(t *testing.T) {
 	if _, err := imageMaskFromForm(request); err == nil {
 		t.Fatal("imageMaskFromForm() accepted multiple masks")
 	}
+}
+
+func TestReadMultipartImageReferencesRejectsReferencesOverTheSharedLimit(t *testing.T) {
+	request := multipartRequestWithFiles(t, "input_reference[]", [][]byte{[]byte("ab"), []byte("cd")})
+	if err := request.ParseMultipartForm(1 << 20); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readMultipartImageReferences(request.MultipartForm.File["input_reference[]"], 3); err == nil {
+		t.Fatal("readMultipartImageReferences() accepted references over the shared limit")
+	}
+}
+
+func TestLimitMultipartRequestBodyRejectsPayloadBeforeParsing(t *testing.T) {
+	request := multipartRequestWithFiles(t, "input_reference[]", [][]byte{[]byte("image")})
+	limitMultipartRequestBody(httptest.NewRecorder(), request, 1)
+	if err := request.ParseMultipartForm(1 << 20); err == nil {
+		t.Fatal("ParseMultipartForm() accepted a body beyond its request limit")
+	}
+}
+
+func multipartRequestWithFiles(t *testing.T, field string, files [][]byte) *http.Request {
+	t.Helper()
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	for index, data := range files {
+		part, err := writer.CreateFormFile(field, "reference-"+string(rune('a'+index))+".png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/videos", body)
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	return request
 }

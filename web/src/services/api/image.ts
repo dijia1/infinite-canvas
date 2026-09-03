@@ -18,11 +18,6 @@ type ImageApiResponse = {
     msg?: string;
 };
 
-export type ChatCompletionMessage = {
-    role: "system" | "user" | "assistant";
-    content: string | Array<{ type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }>;
-};
-
 const QUALITY_ALIASES: Record<string, string> = {
     "1k": "low",
     "2k": "medium",
@@ -45,6 +40,10 @@ export type ImageGenerationTask = {
     error?: string;
     images: GeneratedImage[];
 };
+
+export function canUseServerMediaReferences(references: ReferenceImage[]) {
+    return references.length > 0 && references.every((reference) => Boolean(reference.mediaId));
+}
 
 function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
     if (typeof payload.code === "number" && payload.code !== 0) {
@@ -146,12 +145,13 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     if (resolution) {
         formData.set("resolution", resolution);
     }
-    const hydratedReferences = await Promise.all(references.map(async (image) => ({ ...image, dataUrl: await imageToDataUrl(image) })));
-    const referenceError = imageEditReferenceError(hydratedReferences);
+    const referenceError = imageEditReferenceError(references);
     if (referenceError) throw new Error(referenceError);
-    const maskedReferences = hydratedReferences.filter((image) => image.mask?.strokes.length);
-    const files = await Promise.all(hydratedReferences.map((image) => dataUrlToFile(image)));
-    files.forEach((file) => formData.append("image", file));
+    const useServerMediaReferences = canUseServerMediaReferences(references);
+    const maskedReferences = references.filter((image) => image.mask?.strokes.length);
+    const files = useServerMediaReferences ? [] : await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
+    if (useServerMediaReferences) references.forEach((image) => formData.append("referenceMediaId", image.mediaId!));
+    else files.forEach((file) => formData.append("image", file));
     const mask = maskedReferences[0];
     if (mask?.mask) {
         formData.set("mask", await createImageMaskFile(mask.mask, mask));
@@ -170,7 +170,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 			providerOptions: config.providerOptions || {},
             response_format: "b64_json",
         },
-        references: files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
+        references: useServerMediaReferences ? references.map((image) => ({ mediaId: image.mediaId })) : files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
         mask: mask ? { name: "mask.png", type: "image/png" } : undefined,
     });
 
@@ -198,9 +198,4 @@ export async function getImageGenerationTaskByClientRequest(clientRequestId: str
     } catch (error) {
         throw new Error(apiRequestError(error, "查询图片任务失败"));
     }
-}
-
-/** 仅用于旧画布节点的兼容提示，不再发起文本模型请求。 */
-export async function requestImageQuestion(_config: AiConfig, _messages: ChatCompletionMessage[], _onDelta: (text: string) => void): Promise<string> {
-    throw new Error("文本生成功能已移除");
 }

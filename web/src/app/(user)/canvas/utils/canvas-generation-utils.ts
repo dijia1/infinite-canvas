@@ -158,15 +158,16 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
 }
 
 export function sourceNodeReferenceImages(node: CanvasNodeData | null): ReferenceImage[] {
-    if (!node || node.type !== CanvasNodeType.Image || !node.metadata?.content) return [];
+    if (!node || node.type !== CanvasNodeType.Image || (!node.metadata?.content && !node.metadata?.mediaId)) return [];
     const mask = normalizeImageMask(node.metadata.imageMask);
     return [
         {
             id: node.id,
             name: `${node.title || node.id}.png`,
             type: node.metadata.mimeType || "image/png",
-            dataUrl: node.metadata.content,
+            dataUrl: node.metadata.content || "",
             storageKey: node.metadata.storageKey,
+            ...(node.metadata.mediaId ? { mediaId: node.metadata.mediaId } : {}),
             ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
             ...(mask ? { mask } : {}),
         },

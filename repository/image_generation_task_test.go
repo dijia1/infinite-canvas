@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"log"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/config"
@@ -15,17 +14,7 @@ import (
 
 func useImageTaskTestDB(t *testing.T) {
 	t.Helper()
-	previousConfig, previousDB, previousErr, previousOnce := config.Cfg, db, dbErr, dbOnce
-	config.Cfg = config.Config{StorageDriver: "sqlite", DatabaseDSN: ":memory:"}
-	db = nil
-	dbErr = nil
-	dbOnce = sync.Once{}
-	t.Cleanup(func() {
-		config.Cfg = previousConfig
-		db = previousDB
-		dbErr = previousErr
-		dbOnce = previousOnce
-	})
+	useRepositoryTestDB(t, config.Config{StorageDriver: "sqlite", DatabaseDSN: ":memory:"})
 }
 
 func TestCreateImageGenerationTaskIsIdempotentPerOwnerAndClientRequest(t *testing.T) {

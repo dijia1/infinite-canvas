@@ -46,8 +46,11 @@ export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode 
         hasMoved: false,
     });
     const scaleRef = useRef(viewport.k);
+    const viewportRef = useRef(viewport);
     const frameRef = useRef<number | null>(null);
+    const wheelFrameRef = useRef<number | null>(null);
     const nextViewportRef = useRef<ViewportTransform | null>(null);
+    const nextWheelViewportRef = useRef<ViewportTransform | null>(null);
     const [isSpacePressed, setIsSpacePressed] = useState(false);
 
     const handlePointerEnd = useCallback(() => {
@@ -56,11 +59,13 @@ export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode 
 
     useEffect(() => {
         scaleRef.current = viewport.k;
-    }, [viewport.k]);
+        viewportRef.current = viewport;
+    }, [viewport]);
 
     useEffect(
         () => () => {
             if (frameRef.current) cancelAnimationFrame(frameRef.current);
+            if (wheelFrameRef.current) cancelAnimationFrame(wheelFrameRef.current);
         },
         [],
     );
@@ -88,21 +93,32 @@ export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode 
         const target = event.target instanceof Element ? event.target : null;
         if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
 
+        const currentViewport = nextWheelViewportRef.current || viewportRef.current;
         const delta = -event.deltaY;
         const factor = Math.pow(1.1, delta / 100);
-        const newScale = Math.min(Math.max(viewport.k * factor, 0.05), 5);
+        const newScale = Math.min(Math.max(currentViewport.k * factor, 0.05), 5);
         const rect = containerRef.current?.getBoundingClientRect();
         if (!rect) return;
 
         const mouseX = event.clientX - rect.left;
         const mouseY = event.clientY - rect.top;
-        const worldX = (mouseX - viewport.x) / viewport.k;
-        const worldY = (mouseY - viewport.y) / viewport.k;
+        const worldX = (mouseX - currentViewport.x) / currentViewport.k;
+        const worldY = (mouseY - currentViewport.y) / currentViewport.k;
 
-        onViewportChange({
+        nextWheelViewportRef.current = {
             x: mouseX - worldX * newScale,
             y: mouseY - worldY * newScale,
             k: newScale,
+        };
+        if (wheelFrameRef.current) return;
+        wheelFrameRef.current = requestAnimationFrame(() => {
+            wheelFrameRef.current = null;
+            const nextViewport = nextWheelViewportRef.current;
+            nextWheelViewportRef.current = null;
+            if (!nextViewport) return;
+            viewportRef.current = nextViewport;
+            scaleRef.current = nextViewport.k;
+            onViewportChange(nextViewport);
         });
     };
 
@@ -115,12 +131,13 @@ export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode 
         if (event.button === 1 || (event.button === 0 && isSpacePressed && isBackgroundClick)) {
             event.preventDefault();
             event.currentTarget.setPointerCapture(event.pointerId);
+            const currentViewport = viewportRef.current;
             panState.current = {
                 isPanning: true,
                 startX: event.clientX,
                 startY: event.clientY,
-                initialX: viewport.x,
-                initialY: viewport.y,
+                initialX: currentViewport.x,
+                initialY: currentViewport.y,
                 hasMoved: false,
             };
             document.body.style.cursor = "grabbing";

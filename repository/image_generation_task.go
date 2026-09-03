@@ -185,20 +185,6 @@ func RenewImageGenerationTaskLease(id, updatedAt string) (bool, error) {
 	return result.RowsAffected > 0, nil
 }
 
-func ListImageGenerationTasksForRecovery(staleBefore string) ([]model.ImageGenerationTask, error) {
-	database, err := DB()
-	if err != nil {
-		return nil, err
-	}
-	items := make([]model.ImageGenerationTask, 0)
-	query := database.Where("status = ?", model.ImageTaskQueued)
-	if staleBefore != "" {
-		query = query.Or("status IN ? AND updated_at < ?", []model.ImageGenerationTaskStatus{model.ImageTaskSubmitting, model.ImageTaskRunning}, staleBefore)
-	}
-	err = query.Order("created_at asc").Find(&items).Error
-	return items, err
-}
-
 func ListExpiredTerminalImageGenerationTasks(before string) ([]model.ImageGenerationTask, error) {
 	database, err := DB()
 	if err != nil {

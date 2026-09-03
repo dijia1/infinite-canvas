@@ -3,7 +3,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Empty, Input, Modal, Pagination, Spin } from "antd";
-import { ImageOff } from "lucide-react";
 
 import { clipboardImageFile } from "@/lib/clipboard-image";
 import { isEditableTarget } from "@/lib/editable-target";
@@ -23,7 +22,8 @@ import { fetchPortalSession } from "@/services/api/session";
 import { loadMediaImage, loadMediaThumbnail } from "@/services/image-storage";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
-import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailColumns, type MaterialFolder } from "./material-folder-ui";
+import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailGridClass, type MaterialFolder } from "./material-folder-ui";
+import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal } from "./material-image-preview";
 import { PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PublicImageDropPayload } from "./material-image-drag";
 import { useVisibleMediaPreview } from "./use-visible-media-preview";
 
@@ -202,7 +202,7 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
                                     }}
                                 />
                                 {images.length ? (
-                                    <div className={`grid gap-3 ${gridColumnClass(thumbnailStage)}`}>
+                                    <div className={`grid gap-3 ${materialThumbnailGridClass(thumbnailStage)}`}>
                                         {images.map((image) => (
                                             <PublicImageCard
                                                 key={image.id}
@@ -333,9 +333,7 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
                     </MaterialContextMenu>
                 ) : null}
             </MaterialDrawer>
-            <Modal open={Boolean(preview)} title={preview?.title} footer={null} onCancel={() => setPreview(undefined)} width="min(90vw, 72rem)">
-                {preview ? <img src={preview.url} alt={preview.title} className="max-h-[75vh] w-full object-contain" /> : null}
-            </Modal>
+            <MaterialImagePreviewModal preview={preview} onClose={() => setPreview(undefined)} />
             <Modal
                 open={Boolean(editor)}
                 title={editor?.kind === "folder" ? "新建文件夹" : editor?.kind === "folderRename" ? "重命名文件夹" : editor?.kind === "move" ? "移动到文件夹" : "重命名图片"}
@@ -376,11 +374,6 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
     );
 }
 
-function gridColumnClass(stage: number) {
-    const columns = materialThumbnailColumns(stage);
-    return columns === 6 ? "grid-cols-6" : columns === 4 ? "grid-cols-4" : columns === 3 ? "grid-cols-3" : "grid-cols-2";
-}
-
 function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { image: PublicImage; isAdmin: boolean; onPreview: (preview: { title: string; url: string }) => void; onImageContextMenu: (event: MouseEvent) => void }) {
     const [loadFailed, setLoadFailed] = useState(false);
     const loadPreview = useCallback(async () => {
@@ -418,20 +411,12 @@ function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { im
             title={url && !previewFailed ? (isAdmin ? "点击查看，拖入画布使用；右键管理" : "点击查看，拖入画布使用") : previewFailed ? "图片已损坏" : "图片加载中"}
         >
             {previewFailed ? (
-                <BrokenImagePlaceholder />
+                <MaterialBrokenImagePlaceholder />
             ) : url ? (
                 <img src={url} alt="" className="aspect-[4/3] w-full object-cover" draggable={false} onError={() => setLoadFailed(true)} />
             ) : (
                 <div className={`aspect-[4/3] bg-stone-100 dark:bg-stone-800 ${loading ? "animate-pulse" : ""}`} />
             )}
-        </div>
-    );
-}
-function BrokenImagePlaceholder() {
-    return (
-        <div className="flex aspect-[4/3] flex-col items-center justify-center gap-1 bg-stone-100 text-xs text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-            <ImageOff className="size-5" aria-hidden />
-            <span>图片已损坏</span>
         </div>
     );
 }

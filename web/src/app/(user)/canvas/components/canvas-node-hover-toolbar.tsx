@@ -5,6 +5,7 @@ import { Tooltip } from "antd";
 import { Brush, Camera, Download, FolderPlus, Image as ImageIcon, Maximize2, MessageSquare, Minus, Pencil, Plus, RefreshCw, Scissors, Upload, Video } from "lucide-react";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
 import { useConfigStore } from "@/stores/use-config-store";
+import { canOpenNodeGenerationDialog, canSaveNodeAsAsset } from "./canvas-node-actions";
 
 type CanvasNodeHoverToolbarProps = {
     node: CanvasNodeData | null;
@@ -55,7 +56,7 @@ export function CanvasNodeHoverToolbar({
     const hasImage = isImage && Boolean(node.metadata?.content);
     const hasVideo = isVideo && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
-    const canOpenDialog = isText || hasImage || isVideo;
+    const canOpenDialog = canOpenNodeGenerationDialog(node);
     const canRetry = node.metadata?.status === "error";
     const hasSpecificTools = canRetry || isText || isImage || isVideo;
 
@@ -71,7 +72,7 @@ export function CanvasNodeHoverToolbar({
             onPointerDown={(event) => event.stopPropagation()}
         >
             {canRetry ? <ToolbarAction title="重新生成" label="重试" icon={<RefreshCw className="size-4" />} onClick={() => onRetry(node)} /> : null}
-            {hasImage || hasVideo || isText ? <ToolbarAction title="加入我的素材" label="存素材" icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(node)} /> : null}
+            {canSaveNodeAsAsset(node) ? <ToolbarAction title="加入我的素材" label="存素材" icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(node)} /> : null}
             {hasImage || hasVideo ? <IconAction title={hasVideo ? "下载视频" : "下载图片"} icon={<Download className="size-5" />} onClick={() => onDownload(node)} /> : null}
             {canOpenDialog ? <ToolbarAction title="编辑" label="编辑" icon={<MessageSquare className="size-4" />} onClick={() => onToggleDialog(node)} /> : null}
             {isText ? <ToolbarAction title="编辑文本" label="编辑文字" icon={<Pencil className="size-4" />} onClick={() => onEditText(node)} /> : null}
