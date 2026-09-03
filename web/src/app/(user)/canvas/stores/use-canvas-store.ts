@@ -10,6 +10,7 @@ import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-documen
 import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap";
 import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-mask/mask-resources";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
+import { createCanvasProjectCopy, nextCanvasProjectCopyTitle } from "../utils/canvas-project-copy";
 
 export type CanvasProject = {
     id: string;
@@ -61,6 +62,7 @@ export type CanvasStore = {
     refreshProjectFromServer: (id: string) => Promise<void>;
     retryPendingSaves: () => void;
     createProject: (title?: string) => string;
+    duplicateProject: (id: string) => string | null;
     importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
@@ -606,6 +608,20 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             showImageInfo: false,
                             viewport: initialViewport,
                         };
+                        set((state) => ({ projects: [project, ...state.projects] }));
+                        queueChange(id);
+                        return id;
+                    },
+                    duplicateProject: (sourceId) => {
+                        const source = get().projects.find((project) => project.id === sourceId);
+                        if (!source) return null;
+                        const now = new Date().toISOString();
+                        const id = nanoid();
+                        const project = createCanvasProjectCopy(source, {
+                            id,
+                            title: nextCanvasProjectCopyTitle(source.title, get().projects.map((item) => item.title)),
+                            now,
+                        });
                         set((state) => ({ projects: [project, ...state.projects] }));
                         queueChange(id);
                         return id;

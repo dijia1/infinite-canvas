@@ -68,6 +68,39 @@ test("coalesces rapid local edits into one latest server save", async () => {
     });
 });
 
+test("duplicates a project as a fresh server-created project", async () => {
+    const created: CanvasProjectRecord[] = [];
+    const { api } = apiDouble({
+        create: async (input) => {
+            const record = serverProject({ ...input, revision: 1 });
+            created.push(record);
+            return record;
+        },
+    });
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([
+        serverProject({
+            document: {
+                ...serverProject().document,
+                nodes: [{ id: "source-node", type: "image" as never, title: "图片", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { mediaId: "media-1" } }],
+            },
+        }),
+    ]);
+    store.getState().startSync("portal-user");
+
+    const copiedId = store.getState().duplicateProject("project-1");
+
+    assert.ok(copiedId);
+    assert.notEqual(copiedId, "project-1");
+    assert.equal(store.getState().openProject(copiedId)?.title, "服务器画布 副本");
+    assert.equal(store.getState().openProject(copiedId)?.nodes[0]?.metadata?.mediaId, "media-1");
+    assert.equal(store.getState().projectSync[copiedId]?.serverRevision, null);
+    await waitForDebounce();
+    assert.equal(created.length, 1);
+    assert.equal(created[0]?.id, copiedId);
+    assert.equal(created[0]?.document.nodes[0]?.id, "source-node");
+});
+
 test("skips persistence and server sync when a canvas patch keeps every current reference", async () => {
     const { api, saved } = apiDouble();
     const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });

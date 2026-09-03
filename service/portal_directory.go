@@ -23,6 +23,7 @@ type directoryUser struct {
 	DisplayName string   `json:"displayName"`
 	Enabled     bool     `json:"enabled"`
 	Roles       []string `json:"roles"`
+	Departments []string `json:"departments"`
 }
 
 type directoryResponse struct {
@@ -69,7 +70,7 @@ func fetchDirectoryUsers(ctx context.Context) ([]directoryUser, error) {
 	}
 	unique := make(map[string]directoryUser, len(payload.Users))
 	for _, item := range payload.Users {
-		if _, err := uuid.Parse(strings.TrimSpace(item.UserUID)); err != nil || strings.TrimSpace(item.DisplayName) == "" || item.Roles == nil {
+		if _, err := uuid.Parse(strings.TrimSpace(item.UserUID)); err != nil || strings.TrimSpace(item.DisplayName) == "" || item.Roles == nil || item.Departments == nil {
 			return nil, errors.New("Portal 用户目录响应无效")
 		}
 		for _, role := range item.Roles {
@@ -77,7 +78,12 @@ func fetchDirectoryUsers(ctx context.Context) ([]directoryUser, error) {
 				return nil, errors.New("Portal 用户目录响应无效")
 			}
 		}
-		unique[item.UserUID] = directoryUser{UserUID: item.UserUID, DisplayName: strings.TrimSpace(item.DisplayName), Enabled: item.Enabled, Roles: append([]string(nil), item.Roles...)}
+		for _, department := range item.Departments {
+			if strings.TrimSpace(department) == "" {
+				return nil, errors.New("Portal 用户目录响应无效")
+			}
+		}
+		unique[item.UserUID] = directoryUser{UserUID: item.UserUID, DisplayName: strings.TrimSpace(item.DisplayName), Enabled: item.Enabled, Roles: append([]string(nil), item.Roles...), Departments: append([]string(nil), item.Departments...)}
 	}
 	result := make([]directoryUser, 0, len(unique))
 	for _, item := range unique {
@@ -94,7 +100,7 @@ func SyncPortalMembers(ctx context.Context) (DirectorySyncResult, error) {
 	syncedAt := time.Now().UTC()
 	items := make([]model.PortalMember, 0, len(users))
 	for _, user := range users {
-		items = append(items, model.PortalMember{UserUID: user.UserUID, DisplayName: user.DisplayName, Enabled: user.Enabled, Roles: user.Roles, SyncedAt: syncedAt})
+		items = append(items, model.PortalMember{UserUID: user.UserUID, DisplayName: user.DisplayName, Enabled: user.Enabled, Roles: user.Roles, Departments: user.Departments, SyncedAt: syncedAt})
 	}
 	if err := repository.SyncPortalMembers(items); err != nil {
 		return DirectorySyncResult{}, err
@@ -114,7 +120,7 @@ func SyncPortalMember(ctx context.Context, userUID string) error {
 	syncedAt := time.Now().UTC()
 	for _, user := range users {
 		if user.UserUID == userUID {
-			return repository.UpsertPortalMembers([]model.PortalMember{{UserUID: user.UserUID, DisplayName: user.DisplayName, Enabled: user.Enabled, Roles: user.Roles, SyncedAt: syncedAt}})
+			return repository.UpsertPortalMembers([]model.PortalMember{{UserUID: user.UserUID, DisplayName: user.DisplayName, Enabled: user.Enabled, Roles: user.Roles, Departments: user.Departments, SyncedAt: syncedAt}})
 		}
 	}
 	member, found, err := repository.GetPortalMember(userUID)
@@ -134,6 +140,9 @@ func ListPortalMembers(query model.PortalMemberQuery) (model.PortalMemberList, e
 	for index := range items {
 		if items[index].Roles == nil {
 			items[index].Roles = []string{}
+		}
+		if items[index].Departments == nil {
+			items[index].Departments = []string{}
 		}
 	}
 	return model.PortalMemberList{Items: items, Total: int(total)}, nil

@@ -379,7 +379,7 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 
 func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	const userUID = "2b5892c4-3dd2-4f82-8644-f0d14a0b5e71"
-	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"]}`}
+	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"],"departments":["设计部"]}`}
 	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Portal-Service-Key") != "infinite-canvas" || r.Header.Get("X-Portal-Service-Secret") != "directory-secret" {
 			t.Fatalf("directory headers = %q/%q", r.Header.Get("X-Portal-Service-Key"), r.Header.Get("X-Portal-Service-Secret"))

@@ -31,6 +31,8 @@ func New() *gin.Engine {
 	v1.GET("/canvas/projects/:id", func(c *gin.Context) { handler.CanvasProject(c.Writer, c.Request, c.Param("id")) })
 	v1.PUT("/canvas/projects/:id", func(c *gin.Context) { handler.UpdateCanvasProject(c.Writer, c.Request, c.Param("id")) })
 	v1.DELETE("/canvas/projects/:id", func(c *gin.Context) { handler.DeleteCanvasProject(c.Writer, c.Request, c.Param("id")) })
+	v1.GET("/canvas/share-recipients", gin.WrapF(handler.CanvasShareRecipients))
+	v1.POST("/canvas/projects/:id/share", func(c *gin.Context) { handler.ShareCanvasProject(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/images/tasks/:id", func(c *gin.Context) { handler.AIImageTask(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/images/tasks/by-client-request/:id", func(c *gin.Context) { handler.AIImageTaskByClientRequest(c.Writer, c.Request, c.Param("id")) })
 	v1.POST("/media/images", gin.WrapF(handler.UploadImage))

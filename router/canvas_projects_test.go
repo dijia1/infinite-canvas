@@ -4,13 +4,17 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 	"gorm.io/gorm"
 )
@@ -181,6 +185,229 @@ func TestCanvasProjectImportAllowsDifferentOwnersToUseTheSameClientID(t *testing
 		if response.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, response).Data, &project) != nil || project.Title != check.title {
 			t.Fatalf("owner-scoped shared ID lookup for %s = %d/%s", check.owner, response.Code, response.Body.String())
 		}
+	}
+}
+
+func TestCanvasProjectShareCopiesImageIntoRecipientLibrary(t *testing.T) {
+	stamp := time.Now().Format("20060102150405.000000000")
+	owner := "canvas-share-owner-" + stamp
+	recipient := "f3dbfc1a-06c5-4d31-a0cc-62e9475e34f1"
+	secondRecipient := "e3151d80-937a-4b20-85e4-4a17b4256f1c"
+	mediaID := "media-share-source-" + stamp
+	objectKey := "share-source/" + mediaID + ".png"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(mediaTestDirectory, objectKey)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaTestDirectory, objectKey), []byte("source-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SaveMedia(model.Media{ID: mediaID, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: objectKey, ContentType: "image/png", Bytes: 12, Filename: "source.png", Title: "源图片", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}, {UserUID: secondRecipient, DisplayName: "另一位接收成员", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	projectID := "canvas-share-" + stamp
+	document := `{"nodes":[{"id":"image-1","type":"image","title":"源图片","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"mediaId":"` + mediaID + `","storageKey":"media:` + mediaID + `:v1:original"}},{"id":"image-2","type":"image","title":"重复引用","position":{"x":120,"y":0},"width":100,"height":80,"metadata":{"mediaId":"` + mediaID + `","storageKey":"media:` + mediaID + `:v1:original"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+projectID+`","title":"分享测试","document":`+document+`}`); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("create source project = %d/%s", response.Code, response.Body.String())
+	}
+
+	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/"+projectID+"/share", owner, `{"revision":1,"recipientUserUids":["`+recipient+`","`+secondRecipient+`"]}`)
+	if response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("share project = %d/%s", response.Code, response.Body.String())
+	}
+	var firstShare struct {
+		Deliveries []struct {
+			Status string `json:"status"`
+		} `json:"deliveries"`
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, response).Data, &firstShare); err != nil || len(firstShare.Deliveries) != 2 || firstShare.Deliveries[0].Status != "shared" || firstShare.Deliveries[1].Status != "shared" {
+		t.Fatalf("first share deliveries = %#v, err=%v", firstShare.Deliveries, err)
+	}
+	if repeated := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/"+projectID+"/share", owner, `{"revision":1,"recipientUserUids":["`+recipient+`","`+secondRecipient+`"]}`); repeated.Code != http.StatusOK || decodeCanvasResponse(t, repeated).Code != 0 {
+		t.Fatalf("repeated share = %d/%s", repeated.Code, repeated.Body.String())
+	}
+
+	projects, err := repository.ListCanvasProjects(recipient)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("recipient projects = %#v, %v", projects, err)
+	}
+	secondProjects, err := repository.ListCanvasProjects(secondRecipient)
+	if err != nil || len(secondProjects) != 1 {
+		t.Fatalf("second recipient projects = %#v, %v", secondProjects, err)
+	}
+	var copied struct {
+		Nodes []struct {
+			Metadata struct {
+				MediaID string `json:"mediaId"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(projects[0].Document, &copied); err != nil || len(copied.Nodes) != 2 || copied.Nodes[0].Metadata.MediaID == mediaID || copied.Nodes[0].Metadata.MediaID == "" || copied.Nodes[0].Metadata.MediaID != copied.Nodes[1].Metadata.MediaID {
+		t.Fatalf("recipient document = %s, %v", projects[0].Document, err)
+	}
+	media, found, err := repository.GetMedia(copied.Nodes[0].Metadata.MediaID)
+	if err != nil || !found || media.OwnerUID != recipient || media.ObjectKey == objectKey {
+		t.Fatalf("recipient media = %#v, found=%t, err=%v", media, found, err)
+	}
+	content, err := os.ReadFile(filepath.Join(mediaTestDirectory, media.ObjectKey))
+	if err != nil || string(content) != "source-image" {
+		t.Fatalf("recipient object = %q, %v", content, err)
+	}
+}
+
+func TestCanvasProjectShareRejectsVideos(t *testing.T) {
+	stamp := time.Now().Format("20060102150405.000000000")
+	owner := "canvas-share-video-owner-" + stamp
+	projectID := "canvas-share-video-" + stamp
+	recipient := "45b16146-f248-48b2-a0bb-b9017d1cb2b2"
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	document := `{"nodes":[{"id":"video-1","type":"video","title":"视频","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"storageKey":"video:1"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+projectID+`","title":"视频画布","document":`+document+`}`); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("create video project = %d/%s", response.Code, response.Body.String())
+	}
+	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/"+projectID+"/share", owner, `{"revision":1,"recipientUserUids":["`+recipient+`"]}`)
+	if response.Code != http.StatusBadRequest || decodeCanvasResponse(t, response).Msg != "画布包含视频，暂不支持分享" {
+		t.Fatalf("video share = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestCanvasProjectShareRollsBackRecipientMediaAfterCopyFailure(t *testing.T) {
+	stamp := time.Now().Format("20060102150405.000000000")
+	owner := "canvas-share-rollback-owner-" + stamp
+	recipient := "a35b1ca2-e8ba-47d8-95ba-9c32682e6b8e"
+	firstMediaID := "media-share-rollback-first-" + stamp
+	secondMediaID := "media-share-rollback-second-" + stamp
+	firstKey := "share-rollback/" + firstMediaID + ".png"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(mediaTestDirectory, firstKey)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaTestDirectory, firstKey), []byte("first-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []model.Media{
+		{ID: firstMediaID, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: firstKey, ContentType: "image/png", Bytes: 11, Filename: "first.png", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)},
+		{ID: secondMediaID, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "share-rollback/missing.png", ContentType: "image/png", Bytes: 12, Filename: "second.png", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)},
+	} {
+		if _, err := repository.SaveMedia(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	projectID := "canvas-share-rollback-" + stamp
+	document := `{"nodes":[{"id":"first","type":"image","title":"第一张","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"mediaId":"` + firstMediaID + `"}},{"id":"second","type":"image","title":"第二张","position":{"x":120,"y":0},"width":100,"height":80,"metadata":{"mediaId":"` + secondMediaID + `"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+projectID+`","title":"回滚测试","document":`+document+`}`); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("create rollback project = %d/%s", response.Code, response.Body.String())
+	}
+	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/"+projectID+"/share", owner, `{"revision":1,"recipientUserUids":["`+recipient+`"]}`)
+	if response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("rollback share response = %d/%s", response.Code, response.Body.String())
+	}
+	projects, err := repository.ListCanvasProjects(recipient)
+	if err != nil || len(projects) != 0 {
+		t.Fatalf("failed share left projects = %#v, %v", projects, err)
+	}
+	media, err := repository.ListPrivateMedia(recipient)
+	if err != nil || len(media) != 0 {
+		t.Fatalf("failed share left media rows = %#v, %v", media, err)
+	}
+	recipientRoot := filepath.Join(mediaTestDirectory, "images", "private", "library", recipient)
+	objectPaths := make([]string, 0)
+	if err := filepath.WalkDir(recipientRoot, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() {
+			objectPaths = append(objectPaths, path)
+		}
+		return nil
+	}); err != nil && !os.IsNotExist(err) {
+		t.Fatalf("failed share recipient object walk = %v", err)
+	} else if len(objectPaths) != 0 {
+		t.Fatalf("failed share left recipient objects = %#v", objectPaths)
+	}
+}
+
+func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
+	stamp := time.Now().Format("20060102150405.000000000")
+	owner := "canvas-share-public-owner-" + stamp
+	recipient := "5919bfb6-d177-4fed-ad97-4bf1f8d2a97d"
+	mediaID := "media-share-public-" + stamp
+	objectKey := "share-public/" + mediaID + ".png"
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(mediaTestDirectory, objectKey)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mediaTestDirectory, objectKey), []byte("public-image"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SaveMedia(model.Media{ID: mediaID, OwnerUID: "public-owner", Source: model.MediaSourceUpload, ObjectKey: objectKey, ContentType: "image/png", Bytes: 12, Filename: "public.png", Title: "公共图片", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-share-" + stamp, MediaID: mediaID, Title: "公共图片", UploaderUID: "public-owner", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	projectID := "canvas-share-public-" + stamp
+	document := `{"nodes":[{"id":"public-image","type":"image","title":"公共图片","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"mediaId":"` + mediaID + `"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+projectID+`","title":"公共图片分享","document":`+document+`}`); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("create public source project = %d/%s", response.Code, response.Body.String())
+	}
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/"+projectID+"/share", owner, `{"revision":1,"recipientUserUids":["`+recipient+`"]}`); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("share public source project = %d/%s", response.Code, response.Body.String())
+	}
+	projects, err := repository.ListCanvasProjects(recipient)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("public recipient projects = %#v, %v", projects, err)
+	}
+	var copied struct {
+		Nodes []struct {
+			Metadata struct {
+				MediaID string `json:"mediaId"`
+			} `json:"metadata"`
+		} `json:"nodes"`
+	}
+	if err := json.Unmarshal(projects[0].Document, &copied); err != nil || len(copied.Nodes) != 1 || copied.Nodes[0].Metadata.MediaID == mediaID {
+		t.Fatalf("public recipient document = %s, %v", projects[0].Document, err)
+	}
+	media, found, err := repository.GetMedia(copied.Nodes[0].Metadata.MediaID)
+	if err != nil || !found || media.OwnerUID != recipient || media.Source != model.MediaSourceUpload {
+		t.Fatalf("public recipient media = %#v, found=%t, err=%v", media, found, err)
+	}
+}
+
+func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithDepartments(t *testing.T) {
+	stamp := time.Now().Format("20060102150405.000000000")
+	owner := "canvas-share-members-owner-" + stamp
+	enabled := "6315d7db-5f11-45f7-8728-f2c5825ee573"
+	disabled := "d6d09b8e-f737-42d4-96a4-d99e5d722848"
+	if err := repository.UpsertPortalMembers([]model.PortalMember{
+		{UserUID: owner, DisplayName: "分享者", Enabled: true, Departments: []string{"产品"}},
+		{UserUID: enabled, DisplayName: "可选成员", Enabled: true, Departments: []string{"设计", "增长"}},
+		{UserUID: disabled, DisplayName: "停用成员", Enabled: false, Departments: []string{"研发"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	response := canvasRequest(t, http.MethodGet, "/api/v1/canvas/share-recipients?query=可选", owner, "")
+	if response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+		t.Fatalf("share recipients = %d/%s", response.Code, response.Body.String())
+	}
+	var list struct {
+		Items []struct {
+			UserUID     string   `json:"userUid"`
+			DisplayName string   `json:"displayName"`
+			Departments []string `json:"departments"`
+		} `json:"items"`
+		Total int `json:"total"`
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, response).Data, &list); err != nil || list.Total != 1 || len(list.Items) != 1 || list.Items[0].UserUID != enabled || list.Items[0].DisplayName != "可选成员" || strings.Join(list.Items[0].Departments, ",") != "设计,增长" {
+		t.Fatalf("share recipients response = %#v, err=%v", list, err)
 	}
 }
 

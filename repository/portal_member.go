@@ -18,7 +18,7 @@ func UpsertPortalMembers(items []model.PortalMember) error {
 	}
 	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_uid"}},
-		DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "synced_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "departments", "synced_at"}),
 	}).Create(&items).Error
 }
 
@@ -31,7 +31,7 @@ func SyncPortalMembers(items []model.PortalMember) error {
 		if len(items) > 0 {
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "user_uid"}},
-				DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "synced_at"}),
+				DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "departments", "synced_at"}),
 			}).Create(&items).Error; err != nil {
 				return err
 			}
@@ -78,5 +78,25 @@ func ListPortalMembers(q model.PortalMemberQuery) ([]model.PortalMember, int64, 
 	}
 	items := make([]model.PortalMember, 0)
 	err = tx.Order("enabled desc, display_name asc, user_uid asc").Offset(q.Offset()).Limit(q.PageSize).Find(&items).Error
+	return items, total, err
+}
+
+func ListCanvasShareRecipients(senderUID string, q model.PortalMemberQuery) ([]model.PortalMember, int64, error) {
+	db, err := DB()
+	if err != nil {
+		return nil, 0, err
+	}
+	q.Normalize()
+	tx := db.Model(&model.PortalMember{}).Where("enabled = ? AND user_uid <> ?", true, senderUID)
+	if query := strings.TrimSpace(q.Query); query != "" {
+		like := "%" + query + "%"
+		tx = tx.Where("user_uid LIKE ? OR display_name LIKE ?", like, like)
+	}
+	var total int64
+	if err := tx.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]model.PortalMember, 0)
+	err = tx.Order("display_name asc, user_uid asc").Offset(q.Offset()).Limit(q.PageSize).Find(&items).Error
 	return items, total, err
 }

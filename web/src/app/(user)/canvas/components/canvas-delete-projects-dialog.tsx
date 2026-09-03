@@ -9,13 +9,11 @@ import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 export function CanvasDeleteProjectsDialog() {
     const ids = useCanvasUiStore((state) => state.deleteProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
-    const removeSelectedIds = useCanvasUiStore((state) => state.removeSelectedProjectIds);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
     const confirm = () => {
         deleteProjects(ids);
         cleanupImages();
-        removeSelectedIds(ids);
         setDeleteIds([]);
     };
 
