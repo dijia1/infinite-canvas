@@ -42,6 +42,7 @@ function createTestOperations(options: {
     cacheHighWatermarkEntries?: number;
     cacheLowWatermarkEntries?: number;
     objectUrls?: Map<string, string>;
+    createObjectURL?: (blob: Blob) => string;
     now?: () => number;
     readMeta?: (url: string) => Promise<{ width: number; height: number; mimeType: string }>;
 }) {
@@ -56,7 +57,7 @@ function createTestOperations(options: {
         isActive: options.isActive || (() => true),
         fetchImageBlob: options.fetchImageBlob || (async () => new Blob(["remote"], { type: "image/png" })),
         createPreviewBlob: options.createPreviewBlob || (async () => new Blob(["preview"], { type: "image/webp" })),
-        createObjectURL: () => `blob:test-${++urlSequence}`,
+        createObjectURL: options.createObjectURL || (() => `blob:test-${++urlSequence}`),
         revokeObjectURL: (url) => revoked.push(url),
         readMeta: options.readMeta || (async () => ({ width: 640, height: 480, mimeType: "image/png" })),
         now: options.now || (() => 1234),
@@ -125,6 +126,65 @@ test("migrates a legacy thumbnail cache entry without fetching its signed URL", 
     assert.equal(image.storageKey, "media:legacy-media:v1:thumbnail");
     assert.equal(await store.getItem("preview:legacy-media"), null);
     assert.equal(await store.getItem("media:legacy-media:v1:thumbnail"), legacy);
+});
+
+test("replaces a cached original incorrectly stored as a strict canvas thumbnail", async () => {
+    const store = new MemoryStore();
+    const staleOriginal = new Blob(["stale-original"], { type: "image/jpeg" });
+    const compactPreview = new Blob(["compact-preview"], { type: "image/webp" });
+    await store.setItem(imageThumbnailStorageKey("strict-thumbnail"), staleOriginal);
+
+    const labels = new Map<Blob, string>([
+        [staleOriginal, "stale-original"],
+        [compactPreview, "compact-preview"],
+    ]);
+    let remoteFetches = 0;
+    const { operations } = createTestOperations({
+        store,
+        fetchImageBlob: async () => {
+            remoteFetches += 1;
+            return compactPreview;
+        },
+        createObjectURL: (blob) => `blob:${labels.get(blob)}`,
+        readMeta: async (url) =>
+            url === "blob:stale-original"
+                ? { width: 4096, height: 4096, mimeType: "image/jpeg" }
+                : { width: 320, height: 320, mimeType: "image/webp" },
+    });
+
+    const image = await operations.loadMediaThumbnail("strict-thumbnail", "https://oss.example/preview.webp", {
+        preferRemoteThumbnail: true,
+        maxThumbnailEdge: 512,
+    });
+
+    assert.equal(remoteFetches, 1);
+    assert.equal(image.storageKey, imageThumbnailStorageKey("strict-thumbnail"));
+    assert.equal(image.width, 320);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("strict-thumbnail")), compactPreview);
+});
+
+test("drops an oversized cached canvas thumbnail before decoding it", async () => {
+    const store = new MemoryStore();
+    const staleOriginal = new Blob([new Uint8Array(2 * 1024 * 1024 + 1)], { type: "image/jpeg" });
+    const compactPreview = new Blob(["compact-preview"], { type: "image/webp" });
+    await store.setItem(imageThumbnailStorageKey("oversized-thumbnail"), staleOriginal);
+    let metaReads = 0;
+    const { operations } = createTestOperations({
+        store,
+        fetchImageBlob: async () => compactPreview,
+        readMeta: async () => {
+            metaReads += 1;
+            return { width: 320, height: 320, mimeType: "image/webp" };
+        },
+    });
+
+    await operations.loadMediaThumbnail("oversized-thumbnail", "https://oss.example/preview.webp", {
+        preferRemoteThumbnail: true,
+        maxThumbnailEdge: 512,
+    });
+
+    assert.equal(metaReads, 1);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("oversized-thumbnail")), compactPreview);
 });
 
 test("re-signs exactly once when an original OSS request receives 403", async () => {

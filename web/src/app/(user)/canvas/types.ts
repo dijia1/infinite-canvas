@@ -43,6 +43,8 @@ export type CanvasNodeMetadata = {
     vquality?: string;
     references?: string[];
     referenceMasks?: Array<import("@/types/image").ImageMask | undefined>;
+    maskId?: string;
+    sourceNodeId?: string;
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;

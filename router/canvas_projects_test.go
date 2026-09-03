@@ -232,6 +232,20 @@ func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 	}
 }
 
+func TestCanvasProjectExplainsWhenDocumentExceedsSaveLimit(t *testing.T) {
+	owner := "canvas-limit-owner-" + time.Now().Format("20060102150405.000000000")
+	document := fmt.Sprintf(`{"nodes":[{"id":"large-text","type":"text","title":"large","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"content":"%s"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, strings.Repeat("x", 4<<20))
+	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"oversized-canvas","title":"oversized","document":`+document+`}`)
+	payload := decodeCanvasResponse(t, response)
+
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized document status = %d/%s", response.Code, response.Body.String())
+	}
+	if payload.Msg != "画板数据超过保存上限（4MB）" {
+		t.Fatalf("oversized document message = %q", payload.Msg)
+	}
+}
+
 func TestCanvasProjectRejectsUnsafeIDsAndDocumentsTheFrontendCannotLoad(t *testing.T) {
 	owner := "canvas-validation-owner-" + time.Now().Format("20060102150405.000000000")
 	validDocument := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`

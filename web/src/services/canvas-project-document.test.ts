@@ -52,3 +52,30 @@ test("removes only media preview fields without mutating text or config content"
     assert.equal(document.nodes[0]?.metadata?.content, "blob:local");
     assert.equal(((document.nodes[0]?.metadata as Record<string, unknown>).access as { url: string }).url, "https://cdn.example/image?X-Amz-Signature=secret");
 });
+
+test("migrates repeated legacy mask strokes into one document-level mask resource", () => {
+    const mask = { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] };
+    const document = {
+        nodes: [
+            { id: "source", type: "image", title: "source", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { mediaId: "media-source", imageMask: mask } },
+            { id: "result-a", type: "image", title: "result-a", position: { x: 400, y: 0 }, width: 320, height: 240, metadata: { generationType: "edit", references: ["media:media-source:v1:original"], referenceMasks: [mask] } },
+            { id: "result-b", type: "image", title: "result-b", position: { x: 800, y: 0 }, width: 320, height: 240, metadata: { generationType: "edit", references: ["media:media-source:v1:original"], referenceMasks: [mask] } },
+        ],
+        connections: [],
+        backgroundMode: "lines",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+    } as unknown as CanvasProjectDocument;
+
+    const sanitized = sanitizeCanvasProjectDocument(document);
+    const resources = (sanitized as CanvasProjectDocument & { maskResources?: Record<string, unknown> }).maskResources;
+    const sourceMaskID = sanitized.nodes[0]?.metadata?.maskId;
+
+    assert.ok(resources);
+    assert.equal(Object.keys(resources!).length, 1);
+    assert.ok(sourceMaskID);
+    assert.equal(sanitized.nodes[1]?.metadata?.maskId, sourceMaskID);
+    assert.equal(sanitized.nodes[2]?.metadata?.maskId, sourceMaskID);
+    assert.equal("imageMask" in (sanitized.nodes[0]?.metadata || {}), false);
+    assert.equal("referenceMasks" in (sanitized.nodes[1]?.metadata || {}), false);
+});

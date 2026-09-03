@@ -3,8 +3,8 @@ import test from "node:test";
 
 import { ApiRequestError } from "@/services/api/request";
 import type { CanvasProjectRecord, CanvasProjectsApi } from "@/services/api/canvas-projects";
-import type { PersistStorage, StorageValue } from "zustand/middleware";
-import { createCanvasStore, type CanvasStore } from "./use-canvas-store.ts";
+import type { PersistStorage, StateStorage, StorageValue } from "zustand/middleware";
+import { createCanvasStorage, createCanvasStore, type CanvasStore } from "./use-canvas-store.ts";
 
 const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 35));
 
@@ -66,6 +66,27 @@ test("coalesces rapid local edits into one latest server save", async () => {
         conflict: false,
         operation: "save",
     });
+});
+
+test("skips persistence and server sync when a canvas patch keeps every current reference", async () => {
+    const { api, saved } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+    const current = store.getState().openProject("project-1");
+    assert.ok(current);
+
+    store.getState().updateProject("project-1", {
+        nodes: current.nodes,
+        connections: current.connections,
+        backgroundMode: current.backgroundMode,
+        showImageInfo: current.showImageInfo,
+        viewport: current.viewport,
+    });
+    await waitForDebounce();
+
+    assert.equal(saved.length, 0);
+    assert.equal(store.getState().projectSync["project-1"]?.dirty, false);
 });
 
 test("keeps offline edits pending and saves them after connectivity returns", async () => {
@@ -197,6 +218,40 @@ test("persists local projects and sync metadata before the server debounce", asy
     assert.equal(persisted.projects[0]?.title, "立即落本地");
     assert.equal(persisted.projects[0]?.projectSync, undefined);
     assert.equal(persisted.projectSync["project-1"]?.pending, true);
+});
+
+test("does not reserialize project documents when only save metadata changes", async () => {
+    const values = new Map<string, string>();
+    const writes: string[] = [];
+    const backingStorage: StateStorage = {
+        getItem: async (name) => values.get(name) || null,
+        setItem: async (name, value) => {
+            writes.push(name);
+            values.set(name, value);
+        },
+        removeItem: async (name) => {
+            values.delete(name);
+        },
+    };
+    const storage = createCanvasStorage(backingStorage);
+    const projects = [
+        {
+            ...serverProject().document,
+            id: "project-1",
+            title: "本地画布",
+            createdAt: "2026-09-02T00:00:00.000Z",
+            updatedAt: "2026-09-02T00:00:00.000Z",
+        },
+    ];
+
+    await storage.setItem("canvas", { state: { projects, projectSync: {} } } as unknown as StorageValue<CanvasStore>);
+    await storage.setItem("canvas", { state: { projects, projectSync: { "project-1": { serverRevision: 1, dirty: true, pending: true, saving: false, offline: false, error: null, conflict: false, operation: "save" } } } } as unknown as StorageValue<CanvasStore>);
+
+    assert.equal(writes.filter((name) => name === "canvas:projects").length, 1);
+    assert.equal(writes.filter((name) => name === "canvas:sync").length, 2);
+    const restored = await storage.getItem("canvas");
+    assert.equal((restored?.state as CanvasStore).projects[0]?.title, "本地画布");
+    assert.equal((restored?.state as CanvasStore).projectSync["project-1"]?.pending, true);
 });
 
 test("keeps a rehydrated dirty local project when server snapshots are merged", async () => {

@@ -23,4 +23,6 @@ export type ReferenceImage = {
 	width?: number;
 	height?: number;
 	mask?: ImageMask;
+	maskId?: string;
+	sourceNodeId?: string;
 };

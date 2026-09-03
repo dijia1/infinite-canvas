@@ -1,6 +1,7 @@
 import { imageToDataUrl, type UploadedImage } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
+import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
 export type NodeGenerationContext = {
@@ -18,8 +19,8 @@ export type NodeGenerationInput = {
     image?: ReferenceImage;
 };
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string): NodeGenerationContext {
-    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, maskResources?: CanvasMaskResources): NodeGenerationContext {
+    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections, maskResources);
     const upstreamText = inputs
         .map((input) => input.text)
         .filter(Boolean)
@@ -34,9 +35,9 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
-export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
+export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], maskResources?: CanvasMaskResources): NodeGenerationInput[] {
     return getOrderedUpstreamNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
-        const image = readReferenceImage(node);
+        const image = readReferenceImage(node, maskResources);
         if (image) return [{ nodeId: node.id, type: "image" as const, title: node.title, image }];
         const text = readNodeTextInput(node);
         if (text) return [{ nodeId: node.id, type: "text" as const, title: node.title, text }];
@@ -65,9 +66,9 @@ function readNodeTextInput(node: CanvasNodeData) {
     return node.metadata?.prompt || "";
 }
 
-function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
+function readReferenceImage(node: CanvasNodeData, maskResources?: CanvasMaskResources): ReferenceImage | null {
     if (node.type !== CanvasNodeType.Image || (!node.metadata?.content && !node.metadata?.mediaId)) return null;
-    const mask = normalizeImageMask(node.metadata.imageMask);
+    const mask = node.metadata?.sourceNodeId ? undefined : resolveCanvasNodeMask(node, maskResources) || normalizeImageMask(node.metadata.imageMask);
     return {
         id: node.id,
         name: `${node.title || node.id}.png`,
@@ -77,6 +78,7 @@ function readReferenceImage(node: CanvasNodeData): ReferenceImage | null {
         ...(node.metadata.mediaId ? { mediaId: node.metadata.mediaId } : {}),
         ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
         ...(mask ? { mask } : {}),
+        ...(mask && node.metadata?.maskId ? { maskId: node.metadata.maskId, sourceNodeId: node.id } : {}),
     };
 }
 

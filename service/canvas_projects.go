@@ -15,9 +15,11 @@ import (
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-const maxCanvasDocumentBytes = 2 << 20
+const maxCanvasDocumentBytes = 4 << 20
+const canvasProjectDocumentTooLargeMessage = "画板数据超过保存上限（4MB）"
 
 var ErrCanvasProjectConflict = errors.New("canvas project revision conflict")
+var ErrCanvasProjectDocumentTooLarge = errors.New(canvasProjectDocumentTooLargeMessage)
 
 var canvasProjectIDPattern = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
 
@@ -215,7 +217,10 @@ func normalizeCanvasProjectTitle(value string) (string, error) {
 }
 
 func sanitizeCanvasDocument(document json.RawMessage) (json.RawMessage, error) {
-	if len(document) == 0 || len(document) > maxCanvasDocumentBytes {
+	if len(document) > maxCanvasDocumentBytes {
+		return nil, ErrCanvasProjectDocumentTooLarge
+	}
+	if len(document) == 0 {
 		return nil, canvasProjectValidationError{message: "画布内容大小无效"}
 	}
 	decoder := json.NewDecoder(bytes.NewReader(document))

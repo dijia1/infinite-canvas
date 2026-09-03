@@ -38,6 +38,10 @@ export type MediaLoadOptions = {
     // Canvas overview rendering must not decode a cached 4K original merely to
     // synthesize a preview when OSS can provide one directly.
     preferRemoteThumbnail?: boolean;
+    // When a caller is rendering a dense overview, a cache entry that is much
+    // larger than the requested preview is worse than a miss: it forces the
+    // browser to decode the full image for a tiny on-screen node.
+    maxThumbnailEdge?: number;
 };
 
 export type ImageStorageOperationsOptions = {
@@ -71,6 +75,7 @@ const DEFAULT_CACHE_MAX_ENTRIES = 10_000;
 const DEFAULT_CACHE_HIGH_WATERMARK_ENTRIES = 9_000;
 const DEFAULT_CACHE_LOW_WATERMARK_ENTRIES = 8_000;
 const MEDIA_CACHE_VERSION = 1;
+const MAX_COMPACT_THUMBNAIL_BYTES = 2 * 1024 * 1024;
 const inFlightStorageKeyCounts = new Map<string, number>();
 const storageKeyGenerations = new Map<string, number>();
 const storageKeyWriteRevisions = new Map<string, number>();
@@ -451,6 +456,27 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         }
     };
 
+    const validateThumbnail = async (variant: CachedVariant, maxEdge?: number) => {
+        if (!maxEdge) return;
+        if (variant.blob.size > MAX_COMPACT_THUMBNAIL_BYTES) {
+            throw new Error("缩略图文件过大");
+        }
+        const validationURL = createObjectURL(variant.blob);
+        try {
+            const meta = await readMeta(validationURL);
+            if (Math.max(meta.width, meta.height) > maxEdge) {
+                throw new Error(`缩略图尺寸超过 ${maxEdge} 像素`);
+            }
+        } finally {
+            revokeObjectURL(validationURL);
+        }
+    };
+
+    const discardPreview = async (storageKey: string) =>
+        withStorageMutation(storageKey, async () => {
+            await clearInvalidatedWrite(storageKey);
+        });
+
     const loadMediaImage = (mediaId: string, remoteURL: RemoteMediaURL, loadOptions: MediaLoadOptions = {}) => {
         const storageKey = imageStorageKeyForMedia(mediaId);
         const generation = currentGeneration(storageKey);
@@ -496,11 +522,20 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                 };
                 if (loadOptions.preferRemoteThumbnail) {
                     const preview = await cachedPreview();
-                    if (preview) return await toUploadedImage(preview, mediaId);
+                    if (preview) {
+                        try {
+                            await validateThumbnail(preview, loadOptions.maxThumbnailEdge);
+                            return await toUploadedImage(preview, mediaId);
+                        } catch (error) {
+                            if (isImageFetchAbort(error, loadOptions.signal)) throw error;
+                            await discardPreview(previewKey);
+                        }
+                    }
                     try {
                         return await toUploadedImage(await remotePreview(), mediaId);
                     } catch (remoteError) {
                         if (isImageFetchAbort(remoteError, loadOptions.signal)) throw remoteError;
+                        if (loadOptions.maxThumbnailEdge) throw remoteError;
                         const original = await readBlob(originalKey, originalGeneration);
                         if (!original) throw remoteError;
                         try {

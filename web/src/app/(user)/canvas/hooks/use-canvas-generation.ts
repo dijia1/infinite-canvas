@@ -13,6 +13,7 @@ import { imageEditReferenceError } from "@/lib/image-edit-validation";
 import { buildAngleLabel, buildAnglePrompt, buildGenerationConfig, buildImageGenerationMetadata, findRetrySourceNode, getGenerationCount, referenceUrl, sourceNodeReferenceImages, withoutLegacyModel, type CanvasAngleParameters } from "../utils/canvas-generation-utils";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
+import type { CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "../types";
 import type { NodeGenerationContext } from "../components/canvas-node-generation";
 
@@ -54,6 +55,8 @@ export type CanvasGenerationControllerOptions = {
     resolveImageUrl?: (storageKey?: string, fallback?: string) => Promise<string>;
     resolveStoredImageReference?: (storageKey: string) => Promise<string>;
     resolveMetadataReferences?: (metadata: CanvasNodeMetadata) => Promise<ReferenceImage[] | null>;
+    resolveMask?: (maskId: string) => ReferenceImage["mask"] | undefined;
+    maskResources?: CanvasMaskResources;
 };
 
 export type CanvasGenerationController = {
@@ -93,6 +96,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             metadata.references.map(async (url, index) => {
                 const isStoredImage = /^(?:image|media|preview):/.test(url);
                 const dataUrl = isStoredImage ? await (options.resolveStoredImageReference?.(url) || options.resolveImageUrl!(url, "")) : url;
+                const mask = index === 0 ? (metadata.maskId ? options.resolveMask?.(metadata.maskId) : metadata.referenceMasks?.[index]) : undefined;
                 return dataUrl
                     ? {
                           id: `${index}`,
@@ -100,7 +104,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                           type: "image/png",
                           dataUrl,
                           storageKey: isStoredImage ? url : undefined,
-                          ...(metadata.referenceMasks?.[index] ? { mask: metadata.referenceMasks[index] } : {}),
+                          ...(mask ? { mask } : {}),
+                          ...(mask && metadata.maskId ? { maskId: metadata.maskId, sourceNodeId: metadata.sourceNodeId } : {}),
                       }
                     : null;
             }),
@@ -271,7 +276,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             setRunningNodeId(null);
             return;
         }
-        const sourceReference = sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.content || sourceNode.metadata?.mediaId) ? sourceNodeReferenceImages(sourceNode) : [];
+        const sourceReference = sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.content || sourceNode.metadata?.mediaId) ? sourceNodeReferenceImages(sourceNode, options.maskResources) : [];
         const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
         if (mode === "image") {
             const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages) : undefined;
@@ -471,7 +476,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             return;
         }
         const retryReferenceImages =
-            hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode)) : [];
+            hasSavedImageMetadata && savedImageMetadata ? await resolveMetadataReferences(savedImageMetadata) : useReferenceImages ? (context?.referenceImages.length ? context.referenceImages : sourceNodeReferenceImages(batchRoot || sourceNode, options.maskResources)) : [];
         if (useReferenceImages && !retryReferenceImages) {
             missingReference(node.id);
             return;
@@ -512,7 +517,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                       quality: generationConfig.quality,
                       count: savedImageMetadata.count || 1,
                       references: savedImageMetadata.references,
-                      referenceMasks: savedImageMetadata.referenceMasks,
+                      ...(savedImageMetadata.maskId ? { maskId: savedImageMetadata.maskId, sourceNodeId: savedImageMetadata.sourceNodeId } : {}),
                   }
                 : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
             options.setNodes((prev) => prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, metadata: { ...withoutLegacyModel(item.metadata), prompt, ...generationMetadata } } : item)));

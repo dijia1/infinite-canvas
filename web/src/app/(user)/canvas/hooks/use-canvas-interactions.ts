@@ -92,6 +92,7 @@ const initialDragState = () => ({
     startX: 0,
     startY: 0,
     initialSelectedNodes: [] as { id: string; x: number; y: number }[],
+    initialSelectedNodePositions: new Map<string, Position>(),
 });
 
 function defaultRequestFrame(callback: FrameRequestCallback) {
@@ -100,6 +101,13 @@ function defaultRequestFrame(callback: FrameRequestCallback) {
 
 function defaultCancelFrame(handle: number) {
     window.cancelAnimationFrame(handle);
+}
+
+export function applyNodeDragPositions(nodes: CanvasNodeData[], initialPositions: ReadonlyMap<string, Position>, dx: number, dy: number) {
+    return nodes.map((node) => {
+        const initial = initialPositions.get(node.id);
+        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
+    });
 }
 
 export function createCanvasInteractionController(initialOptions: CanvasInteractionControllerOptions): CanvasInteractionController {
@@ -272,6 +280,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         drag.startX = event.clientX;
         drag.startY = event.clientY;
         drag.initialSelectedNodes = options.nodesRef.current.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y }));
+        drag.initialSelectedNodePositions = new Map(drag.initialSelectedNodes.map(({ id, x, y }) => [id, { x, y }]));
         if (isCanvasPerfDebugEnabled()) {
             dragPerf.startedAt = performance.now();
             dragPerf.frameCount = 0;
@@ -293,15 +302,10 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         const clickedNodeId = drag.initialSelectedNodes[0]?.id;
         const dx = clientX == null ? 0 : (clientX - drag.startX) / options.viewportRef.current.k;
         const dy = clientY == null ? 0 : (clientY - drag.startY) / options.viewportRef.current.k;
-        const initialPositions = drag.initialSelectedNodes;
+        const initialPositions = drag.initialSelectedNodePositions;
 
         if (drag.hasMoved && clientX != null && clientY != null) {
-            options.setNodes((previous) =>
-                previous.map((node) => {
-                    const initial = initialPositions.find((item) => item.id === node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                }),
-            );
+            options.setNodes((previous) => applyNodeDragPositions(previous, initialPositions, dx, dy));
         }
         options.resume();
         setDragging(false);
@@ -309,6 +313,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         drag.isDraggingNode = false;
         drag.hasMoved = false;
         drag.initialSelectedNodes = [];
+        drag.initialSelectedNodePositions = new Map();
         if (dragPerf.startedAt) {
             logCanvasPerf("drag end", {
                 durationMs: Math.round(performance.now() - dragPerf.startedAt),
@@ -331,7 +336,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         if (drag.isDraggingNode) {
             const dx = (event.clientX - drag.startX) / options.viewportRef.current.k;
             const dy = (event.clientY - drag.startY) / options.viewportRef.current.k;
-            const initialPositions = drag.initialSelectedNodes;
+            const initialPositions = drag.initialSelectedNodePositions;
             if (Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3) drag.hasMoved = true;
             if (dragPerf.startedAt) {
                 dragPerf.frameCount += 1;
@@ -339,12 +344,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
             }
             if (animationFrame !== null) (options.cancelAnimationFrame || defaultCancelFrame)(animationFrame);
             animationFrame = (options.requestAnimationFrame || defaultRequestFrame)(() => {
-                options.setNodes((previous) =>
-                    previous.map((node) => {
-                        const initial = initialPositions.find((item) => item.id === node.id);
-                        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                    }),
-                );
+                options.setNodes((previous) => applyNodeDragPositions(previous, initialPositions, dx, dy));
                 animationFrame = null;
             });
             return;
@@ -468,6 +468,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         drag.isDraggingNode = false;
         drag.hasMoved = false;
         drag.initialSelectedNodes = [];
+        drag.initialSelectedNodePositions = new Map();
         isNodeDragging = false;
         connectingParams = null;
         connectionTargetNodeId = null;

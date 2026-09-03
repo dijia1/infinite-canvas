@@ -1,4 +1,5 @@
 import type { CanvasProjectDocument } from "./api/canvas-projects";
+import { migrateCanvasMaskResources } from "@/app/(user)/canvas/image-mask/mask-resources";
 
 function isTransientCanvasUrl(value: string) {
     const normalized = value.trim();
@@ -45,15 +46,20 @@ function sanitizeMediaMetadata(value: Record<string, unknown>) {
 }
 
 export function sanitizeCanvasProjectDocument(document: CanvasProjectDocument): CanvasProjectDocument {
+    const { maskResources: existingMaskResources, ...restDocument } = document;
+    const mediaSanitizedNodes = document.nodes.map((node) => {
+        if (node.type !== "image" && node.type !== "video") return node;
+        const metadata = node.metadata as Record<string, unknown> | undefined;
+        if (!metadata) return node;
+        const sanitized = sanitizeMediaMetadata(metadata);
+        return sanitized === metadata ? node : { ...node, metadata: sanitized as NonNullable<typeof node.metadata> };
+    });
+    const migratedMasks = migrateCanvasMaskResources(mediaSanitizedNodes, existingMaskResources);
+
     return {
-        ...document,
-        nodes: document.nodes.map((node) => {
-            if (node.type !== "image" && node.type !== "video") return node;
-            const metadata = node.metadata as Record<string, unknown> | undefined;
-            if (!metadata) return node;
-            const sanitized = sanitizeMediaMetadata(metadata);
-            return sanitized === metadata ? node : { ...node, metadata: sanitized as NonNullable<typeof node.metadata> };
-        }),
+        ...restDocument,
+        nodes: migratedMasks.nodes,
+        ...(Object.keys(migratedMasks.maskResources).length ? { maskResources: migratedMasks.maskResources } : {}),
         connections: [...document.connections],
         viewport: { ...document.viewport },
     };

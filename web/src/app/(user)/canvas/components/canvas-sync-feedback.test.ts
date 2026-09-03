@@ -19,15 +19,16 @@ function sync(overrides: Partial<CanvasProjectSync> = {}): CanvasProjectSync {
 }
 
 test("describes clean, saving, offline pending, error, and conflict project states", () => {
-    assert.deepEqual(describeCanvasSync(sync()), { label: "已保存", kind: "saved", refreshable: false });
-    assert.deepEqual(describeCanvasSync(sync({ saving: true })), { label: "保存中", kind: "saving", refreshable: false });
-    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, offline: true })), { label: "离线待同步", kind: "offline", refreshable: false });
-    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, error: "网络错误" })), { label: "保存失败", kind: "error", refreshable: false });
-    assert.deepEqual(describeCanvasSync(sync({ dirty: true, conflict: true, error: "版本冲突" })), { label: "版本冲突", kind: "conflict", refreshable: true });
+    assert.deepEqual(describeCanvasSync(sync()), { label: "已保存", kind: "saved", presentation: "icon", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ saving: true })), { label: "保存中", kind: "saving", presentation: "icon", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, offline: true })), { label: "离线待同步", kind: "offline", presentation: "tag", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, error: "网络错误" })), { label: "保存失败", kind: "error", presentation: "tag", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, error: "画板数据超过保存上限（4MB）" })), { label: "画板数据超过保存上限（4MB）", kind: "error", presentation: "tag", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, conflict: true, error: "版本冲突" })), { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true });
 });
 
 test("treats online dirty or pending work as saving feedback", () => {
-    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true })), { label: "保存中", kind: "saving", refreshable: false });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true })), { label: "保存中", kind: "saving", presentation: "icon", refreshable: false });
 });
 
 test("describes authenticated bootstrap errors separately from offline and hides guest feedback", () => {

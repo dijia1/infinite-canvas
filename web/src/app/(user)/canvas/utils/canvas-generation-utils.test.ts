@@ -67,7 +67,7 @@ test("builds edit metadata with persisted or remote references only", () => {
     assert.equal("model" in buildImageGenerationMetadata("edit", config, 1, []), false);
 });
 
-test("persists masks in the same order as reusable reference URLs", () => {
+test("does not persist inline mask strokes when no stable mask resource ID exists", () => {
     const inlineReference: ReferenceImage = { id: "inline", name: "inline.png", type: "image/png", dataUrl: "data:image/png;base64,inline" };
     const maskedReference: ReferenceImage = {
         id: "masked",
@@ -87,8 +87,27 @@ test("persists masks in the same order as reusable reference URLs", () => {
         quality: "auto",
         count: 1,
         references: ["media:masked"],
-        referenceMasks: [maskedReference.mask],
     });
+});
+
+test("persists one mask resource ID instead of duplicating mask strokes in generated metadata", () => {
+    const mask = { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] };
+    const reference = {
+        id: "source-node",
+        name: "source.png",
+        type: "image/png",
+        dataUrl: "data:image/png;base64,source",
+        storageKey: "media:source:v1:original",
+        mask,
+        maskId: "mask-saved-generation",
+        sourceNodeId: "source-node",
+    } as ReferenceImage & { maskId: string; sourceNodeId: string };
+
+    const metadata = buildImageGenerationMetadata("edit", config, 1, [reference]);
+
+    assert.equal(metadata.maskId, "mask-saved-generation");
+    assert.equal(metadata.sourceNodeId, "source-node");
+    assert.equal("referenceMasks" in metadata, false);
 });
 
 test("normalizes node config without copying historical model fields", () => {

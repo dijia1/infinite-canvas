@@ -9,15 +9,18 @@ import { useCanvasStore, type CanvasBootstrapStatus, type CanvasProjectSync } fr
 export type CanvasSyncDescription = {
     label: string;
     kind: "saved" | "saving" | "offline" | "error" | "conflict";
+    presentation: "icon" | "tag";
     refreshable: boolean;
 };
 
+const canvasDocumentTooLargeMessage = "画板数据超过保存上限（4MB）";
+
 export function describeCanvasSync(sync: CanvasProjectSync): CanvasSyncDescription {
-    if (sync.conflict) return { label: "版本冲突", kind: "conflict", refreshable: true };
-    if (sync.error) return { label: "保存失败", kind: "error", refreshable: false };
-    if (sync.offline && (sync.dirty || sync.pending)) return { label: "离线待同步", kind: "offline", refreshable: false };
-    if (sync.saving || sync.dirty || sync.pending) return { label: "保存中", kind: "saving", refreshable: false };
-    return { label: "已保存", kind: "saved", refreshable: false };
+    if (sync.conflict) return { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true };
+    if (sync.error) return { label: sync.error.includes(canvasDocumentTooLargeMessage) ? canvasDocumentTooLargeMessage : "保存失败", kind: "error", presentation: "tag", refreshable: false };
+    if (sync.offline && (sync.dirty || sync.pending)) return { label: "离线待同步", kind: "offline", presentation: "tag", refreshable: false };
+    if (sync.saving || sync.dirty || sync.pending) return { label: "保存中", kind: "saving", presentation: "icon", refreshable: false };
+    return { label: "已保存", kind: "saved", presentation: "icon", refreshable: false };
 }
 
 export type CanvasBootstrapDescription = {
@@ -98,9 +101,20 @@ export function CanvasSyncFeedback({ projectId }: { projectId: string }) {
 
     return (
         <span className="inline-flex min-w-0 items-center gap-1" onClick={(event) => event.stopPropagation()}>
-            <Tag bordered={false} color={appearance.color} icon={appearance.icon} className="m-0 inline-flex items-center text-xs">
-                {description.label}
-            </Tag>
+            {description.presentation === "icon" ? (
+                <span
+                    aria-label={description.label}
+                    className={`inline-flex size-4 items-center justify-center ${description.kind === "saved" ? "text-emerald-500 dark:text-emerald-400" : "text-sky-500 dark:text-sky-400"}`}
+                    role="status"
+                    title={description.label}
+                >
+                    {appearance.icon}
+                </span>
+            ) : (
+                <Tag bordered={false} color={appearance.color} icon={appearance.icon} className="m-0 inline-flex items-center text-xs">
+                    {description.label}
+                </Tag>
+            )}
             {description.refreshable ? (
                 <Button type="link" size="small" loading={refreshing} icon={<RefreshCw className="size-3" />} className="h-6 px-1 text-xs" onClick={() => void refresh()}>
                     加载服务器版本

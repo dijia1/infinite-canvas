@@ -116,6 +116,10 @@ func DeleteCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func writeCanvasProjectError(w http.ResponseWriter, err error) {
+	if errors.Is(err, service.ErrCanvasProjectDocumentTooLarge) {
+		FailStatus(w, http.StatusRequestEntityTooLarge, err.Error())
+		return
+	}
 	if errors.Is(err, service.ErrCanvasProjectConflict) {
 		FailStatus(w, http.StatusConflict, "画布已在其他位置更新，请刷新后重试")
 		return

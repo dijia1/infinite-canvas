@@ -13,6 +13,7 @@ function localProject(overrides: Partial<CanvasProject> = {}): CanvasProject {
         createdAt: "2026-09-01T00:00:00.000Z",
         updatedAt: "2026-09-01T01:00:00.000Z",
         nodes: [],
+        maskResources: {},
         connections: [],
         backgroundMode: "lines",
         showImageInfo: false,

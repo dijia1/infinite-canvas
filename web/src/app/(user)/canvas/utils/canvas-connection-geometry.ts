@@ -1,4 +1,4 @@
-import type { CanvasNodeData, Position } from "../types";
+import type { CanvasConnection, CanvasNodeData, Position } from "../types";
 
 export function getConnectionCurve(from: CanvasNodeData, to: CanvasNodeData) {
     const startX = from.position.x + from.width;
@@ -15,6 +15,18 @@ export function getConnectionCurve(from: CanvasNodeData, to: CanvasNodeData) {
         end: { x: endX, y: endY },
         pathD: `M ${startX} ${startY} C ${startX + curvature} ${startY}, ${endX - curvature} ${endY}, ${endX} ${endY}`,
     };
+}
+
+export function buildConnectionPathData(connections: CanvasConnection[], nodeById: ReadonlyMap<string, CanvasNodeData>, cachedPathData?: ReadonlyMap<string, string>) {
+    return connections
+        .flatMap((connection) => {
+            const cached = cachedPathData?.get(connection.id);
+            if (cached) return [cached];
+            const from = nodeById.get(connection.fromNodeId);
+            const to = nodeById.get(connection.toNodeId);
+            return from && to ? [getConnectionCurve(from, to).pathD] : [];
+        })
+        .join(" ");
 }
 
 export function distanceBetweenPoints(a: Position, b: Position) {

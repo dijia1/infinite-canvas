@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCanvasInteractionController } from "./use-canvas-interactions.ts";
+import { applyNodeDragPositions, createCanvasInteractionController } from "./use-canvas-interactions.ts";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type Position, type ViewportTransform } from "../types.ts";
 
 type Ref<T> = { current: T };
@@ -100,6 +100,32 @@ test("node drag moves selected batch children and commits only after pointer rel
 
     assert.deepEqual(calls, ["pause", "resume"]);
     assert.deepEqual(selectedNodeIdsRef.current, new Set(["root"]));
+});
+
+test("node drag uses indexed initial positions for a multi-selection", () => {
+    const first = imageNode("first", 0, 0);
+    const second = imageNode("second", 100, 100);
+    const untouched = imageNode("untouched", 300, 300);
+
+    const moved = applyNodeDragPositions(
+        [first, second, untouched],
+        new Map([
+            ["first", { x: 0, y: 0 }],
+            ["second", { x: 100, y: 100 }],
+        ]),
+        20,
+        -10,
+    );
+
+    assert.deepEqual(
+        moved.map((node) => node.position),
+        [
+            { x: 20, y: -10 },
+            { x: 120, y: 90 },
+            { x: 300, y: 300 },
+        ],
+    );
+    assert.equal(moved[2], untouched);
 });
 
 test("connection creation normalizes config handles, opens pending creation, and rejects duplicates", () => {

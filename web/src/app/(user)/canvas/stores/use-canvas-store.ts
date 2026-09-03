@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
-import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
+import { persist, type PersistStorage, type StateStorage, type StorageValue } from "zustand/middleware";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { localForageStorage } from "@/lib/localforage-storage";
@@ -8,6 +8,7 @@ import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord
 import { ApiRequestError } from "@/services/api/request";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
 import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap";
+import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-mask/mask-resources";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
 export type CanvasProject = {
@@ -16,6 +17,7 @@ export type CanvasProject = {
     createdAt: string;
     updatedAt: string;
     nodes: CanvasNodeData[];
+    maskResources: CanvasMaskResources;
     connections: CanvasConnection[];
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
@@ -35,6 +37,7 @@ export type CanvasProjectSync = {
 };
 
 export type CanvasBootstrapStatus = "loading" | "ready" | "offline" | "error";
+type CanvasProjectPatch = Partial<Pick<CanvasProject, "nodes" | "maskResources" | "connections" | "backgroundMode" | "showImageInfo" | "viewport">>;
 
 export type CanvasStore = {
     hydrated: boolean;
@@ -62,7 +65,7 @@ export type CanvasStore = {
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
-    updateProject: (id: string, patch: Partial<Pick<CanvasProject, "nodes" | "connections" | "backgroundMode" | "showImageInfo" | "viewport">>) => void;
+    updateProject: (id: string, patch: CanvasProjectPatch) => void;
 };
 
 type CanvasStoreOptions = {
@@ -120,6 +123,7 @@ function pendingSyncState(previous?: CanvasProjectSync, operation: CanvasProject
 function canvasDocument(project: CanvasProject): CanvasProjectDocument {
     return sanitizeCanvasProjectDocument({
         nodes: project.nodes,
+        maskResources: project.maskResources,
         connections: project.connections,
         backgroundMode: project.backgroundMode,
         showImageInfo: project.showImageInfo,
@@ -128,31 +132,58 @@ function canvasDocument(project: CanvasProject): CanvasProjectDocument {
 }
 
 function localProject(project: CanvasProjectRecord): CanvasProject {
-    return {
+    return sanitizeCanvasProject({
         id: project.id,
         title: project.title,
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
         nodes: project.document.nodes,
+        maskResources: project.document.maskResources || {},
         connections: project.document.connections,
         backgroundMode: project.document.backgroundMode,
         showImageInfo: project.document.showImageInfo,
         viewport: project.document.viewport,
-    };
+    });
 }
 
-function createCanvasStorage(): PersistStorage<CanvasStore> {
+function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
+    value.state.projects = (value.state.projects || []).map(sanitizeCanvasProject);
+    value.state.projectSync = Object.fromEntries(Object.entries(value.state.projectSync || {}).map(([id, metadata]) => [id, metadata.saving ? { ...metadata, saving: false, dirty: true, pending: true } : metadata]));
+    return value;
+}
+
+export function createCanvasStorage(storage: StateStorage = localForageStorage): PersistStorage<CanvasStore> {
+    const cachedProjects = new Map<string, CanvasStore["projects"]>();
+    const projectsKey = (name: string) => `${name}:projects`;
+    const syncKey = (name: string) => `${name}:sync`;
+
     return {
         getItem: async (name) => {
-            const value = await localForageStorage.getItem(name);
-            if (!value) return null;
-            const parsed = JSON.parse(value) as StorageValue<CanvasStore>;
-            parsed.state.projects = (parsed.state.projects || []).map(sanitizeCanvasProject);
-            parsed.state.projectSync = Object.fromEntries(Object.entries(parsed.state.projectSync || {}).map(([id, metadata]) => [id, metadata.saving ? { ...metadata, saving: false, dirty: true, pending: true } : metadata]));
-            return parsed;
+            const [storedProjects, storedSync] = await Promise.all([storage.getItem(projectsKey(name)), storage.getItem(syncKey(name))]);
+            if (storedProjects) {
+                const projects = JSON.parse(storedProjects) as CanvasStore["projects"];
+                const projectSync = storedSync ? (JSON.parse(storedSync) as CanvasStore["projectSync"]) : {};
+                const parsed = sanitizeStoredCanvasValue({ state: { projects, projectSync } } as StorageValue<CanvasStore>);
+                cachedProjects.set(name, parsed.state.projects);
+                return parsed;
+            }
+
+            const legacyValue = await storage.getItem(name);
+            if (!legacyValue) return null;
+            return sanitizeStoredCanvasValue(JSON.parse(legacyValue) as StorageValue<CanvasStore>);
         },
-        setItem: (name, value) => localForageStorage.setItem(name, JSON.stringify(value)),
-        removeItem: (name) => localForageStorage.removeItem(name),
+        setItem: async (name, value) => {
+            const state = value.state as Pick<CanvasStore, "projects" | "projectSync">;
+            if (cachedProjects.get(name) !== state.projects) {
+                await storage.setItem(projectsKey(name), JSON.stringify(state.projects));
+                cachedProjects.set(name, state.projects);
+            }
+            await storage.setItem(syncKey(name), JSON.stringify(state.projectSync));
+        },
+        removeItem: async (name) => {
+            cachedProjects.delete(name);
+            await Promise.all([storage.removeItem(projectsKey(name)), storage.removeItem(syncKey(name)), storage.removeItem(name)]);
+        },
     };
 }
 
@@ -186,6 +217,17 @@ function hasUnsyncedChanges(metadata?: CanvasProjectSync) {
     return Boolean(metadata && (metadata.dirty || metadata.pending || metadata.saving || metadata.conflict));
 }
 
+function canvasProjectPatchChanges(project: CanvasProject, patch: CanvasProjectPatch) {
+    return (
+        (patch.nodes !== undefined && patch.nodes !== project.nodes) ||
+        (patch.maskResources !== undefined && patch.maskResources !== project.maskResources) ||
+        (patch.connections !== undefined && patch.connections !== project.connections) ||
+        (patch.backgroundMode !== undefined && patch.backgroundMode !== project.backgroundMode) ||
+        (patch.showImageInfo !== undefined && patch.showImageInfo !== project.showImageInfo) ||
+        (patch.viewport !== undefined && patch.viewport !== project.viewport)
+    );
+}
+
 function sameCanvasJSON(left: unknown, right: unknown): boolean {
     if (Object.is(left, right)) return true;
     if (Array.isArray(left) || Array.isArray(right)) {
@@ -204,12 +246,14 @@ function serverRecordMatchesSubmittedProject(record: CanvasProjectRecord, projec
 }
 
 export function sanitizeCanvasProject(project: CanvasProject): CanvasProject {
+    const migratedMasks = migrateCanvasMaskResources(project.nodes, project.maskResources);
     return {
         id: project.id,
         title: project.title,
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
-        nodes: project.nodes,
+        nodes: migratedMasks.nodes,
+        maskResources: migratedMasks.maskResources,
         connections: project.connections,
         backgroundMode: project.backgroundMode,
         showImageInfo: project.showImageInfo,
@@ -556,6 +600,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             createdAt: now,
                             updatedAt: now,
                             nodes: [],
+                            maskResources: {},
                             connections: [],
                             backgroundMode: "lines",
                             showImageInfo: false,
@@ -573,6 +618,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             createdAt: source.createdAt || now,
                             updatedAt: now,
                             nodes: source.nodes || [],
+                            maskResources: source.maskResources || {},
                             connections: source.connections || [],
                             backgroundMode: source.backgroundMode || "lines",
                             showImageInfo: source.showImageInfo || false,
@@ -584,15 +630,17 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     openProject: (id) => get().projects.find((item) => item.id === id) || null,
                     renameProject: (id, title) => {
-                        let changed = false;
+                        const current = get().projects.find((project) => project.id === id);
+                        if (!current) return;
+                        const nextTitle = title.trim() || current.title;
+                        if (nextTitle === current.title) return;
                         set((state) => ({
                             projects: state.projects.map((project) => {
                                 if (project.id !== id) return project;
-                                changed = true;
-                                return { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() };
+                                return { ...project, title: nextTitle, updatedAt: new Date().toISOString() };
                             }),
                         }));
-                        if (changed) queueChange(id);
+                        queueChange(id);
                     },
                     deleteProjects: (ids) => {
                         const current = get();
@@ -609,15 +657,15 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         }
                     },
                     updateProject: (id, patch) => {
-                        let changed = false;
+                        const current = get().projects.find((project) => project.id === id);
+                        if (!current || !canvasProjectPatchChanges(current, patch)) return;
                         set((state) => ({
                             projects: state.projects.map((project) => {
                                 if (project.id !== id) return project;
-                                changed = true;
                                 return { ...project, ...patch, updatedAt: new Date().toISOString() };
                             }),
                         }));
-                        if (changed) queueChange(id);
+                        queueChange(id);
                     },
                 };
             },

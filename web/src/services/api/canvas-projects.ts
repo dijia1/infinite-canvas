@@ -1,10 +1,12 @@
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/app/(user)/canvas/types";
+import type { CanvasMaskResources } from "@/app/(user)/canvas/image-mask/mask-resources";
 import { apiDelete, apiGet, apiPost, apiPut } from "./request";
 import { sanitizeCanvasProjectDocument } from "../canvas-project-document";
 
 export type CanvasProjectDocument = {
     nodes: CanvasNodeData[];
+    maskResources?: CanvasMaskResources;
     connections: CanvasConnection[];
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;

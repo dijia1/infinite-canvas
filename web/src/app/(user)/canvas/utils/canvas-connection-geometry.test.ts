@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getConnectionCurve, sampleConnectionPoints, segmentHitsConnection } from "./canvas-connection-geometry.ts";
-import { CanvasNodeType, type CanvasNodeData } from "../types";
+import { buildConnectionPathData, getConnectionCurve, sampleConnectionPoints, segmentHitsConnection } from "./canvas-connection-geometry.ts";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
 function node(id: string, x: number, y: number): CanvasNodeData {
     return {
@@ -42,4 +42,22 @@ test("detects a cut segment crossing a connection", () => {
 
 test("does not detect a distant cut segment", () => {
     assert.equal(segmentHitsConnection({ x: 0, y: 0 }, { x: 0, y: 200 }, from, to, 1), false);
+});
+
+test("combines overview connections into one SVG path while skipping missing endpoints", () => {
+    const connections: CanvasConnection[] = [
+        { id: "line-1", fromNodeId: "from", toNodeId: "to" },
+        { id: "line-missing", fromNodeId: "from", toNodeId: "missing" },
+    ];
+
+    assert.equal(buildConnectionPathData(connections, new Map([[from.id, from], [to.id, to]])), "M 100 40 C 200 40, 200 140, 300 140");
+});
+
+test("reuses cached overview connection geometry while the viewport changes", () => {
+    const connections: CanvasConnection[] = [{ id: "line-1", fromNodeId: "from", toNodeId: "to" }];
+
+    assert.equal(
+        buildConnectionPathData(connections, new Map([[from.id, from], [to.id, to]]), new Map([["line-1", "M cached"]])),
+        "M cached",
+    );
 });

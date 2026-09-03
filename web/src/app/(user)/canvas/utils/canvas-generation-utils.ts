@@ -3,6 +3,7 @@ import { normalizeImageBackground, normalizeImageOutputFormat } from "../../../.
 import { normalizePersistedAiConfig, type AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
 import { normalizeImageMask } from "../image-mask/mask-utils";
+import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
 
 type NodeGenerationInput = {
@@ -38,9 +39,11 @@ export function replaceNodeWithUploadedVideo(node: CanvasNodeData, title: string
 }
 
 export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
-    const persistedReferences = references
-        .map((reference) => ({ url: referenceUrl(reference), mask: normalizeImageMask(reference.mask) }))
-        .filter((reference): reference is { url: string; mask: ReturnType<typeof normalizeImageMask> } => Boolean(reference.url));
+    const persistedReferences = references.flatMap((reference) => {
+        const url = referenceUrl(reference);
+        return url ? [{ url, maskId: reference.maskId, sourceNodeId: reference.sourceNodeId || reference.id }] : [];
+    });
+    const maskReference = persistedReferences.find((reference) => Boolean(reference.maskId));
     return {
         generationType: type,
         size: config.size,
@@ -52,7 +55,7 @@ export function buildImageGenerationMetadata(type: CanvasImageGenerationType, co
 		...(config.videoProviderId ? { videoProviderId: config.videoProviderId } : {}),
         count,
         references: persistedReferences.map((reference) => reference.url),
-        ...(persistedReferences.some((reference) => Boolean(reference.mask)) ? { referenceMasks: persistedReferences.map((reference) => reference.mask) } : {}),
+        ...(maskReference?.maskId ? { maskId: maskReference.maskId, sourceNodeId: maskReference.sourceNodeId } : {}),
     };
 }
 
@@ -157,9 +160,9 @@ export function findRetrySourceNode(nodeId: string, nodes: CanvasNodeData[], con
     return null;
 }
 
-export function sourceNodeReferenceImages(node: CanvasNodeData | null): ReferenceImage[] {
+export function sourceNodeReferenceImages(node: CanvasNodeData | null, maskResources?: CanvasMaskResources): ReferenceImage[] {
     if (!node || node.type !== CanvasNodeType.Image || (!node.metadata?.content && !node.metadata?.mediaId)) return [];
-    const mask = normalizeImageMask(node.metadata.imageMask);
+    const mask = node.metadata?.sourceNodeId ? undefined : resolveCanvasNodeMask(node, maskResources);
     return [
         {
             id: node.id,
@@ -170,6 +173,7 @@ export function sourceNodeReferenceImages(node: CanvasNodeData | null): Referenc
             ...(node.metadata.mediaId ? { mediaId: node.metadata.mediaId } : {}),
             ...(node.metadata.naturalWidth && node.metadata.naturalHeight ? { width: node.metadata.naturalWidth, height: node.metadata.naturalHeight } : {}),
             ...(mask ? { mask } : {}),
+            ...(mask && node.metadata.maskId ? { maskId: node.metadata.maskId, sourceNodeId: node.id } : {}),
         },
     ];
 }

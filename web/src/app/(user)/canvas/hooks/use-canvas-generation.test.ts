@@ -333,6 +333,39 @@ test("retries persisted media references through the stored-image resolver", asy
     assert.equal(calls.edit, 1);
 });
 
+test("retries with the mask snapshot saved by the original generation instead of the source node's current mask", async () => {
+    const submittedMask = { version: 1 as const, strokes: [{ id: "submitted", tool: "paint" as const, radius: 0.1, points: [{ x: 0.2, y: 0.2 }] }] };
+    const source = node("source", CanvasNodeType.Image, { mediaId: "media-source", maskId: "mask-edited-later" });
+    const generated = node("generated", CanvasNodeType.Image, {
+        prompt: "retry this edit",
+        generationType: "edit",
+        references: ["media:media-source:v1:original"],
+        maskId: "mask-at-submission",
+        sourceNodeId: source.id,
+    });
+    let resolvedMaskID = "";
+    let submittedMaskFromRetry: unknown;
+    const { controller, calls } = setup([source, generated], [], {
+        resolveMetadataReferences: undefined,
+        resolveStoredImageReference: async () => "blob:source",
+        resolveMask: (maskId: string) => {
+            resolvedMaskID = maskId;
+            return submittedMask;
+        },
+        requestEdit: async (_config: AiConfig, _prompt: string, references: Array<{ mask?: unknown }>) => {
+            calls.edit++;
+            submittedMaskFromRetry = references[0]?.mask;
+            return completedTask("retried", "media-retried");
+        },
+    });
+
+    await controller.retryNode(generated);
+
+    assert.equal(resolvedMaskID, "mask-at-submission");
+    assert.deepEqual(submittedMaskFromRetry, submittedMask);
+    assert.equal(calls.edit, 1);
+});
+
 test("retries historical batch metadata without copying its obsolete model", async () => {
     const root = JSON.parse(
         '{"id":"root","type":"image","title":"root","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"prompt":"retry this batch","generationType":"edit","model":"root-model","size":"16:9","resolution":"2k","quality":"high","count":3,"references":["data:image/png;base64,reference"],"isBatchRoot":true,"batchChildIds":["child-a","child-b","child-c"],"primaryImageId":"child-a"}}',

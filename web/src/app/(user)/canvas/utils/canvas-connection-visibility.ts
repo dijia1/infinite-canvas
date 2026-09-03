@@ -1,8 +1,13 @@
-import type { Position, ViewportTransform } from "../types";
+import type { CanvasConnection, Position, ViewportTransform } from "../types";
+import { getCanvasViewportBounds, intersectsCanvasViewportBounds } from "./canvas-viewport-bounds";
 
-const CONNECTION_VIEWPORT_PADDING = 240;
+const CONNECTION_VIEWPORT_PADDING = 64;
 
 type ConnectionEndpoint = { position: Position; width: number; height: number };
+
+export function shouldRenderCanvasConnection(connection: CanvasConnection, visibleNodeIds: ReadonlySet<string>, isInteractive = false) {
+    return isInteractive || (visibleNodeIds.has(connection.fromNodeId) && visibleNodeIds.has(connection.toNodeId));
+}
 
 export function isCanvasConnectionNearViewport(from: ConnectionEndpoint, to: ConnectionEndpoint, viewport: ViewportTransform, viewportSize: { width: number; height: number }) {
     const startX = from.position.x + from.width;
@@ -16,12 +21,5 @@ export function isCanvasConnectionNearViewport(from: ConnectionEndpoint, to: Con
         top: Math.min(startY, endY),
         bottom: Math.max(startY, endY),
     };
-    const viewportBounds = {
-        left: -viewport.x / viewport.k - CONNECTION_VIEWPORT_PADDING,
-        top: -viewport.y / viewport.k - CONNECTION_VIEWPORT_PADDING,
-        right: (-viewport.x + viewportSize.width) / viewport.k + CONNECTION_VIEWPORT_PADDING,
-        bottom: (-viewport.y + viewportSize.height) / viewport.k + CONNECTION_VIEWPORT_PADDING,
-    };
-
-    return bounds.right >= viewportBounds.left && bounds.left <= viewportBounds.right && bounds.bottom >= viewportBounds.top && bounds.top <= viewportBounds.bottom;
+    return intersectsCanvasViewportBounds(bounds, getCanvasViewportBounds(viewport, viewportSize, CONNECTION_VIEWPORT_PADDING));
 }
