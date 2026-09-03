@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 
 import type { ViewportTransform } from "../types";
-import { buildCanvasViewportDebugSnapshot, isCanvasViewportDebugEnabled } from "../utils/canvas-viewport-debug";
+import { buildCanvasViewportDebugSnapshot, isCanvasViewportDebugEnabled, type CanvasViewportDebugNode } from "../utils/canvas-viewport-debug";
 
 type CanvasViewportDebugSnapshot = ReturnType<typeof buildCanvasViewportDebugSnapshot>;
 
@@ -12,18 +12,21 @@ type CanvasViewportDebugOverlayProps = {
     sceneRef: RefObject<HTMLDivElement | null>;
     sceneViewportRef: RefObject<ViewportTransform>;
     cullingViewport: ViewportTransform;
+    selectedNode?: CanvasViewportDebugNode | null;
 };
 
 function format(value: number) {
     return Math.round(value * 10) / 10;
 }
 
-export function CanvasViewportDebugOverlay({ containerRef, sceneRef, sceneViewportRef, cullingViewport }: CanvasViewportDebugOverlayProps) {
+export function CanvasViewportDebugOverlay({ containerRef, sceneRef, sceneViewportRef, cullingViewport, selectedNode }: CanvasViewportDebugOverlayProps) {
     const [enabled, setEnabled] = useState(false);
     const [snapshot, setSnapshot] = useState<CanvasViewportDebugSnapshot | null>(null);
     const cullingViewportRef = useRef(cullingViewport);
+    const selectedNodeRef = useRef(selectedNode);
 
     cullingViewportRef.current = cullingViewport;
+    selectedNodeRef.current = selectedNode;
 
     useEffect(() => {
         setEnabled(isCanvasViewportDebugEnabled());
@@ -45,6 +48,7 @@ export function CanvasViewportDebugOverlay({ containerRef, sceneRef, sceneViewpo
                     viewportSize: { width: rect.width, height: rect.height },
                     renderedNodeCount: scene.querySelectorAll("[data-node-id]").length,
                     renderedConnectionCount: scene.querySelectorAll(":scope > svg path").length,
+                    selectedNode: selectedNodeRef.current,
                 }),
             );
         };
@@ -62,8 +66,16 @@ export function CanvasViewportDebugOverlay({ containerRef, sceneRef, sceneViewpo
             <div>scene: {format(snapshot.sceneViewport.x)}, {format(snapshot.sceneViewport.y)} · {format(snapshot.sceneViewport.k * 100)}%</div>
             <div>cull: {format(snapshot.cullingViewport.x)}, {format(snapshot.cullingViewport.y)} · {format(snapshot.cullingViewport.k * 100)}%</div>
             <div>drift: {format(snapshot.drift.x)}, {format(snapshot.drift.y)} · {format(snapshot.drift.scalePercent)}%</div>
+            <div>canvas: {format(snapshot.viewportSize.width)} × {format(snapshot.viewportSize.height)} px</div>
             <div>bounds: {format(snapshot.cullingBounds.left)}, {format(snapshot.cullingBounds.top)} → {format(snapshot.cullingBounds.right)}, {format(snapshot.cullingBounds.bottom)}</div>
             <div>padding: {snapshot.screenPadding}px · nodes: {snapshot.renderedNodeCount} · paths: {snapshot.renderedConnectionCount}</div>
+            {snapshot.selectedNode ? (
+                <>
+                    <div>node: {snapshot.selectedNode.id}</div>
+                    <div>node rect: {format(snapshot.selectedNode.screenBounds.left)}, {format(snapshot.selectedNode.screenBounds.top)} → {format(snapshot.selectedNode.screenBounds.right)}, {format(snapshot.selectedNode.screenBounds.bottom)}</div>
+                    <div>node edge: L {format(snapshot.selectedNode.edgeDistance.left)} · R {format(snapshot.selectedNode.edgeDistance.right)} · T {format(snapshot.selectedNode.edgeDistance.top)} · B {format(snapshot.selectedNode.edgeDistance.bottom)}</div>
+                </>
+            ) : null}
         </aside>
     );
 }

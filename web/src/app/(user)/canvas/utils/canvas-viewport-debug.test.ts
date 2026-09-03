@@ -19,6 +19,28 @@ test("reports actual scene drift separately from the 64px culling bounds", () =>
     assert.equal(snapshot.screenPadding, 64);
 });
 
+test("reports a selected node's canvas-relative screen edges", () => {
+    const snapshot = buildCanvasViewportDebugSnapshot({
+        sceneViewport: { x: -100, y: 20, k: 0.5 },
+        cullingViewport: { x: -100, y: 20, k: 0.5 },
+        viewportSize: { width: 1000, height: 500 },
+        renderedNodeCount: 1,
+        renderedConnectionCount: 0,
+        selectedNode: {
+            id: "selected-image",
+            position: { x: 500, y: 400 },
+            width: 200,
+            height: 100,
+        },
+    });
+
+    assert.deepEqual(snapshot.selectedNode, {
+        id: "selected-image",
+        screenBounds: { left: 150, top: 220, right: 250, bottom: 270 },
+        edgeDistance: { left: 150, top: 220, right: 750, bottom: 230 },
+    });
+});
+
 test("only enables the viewport overlay on localhost with the explicit query flag", () => {
     assert.equal(isLocalCanvasViewportDebugEnabled({ hostname: "127.0.0.1", search: "?canvas-debug=1" }), true);
     assert.equal(isLocalCanvasViewportDebugEnabled({ hostname: "localhost", search: "?canvas-debug=1&foo=bar" }), true);

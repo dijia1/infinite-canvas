@@ -7,12 +7,20 @@ type CanvasViewportSize = {
     height: number;
 };
 
+export type CanvasViewportDebugNode = {
+    id: string;
+    position: { x: number; y: number };
+    width: number;
+    height: number;
+};
+
 type CanvasViewportDebugInput = {
     sceneViewport: ViewportTransform;
     cullingViewport: ViewportTransform;
     viewportSize: CanvasViewportSize;
     renderedNodeCount: number;
     renderedConnectionCount: number;
+    selectedNode?: CanvasViewportDebugNode | null;
 };
 
 export function isLocalCanvasViewportDebugEnabled(location: Pick<Location, "hostname" | "search">) {
@@ -24,10 +32,20 @@ export function isCanvasViewportDebugEnabled() {
     return typeof window !== "undefined" && isLocalCanvasViewportDebugEnabled(window.location);
 }
 
-export function buildCanvasViewportDebugSnapshot({ sceneViewport, cullingViewport, viewportSize, renderedNodeCount, renderedConnectionCount }: CanvasViewportDebugInput) {
+export function buildCanvasViewportDebugSnapshot({ sceneViewport, cullingViewport, viewportSize, renderedNodeCount, renderedConnectionCount, selectedNode }: CanvasViewportDebugInput) {
+    const selectedNodeScreenBounds = selectedNode
+        ? {
+              left: selectedNode.position.x * sceneViewport.k + sceneViewport.x,
+              top: selectedNode.position.y * sceneViewport.k + sceneViewport.y,
+              right: (selectedNode.position.x + selectedNode.width) * sceneViewport.k + sceneViewport.x,
+              bottom: (selectedNode.position.y + selectedNode.height) * sceneViewport.k + sceneViewport.y,
+          }
+        : null;
+
     return {
         sceneViewport,
         cullingViewport,
+        viewportSize,
         cullingBounds: getCanvasViewportBounds(cullingViewport, viewportSize, CANVAS_NODE_RENDER_PADDING),
         drift: {
             x: sceneViewport.x - cullingViewport.x,
@@ -37,5 +55,17 @@ export function buildCanvasViewportDebugSnapshot({ sceneViewport, cullingViewpor
         screenPadding: CANVAS_NODE_RENDER_PADDING,
         renderedNodeCount,
         renderedConnectionCount,
+        selectedNode: selectedNode && selectedNodeScreenBounds
+            ? {
+                  id: selectedNode.id,
+                  screenBounds: selectedNodeScreenBounds,
+                  edgeDistance: {
+                      left: selectedNodeScreenBounds.left,
+                      top: selectedNodeScreenBounds.top,
+                      right: viewportSize.width - selectedNodeScreenBounds.right,
+                      bottom: viewportSize.height - selectedNodeScreenBounds.bottom,
+                  },
+              }
+            : null,
     };
 }

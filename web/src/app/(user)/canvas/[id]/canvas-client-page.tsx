@@ -29,6 +29,7 @@ import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canvas-file-drop";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
+import { getCanvasViewportSize } from "../utils/canvas-viewport-size";
 import { App, Button, Dropdown, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
@@ -597,10 +598,9 @@ function InfiniteCanvasPage() {
         }, 120);
     }, []);
 
-    const canvasViewportSize = useMemo(() => {
-        const rect = containerRef.current?.getBoundingClientRect();
-        return { width: rect?.width || size.width, height: rect?.height || size.height };
-    }, [size.height, size.width]);
+    // The canvas can move between displays without ResizeObserver delivering before the next pan commit.
+    // Read the element's current size when culling runs so the fallback cannot truncate a larger viewport.
+    const canvasViewportSize = getCanvasViewportSize(containerRef.current, size);
     const visibleNodes = useMemo(
         () => nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize)),
         [canvasViewportSize, collapsingBatchIds, nodes, viewport.k, viewport.x, viewport.y],
@@ -715,6 +715,7 @@ function InfiniteCanvasPage() {
 		return selectedDownloadableImageNodes(nodes, ids);
 	}, [contextMenu, nodes, selectedNodeIds]);
     const activeNodeId = hasMultipleSelectedNodes ? null : hoveredNodeId || (selectedNodeIds.size === 1 ? Array.from(selectedNodeIds)[0] : null);
+    const debugSelectedNode = activeNodeId ? nodeById.get(activeNodeId) || null : null;
     const batchChildCountById = useMemo(() => {
         const map = new Map<string, number>();
         nodes.forEach((node) => {
@@ -1778,6 +1779,7 @@ function InfiniteCanvasPage() {
                     onCanvasDeselect={deselectCanvas}
                     onContextMenu={preventCanvasContextMenu}
                     onDrop={handleDrop}
+                    debugSelectedNode={debugSelectedNode}
                 >
                     <svg className="absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible" style={{ pointerEvents: "none", transform: "translateZ(0)", zIndex: 0 }}>
                         {overviewConnectionPath ? <path d={overviewConnectionPath} stroke={theme.node.muted} strokeWidth={2} strokeOpacity={0.82} fill="none" style={{ pointerEvents: "none" }} /> : null}

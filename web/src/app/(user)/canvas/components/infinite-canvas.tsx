@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import type { ViewportTransform } from "../types";
+import type { CanvasNodeData, ViewportTransform } from "../types";
 import { createCanvasViewportCommitScheduler } from "../utils/canvas-viewport-commit-scheduler";
 import { CanvasViewportDebugOverlay } from "./canvas-viewport-debug-overlay";
 
@@ -18,6 +18,7 @@ type InfiniteCanvasProps = {
     onCanvasDeselect?: () => void;
     onContextMenu?: (event: React.MouseEvent) => void;
     onDrop?: (event: React.DragEvent<HTMLDivElement>) => void;
+    debugSelectedNode?: CanvasNodeData | null;
     children: React.ReactNode;
 };
 
@@ -37,7 +38,7 @@ export function finishCanvasPan(state: CanvasPanState, onCanvasDeselect?: () => 
     return true;
 }
 
-export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, children }: InfiniteCanvasProps) {
+export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, debugSelectedNode, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef<CanvasPanState>({
         isPanning: false,
@@ -276,7 +277,7 @@ export function InfiniteCanvas({ containerRef, viewport, cursor, backgroundMode 
             >
                 {children}
             </div>
-            <CanvasViewportDebugOverlay containerRef={containerRef} sceneRef={sceneRef} sceneViewportRef={viewportRef} cullingViewport={viewport} />
+            <CanvasViewportDebugOverlay containerRef={containerRef} sceneRef={sceneRef} sceneViewportRef={viewportRef} cullingViewport={viewport} selectedNode={debugSelectedNode} />
         </div>
     );
 }
