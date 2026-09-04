@@ -86,3 +86,36 @@ test("aborts a running load only after its final consumer releases", async () =>
     await assert.rejects(second.promise, { name: "AbortError" });
     assert.equal(aborted, true);
 });
+
+test("starts a fresh same-key load when an aborted producer is immediately requested again", async () => {
+    const queue = createCanvasMediaLoadQueue({ concurrency: 1 });
+    const started = deferred<void>();
+    let loadCalls = 0;
+    const first = queue.request({
+        key: "media:a:original",
+        priority: "visible-original",
+        load: (signal) => {
+            loadCalls += 1;
+            started.resolve();
+            return new Promise<string>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+            });
+        },
+    });
+    await started.promise;
+
+    const firstRejected = assert.rejects(first.promise, { name: "AbortError" });
+    first.release();
+    const replacement = queue.request({
+        key: "media:a:original",
+        priority: "visible-original",
+        load: async () => {
+            loadCalls += 1;
+            return "fresh-original";
+        },
+    });
+
+    await firstRejected;
+    assert.equal(await replacement.promise, "fresh-original");
+    assert.equal(loadCalls, 2);
+});

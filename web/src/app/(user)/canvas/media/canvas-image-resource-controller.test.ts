@@ -136,3 +136,34 @@ test("does not release a shared Object URL until every canvas node stops using i
     controller.reconcile([]);
     assert.deepEqual(released, ["media:one:v1:thumbnail"]);
 });
+
+test("promotes back to the original after a rapid thumbnail/original reversal", async () => {
+    let originalCalls = 0;
+    const controller = createCanvasImageResourceController({
+        queue: createCanvasMediaLoadQueue({ concurrency: 1 }),
+        releaseObjectURL: () => undefined,
+        deferRelease: (release) => release(),
+    });
+    const loaders = {
+        thumbnail: async () => image("thumbnail"),
+        original: (signal: AbortSignal) => {
+            originalCalls += 1;
+            if (originalCalls > 1) return Promise.resolve(image("original"));
+            return new Promise<UploadedImage>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+            });
+        },
+    };
+
+    controller.reconcile([request("thumbnail", loaders)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.reconcile([request("original", loaders)]);
+    await Promise.resolve();
+    controller.reconcile([request("thumbnail", loaders)]);
+    controller.reconcile([request("original", loaders)]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.equal(controller.get("node-1")?.variant, "original");
+    assert.equal(originalCalls, 2);
+});

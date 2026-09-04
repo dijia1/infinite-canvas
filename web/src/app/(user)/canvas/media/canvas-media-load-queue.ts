@@ -107,6 +107,9 @@ export function createCanvasMediaLoadQueue({ concurrency = 4 }: { concurrency?: 
             if (items.get(item.key) === item) items.delete(item.key);
             return;
         }
+        // A replacement request must not join the producer that this final
+        // consumer just aborted while it is still settling.
+        if (items.get(item.key) === item) items.delete(item.key);
         item.controller.abort();
     };
 

@@ -256,6 +256,31 @@ test("aborting an original remote load leaves IndexedDB unchanged", async () => 
     assert.equal(await store.getItem(imageStorageKeyForMedia("abort-media")), null);
 });
 
+test("a fresh original request does not inherit an aborted cache load", async () => {
+    const cancelled = new AbortController();
+    const fresh = new AbortController();
+    let remoteCalls = 0;
+    const { operations } = createTestOperations({
+        fetchImageBlob: async (_url, options) => {
+            remoteCalls += 1;
+            if (remoteCalls > 1) return new Blob(["fresh"], { type: "image/png" });
+            return new Promise<Blob>((_resolve, reject) => {
+                options?.signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+            });
+        },
+    });
+
+    const first = operations.loadMediaImage("abort-then-restart", "https://oss.example/original.png", { signal: cancelled.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstRejected = assert.rejects(first, { name: "AbortError" });
+    cancelled.abort();
+    const replacement = operations.loadMediaImage("abort-then-restart", "https://oss.example/original.png", { signal: fresh.signal });
+
+    await firstRejected;
+    assert.equal((await replacement).storageKey, imageStorageKeyForMedia("abort-then-restart"));
+    assert.equal(remoteCalls, 2);
+});
+
 test("an aborted 403 request does not ask for a fresh signed URL", async () => {
     const controller = new AbortController();
     let accessRequests = 0;

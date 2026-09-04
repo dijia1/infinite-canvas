@@ -128,3 +128,30 @@ test("coalesceMediaLoad releases a rejected load so a later request can retry", 
     assert.equal(await coalesceMediaLoad("preview:media-retry", load), "blob:retry-success");
     assert.equal(attempts, 2);
 });
+
+test("coalesceMediaLoad does not share an already aborted producer with a fresh request", async () => {
+    const cancelled = new AbortController();
+    const fresh = new AbortController();
+    let loadCalls = 0;
+    const first = coalesceMediaLoad(
+        "original:media-restart",
+        () => {
+            loadCalls += 1;
+            return new Promise<string>((_resolve, reject) => {
+                cancelled.signal.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+            });
+        },
+        { signal: cancelled.signal },
+    );
+    const firstRejected = assert.rejects(first, { name: "AbortError" });
+    cancelled.abort();
+
+    const replacement = coalesceMediaLoad("original:media-restart", async () => {
+        loadCalls += 1;
+        return "blob:fresh-original";
+    }, { signal: fresh.signal });
+
+    await firstRejected;
+    assert.equal(await replacement, "blob:fresh-original");
+    assert.equal(loadCalls, 2);
+});

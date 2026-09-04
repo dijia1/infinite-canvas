@@ -499,7 +499,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             } finally {
                 finish();
             }
-        });
+        }, { signal: loadOptions.signal });
     };
 
     const loadMediaThumbnail = (mediaId: string, remoteThumbnailURL: RemoteMediaURL, loadOptions: MediaLoadOptions = {}) => {
@@ -565,7 +565,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
                 finish();
                 scheduleCacheBudgetEnforcement();
             }
-        });
+        }, { signal: loadOptions.signal });
     };
 
     const storeImage = async (input: string | Blob, storageKey: string, mediaId?: string) => {
