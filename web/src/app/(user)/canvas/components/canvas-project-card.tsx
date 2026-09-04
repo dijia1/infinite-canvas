@@ -10,6 +10,7 @@ import { useCanvasStore, type CanvasProject } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 import { CanvasShareDialog } from "./canvas-share-dialog";
 import { CanvasSyncFeedback } from "./canvas-sync-feedback";
+import { hasLocalImageUploads } from "../utils/canvas-local-image-upload";
 
 export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const { message } = App.useApp();
@@ -26,7 +27,9 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
     const [shareOpen, setShareOpen] = useState(false);
     const editing = editingId === project.id;
     const shareRevision = typeof projectSync?.serverRevision === "number" ? projectSync.serverRevision : null;
-    const shareable = shareRevision !== null && !projectSync?.dirty && !projectSync?.pending && !projectSync?.saving && !projectSync?.conflict;
+    const hasPendingLocalImages = hasLocalImageUploads(project.nodes);
+    const shareable = shareRevision !== null && !projectSync?.dirty && !projectSync?.pending && !projectSync?.saving && !projectSync?.conflict && !hasPendingLocalImages;
+    const shareDisabledReason = hasPendingLocalImages ? "请等待本地图片上传完成后再分享" : "等待画布保存后再分享";
     const open = () => router.push(appPath(`/canvas/${project.id}`));
     const saveTitle = () => {
         renameProject(project.id, editingTitle);
@@ -71,7 +74,7 @@ export function CanvasProjectCard({ project }: { project: CanvasProject }) {
                     ) : (
                         <>
                             <Button type="text" size="small" shape="circle" icon={<Copy className="size-4" />} onClick={duplicate} aria-label="复制画布" />
-                            <Button type="text" size="small" shape="circle" icon={<Share2 className="size-4" />} disabled={!shareable} title={shareable ? "分享画布" : "等待画布保存后再分享"} onClick={() => setShareOpen(true)} aria-label="分享画布" />
+                            <Button type="text" size="small" shape="circle" icon={<Share2 className="size-4" />} disabled={!shareable} title={shareable ? "分享画布" : shareDisabledReason} onClick={() => setShareOpen(true)} aria-label="分享画布" />
                             <Button type="text" size="small" shape="circle" icon={<Pencil className="size-4" />} onClick={() => startEditing(project.id, project.title)} aria-label="重命名" />
                             <Button type="text" size="small" shape="circle" icon={<Trash2 className="size-4" />} onClick={() => setDeleteIds([project.id])} aria-label="删除" />
                         </>

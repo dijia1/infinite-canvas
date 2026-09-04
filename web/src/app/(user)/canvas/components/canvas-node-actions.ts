@@ -6,7 +6,7 @@ export type CanvasImageNodeWithContent = CanvasNodeData & {
 };
 
 export function canSaveNodeAsAsset(node: CanvasNodeData): node is CanvasImageNodeWithContent {
-    return node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
+    return node.type === CanvasNodeType.Image && !node.metadata?.localUploadState && Boolean(node.metadata?.content);
 }
 
 export function canOpenNodeGenerationDialog(node: CanvasNodeData) {

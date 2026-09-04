@@ -20,7 +20,17 @@ type imageStore interface {
 	Get(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
 	SignedURL(context.Context, string, string) (string, time.Time, error)
+	PresignPut(context.Context, string, string) (string, time.Time, error)
+	Head(context.Context, string) (imageObjectMetadata, error)
+	ReadPrefix(context.Context, string, int64) ([]byte, error)
 }
+
+type imageObjectMetadata struct {
+	ContentType string
+	Bytes       int64
+}
+
+var errDirectUploadUnsupported = errors.New("当前存储不支持浏览器直传")
 
 type localImageStore struct{ directory string }
 
@@ -42,6 +52,24 @@ func (store localImageStore) Delete(_ context.Context, key string) error {
 }
 func (store localImageStore) SignedURL(_ context.Context, key, _ string) (string, time.Time, error) {
 	return "/api/v1/media/local?key=" + key, time.Time{}, nil
+}
+func (store localImageStore) PresignPut(context.Context, string, string) (string, time.Time, error) {
+	return "", time.Time{}, errDirectUploadUnsupported
+}
+func (store localImageStore) Head(_ context.Context, key string) (imageObjectMetadata, error) {
+	info, err := os.Stat(store.path(key))
+	if err != nil {
+		return imageObjectMetadata{}, err
+	}
+	return imageObjectMetadata{Bytes: info.Size()}, nil
+}
+func (store localImageStore) ReadPrefix(_ context.Context, key string, bytes int64) ([]byte, error) {
+	file, err := store.Open(key)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, bytes))
 }
 func (store localImageStore) Open(key string) (io.ReadCloser, error) { return os.Open(store.path(key)) }
 
@@ -76,6 +104,35 @@ func (store *ossImageStore) SignedURL(ctx context.Context, key, process string) 
 		return "", time.Time{}, err
 	}
 	return result.URL, result.Expiration, nil
+}
+
+func (store *ossImageStore) PresignPut(ctx context.Context, key, contentType string) (string, time.Time, error) {
+	result, err := store.public.Presign(ctx, &oss.PutObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), ContentType: oss.Ptr(contentType)}, oss.PresignExpires(store.ttl))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return result.URL, result.Expiration, nil
+}
+
+func (store *ossImageStore) Head(ctx context.Context, key string) (imageObjectMetadata, error) {
+	result, err := store.internal.HeadObject(ctx, &oss.HeadObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)})
+	if err != nil {
+		return imageObjectMetadata{}, err
+	}
+	return imageObjectMetadata{ContentType: strings.TrimSpace(oss.ToString(result.ContentType)), Bytes: result.ContentLength}, nil
+}
+
+func (store *ossImageStore) ReadPrefix(ctx context.Context, key string, bytes int64) ([]byte, error) {
+	if bytes <= 0 {
+		return nil, nil
+	}
+	rangeHeader := oss.HTTPRange{Offset: 0, Count: bytes}.FormatHTTPRange()
+	result, err := store.internal.GetObject(ctx, &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), Range: rangeHeader})
+	if err != nil {
+		return nil, err
+	}
+	defer result.Body.Close()
+	return io.ReadAll(io.LimitReader(result.Body, bytes))
 }
 
 func newImageStore() (imageStore, error) {

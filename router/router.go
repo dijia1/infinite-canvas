@@ -36,6 +36,8 @@ func New() *gin.Engine {
 	v1.GET("/images/tasks/:id", func(c *gin.Context) { handler.AIImageTask(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/images/tasks/by-client-request/:id", func(c *gin.Context) { handler.AIImageTaskByClientRequest(c.Writer, c.Request, c.Param("id")) })
 	v1.POST("/media/images", gin.WrapF(handler.UploadImage))
+	v1.POST("/media/upload-intents", gin.WrapF(handler.CreateMediaUploadIntent))
+	v1.POST("/media/upload-intents/:id/complete", func(c *gin.Context) { handler.CompleteMediaUploadIntent(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/media/:id/access", func(c *gin.Context) { handler.MediaAccess(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/media/:id/content", func(c *gin.Context) { handler.LocalMediaContent(c.Writer, c.Request, c.Param("id")) })
 	v1.DELETE("/media/:id", func(c *gin.Context) { handler.DeletePrivateMedia(c.Writer, c.Request, c.Param("id")) })

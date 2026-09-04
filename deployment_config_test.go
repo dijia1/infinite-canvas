@@ -26,6 +26,9 @@ func TestProductionComposeUsesPortalNetworksAndHealthcheck(t *testing.T) {
 		"portal_directory:",
 		"fetch('http://127.0.0.1:3000/api/healthz')",
 		"\"node\", \"-e\"",
+		"driver: json-file",
+		"max-size: \"20m\"",
+		"max-file: \"5\"",
 	} {
 		if !strings.Contains(compose, expected) {
 			t.Fatalf("production compose missing %q", expected)
@@ -44,6 +47,9 @@ func TestLocalComposeJoinsPortalNetworks(t *testing.T) {
 		"portal_gateway:",
 		"internal_tools_database:",
 		"portal_directory:",
+		"driver: json-file",
+		"max-size: \"20m\"",
+		"max-file: \"5\"",
 	} {
 		if !strings.Contains(compose, expected) {
 			t.Fatalf("local compose missing %q", expected)

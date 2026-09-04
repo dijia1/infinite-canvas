@@ -27,6 +27,7 @@ import (
 
 const maxMediaBytes = 50 << 20
 const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
+const mediaUploadIntentTTL = 15 * time.Minute
 
 type MediaAccess struct {
 	MediaID        string     `json:"mediaId"`
@@ -38,6 +39,20 @@ type MediaAccess struct {
 	Bytes          int64      `json:"bytes"`
 	Width          int        `json:"width"`
 	Height         int        `json:"height"`
+}
+
+type MediaUploadIntentInput struct {
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	Bytes       int64  `json:"bytes"`
+	Intent      string `json:"intent"`
+}
+
+type MediaUploadIntentView struct {
+	Mode      string    `json:"mode"`
+	ID        string    `json:"id,omitempty"`
+	UploadURL string    `json:"uploadUrl,omitempty"`
+	ExpiresAt time.Time `json:"expiresAt,omitempty"`
 }
 
 func privateImageObjectKey(userUID string, source model.MediaSource, extension string, now time.Time) string {
@@ -75,6 +90,130 @@ func SaveUploadedImage(ctx context.Context, user PortalUser, filename, contentTy
 		return MediaAccess{}, err
 	}
 	return saveImage(ctx, user, source, filename, contentType, data, false)
+}
+
+func CreateMediaUploadIntent(ctx context.Context, user PortalUser, input MediaUploadIntentInput) (MediaUploadIntentView, error) {
+	if user.UID == "" {
+		return MediaUploadIntentView{}, errors.New("未经过 Portal Gateway 身份验证")
+	}
+	source, filename, extension, err := validateMediaUploadIntentInput(input)
+	if err != nil {
+		return MediaUploadIntentView{}, err
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return MediaUploadIntentView{}, err
+	}
+	if _, unsupported := store.(localImageStore); unsupported {
+		return MediaUploadIntentView{Mode: "proxy"}, nil
+	}
+	createdAt := time.Now().UTC()
+	expiresAt := createdAt.Add(mediaUploadIntentTTL)
+	item := model.MediaUploadIntent{
+		ID:            newID("media-upload"),
+		OwnerUID:      user.UID,
+		ObjectKey:     privateImageObjectKey(user.UID, source, extension, createdAt),
+		Filename:      filename,
+		ContentType:   normalizedImageContentType(input.ContentType),
+		ExpectedBytes: input.Bytes,
+		Intent:        strings.TrimSpace(input.Intent),
+		ExpiresAt:     expiresAt.Format(time.RFC3339Nano),
+		CreatedAt:     createdAt.Format(time.RFC3339Nano),
+	}
+	if err := repository.SaveMediaUploadIntent(item); err != nil {
+		return MediaUploadIntentView{}, err
+	}
+	uploadURL, signedExpiry, err := store.PresignPut(ctx, item.ObjectKey, item.ContentType)
+	if err != nil {
+		_ = repository.DeleteMediaUploadIntent(item.ID)
+		return MediaUploadIntentView{}, fmt.Errorf("生成上传地址失败: %w", err)
+	}
+	return MediaUploadIntentView{Mode: "direct", ID: item.ID, UploadURL: uploadURL, ExpiresAt: signedExpiry}, nil
+}
+
+func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) (MediaAccess, bool, error) {
+	if user.UID == "" {
+		return MediaAccess{}, false, errors.New("未经过 Portal Gateway 身份验证")
+	}
+	intent, found, err := repository.GetMediaUploadIntentForOwner(id, user.UID)
+	if err != nil {
+		return MediaAccess{}, false, err
+	}
+	if !found {
+		return MediaAccess{}, false, safeMessageError{message: "上传请求不存在"}
+	}
+	if intent.CompletedMediaID != "" {
+		access, err := MediaAccessURL(ctx, user, intent.CompletedMediaID)
+		return access, false, err
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, intent.ExpiresAt)
+	if err != nil || !time.Now().UTC().Before(expiresAt) {
+		return MediaAccess{}, false, safeMessageError{message: "上传请求已过期，请重新选择图片"}
+	}
+	store, err := newImageStore()
+	if err != nil {
+		return MediaAccess{}, false, err
+	}
+	metadata, err := store.Head(ctx, intent.ObjectKey)
+	if err != nil {
+		return MediaAccess{}, false, safeMessageError{message: "图片尚未上传完成，请稍后重试"}
+	}
+	if metadata.Bytes != intent.ExpectedBytes || normalizedImageContentType(metadata.ContentType) != intent.ContentType {
+		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
+	}
+	prefix, err := store.ReadPrefix(ctx, intent.ObjectKey, 512)
+	if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
+		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
+	}
+	completedAt := time.Now().UTC()
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: model.MediaSourceUpload, ObjectKey: intent.ObjectKey, ContentType: intent.ContentType, Bytes: intent.ExpectedBytes, Filename: intent.Filename, Title: strings.TrimSuffix(intent.Filename, filepath.Ext(intent.Filename)), CreatedAt: completedAt.Format(time.RFC3339)}
+	updatedIntent, media, created, err := repository.FinalizeMediaUploadIntent(intent.ID, user.UID, completedAt.Format(time.RFC3339Nano), item)
+	if err != nil {
+		return MediaAccess{}, false, err
+	}
+	if updatedIntent.ID == "" {
+		return MediaAccess{}, false, safeMessageError{message: "上传请求不存在"}
+	}
+	if !created && media.ID == "" {
+		return MediaAccess{}, false, safeMessageError{message: "上传请求已过期，请重新选择图片"}
+	}
+	access, err := mediaAccess(ctx, store, media)
+	return access, created, err
+}
+
+func validateMediaUploadIntentInput(input MediaUploadIntentInput) (model.MediaSource, string, string, error) {
+	source, err := uploadMediaSource([]string{input.Intent})
+	if err != nil {
+		return "", "", "", err
+	}
+	filename := strings.TrimSpace(filepath.Base(input.Filename))
+	if filename == "" || filename == "." {
+		return "", "", "", safeMessageError{message: "图片文件名无效"}
+	}
+	if input.Bytes <= 0 || input.Bytes > maxMediaBytes {
+		return "", "", "", safeMessageError{message: "图片大小无效"}
+	}
+	contentType := normalizedImageContentType(input.ContentType)
+	extension, ok := mediaUploadExtensions[contentType]
+	if !ok {
+		return "", "", "", safeMessageError{message: "图片格式无效"}
+	}
+	return source, filename, extension, nil
+}
+
+var mediaUploadExtensions = map[string]string{
+	"image/gif":  "gif",
+	"image/jpeg": "jpg",
+	"image/png":  "png",
+	"image/webp": "webp",
+}
+
+func normalizedImageContentType(value string) string {
+	contentType, _, err := mime.ParseMediaType(value)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(contentType))
 }
 
 func uploadMediaSource(intent []string) (model.MediaSource, error) {

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,183 @@ func TestPrivateMediaDeleteRouteIsProtected(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("private media delete route must be registered under /api/v1")
+	}
+}
+
+func TestMediaUploadIntentUsesProxyModeForLocalStorage(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(`{"filename":"canvas.png","contentType":"image/png","bytes":42,"intent":"canvas"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", "local-upload-owner")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"proxy"`) {
+		t.Fatalf("local upload intent = %d/%s", response.Code, response.Body.String())
+	}
+}
+
+func TestMediaUploadIntentRetentionRemovesOnlyExpiredUncompletedRequests(t *testing.T) {
+	current := time.Now().UTC()
+	expired := model.MediaUploadIntent{ID: "expired-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "missing-expired-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
+	completed := model.MediaUploadIntent{ID: "completed-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "completed-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CompletedMediaID: "media-still-audited", CompletedAt: current.Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
+	for _, item := range []model.MediaUploadIntent{expired, completed} {
+		if err := repository.SaveMediaUploadIntent(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.CleanupExpiredMediaUploadIntents(current); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repository.GetMediaUploadIntentForOwner(expired.ID, expired.OwnerUID); err != nil || found {
+		t.Fatalf("expired intent found=%t err=%v", found, err)
+	}
+	if _, found, err := repository.GetMediaUploadIntentForOwner(completed.ID, completed.OwnerUID); err != nil || !found {
+		t.Fatalf("completed intent found=%t err=%v", found, err)
+	}
+}
+
+func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
+	type object struct {
+		body        []byte
+		contentType string
+	}
+	objects := map[string]object{}
+	ossServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.URL.Path, "/")
+		switch r.Method {
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			objects[key] = object{body: body, contentType: r.Header.Get("Content-Type")}
+			w.WriteHeader(http.StatusOK)
+		case http.MethodHead:
+			item, found := objects[key]
+			if !found {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", item.contentType)
+			w.Header().Set("Content-Length", fmt.Sprint(len(item.body)))
+			w.WriteHeader(http.StatusOK)
+		case http.MethodGet:
+			item, found := objects[key]
+			if !found {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", item.contentType)
+			_, _ = w.Write(item.body)
+		case http.MethodDelete:
+			delete(objects, key)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer ossServer.Close()
+	previousConfig := config.Cfg
+	config.Cfg.MediaStorage = "oss"
+	config.Cfg.OSSRegion = "cn-hongkong"
+	config.Cfg.OSSBucket = "test-bucket"
+	config.Cfg.OSSInternalEndpoint = ossServer.URL
+	config.Cfg.OSSPublicEndpoint = ossServer.URL
+	config.Cfg.OSSAccessKeyID = "test-key"
+	config.Cfg.OSSAccessKeySecret = "test-secret"
+	config.Cfg.OSSSignedURLTTL = "15m"
+	t.Cleanup(func() { config.Cfg = previousConfig })
+
+	image, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := "direct-upload-owner"
+	intentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(fmt.Sprintf(`{"filename":"direct.png","contentType":"image/png","bytes":%d,"intent":"library"}`, len(image))))
+	intentRequest.Header.Set("Content-Type", "application/json")
+	intentRequest.Header.Set("X-Portal-User-Uid", owner)
+	intentResponse := httptest.NewRecorder()
+	New().ServeHTTP(intentResponse, intentRequest)
+	var intent struct {
+		Data struct {
+			Mode      string `json:"mode"`
+			ID        string `json:"id"`
+			UploadURL string `json:"uploadUrl"`
+		} `json:"data"`
+	}
+	if intentResponse.Code != http.StatusOK || json.Unmarshal(intentResponse.Body.Bytes(), &intent) != nil || intent.Data.Mode != "direct" || intent.Data.ID == "" || intent.Data.UploadURL == "" {
+		t.Fatalf("direct upload intent = %d/%s", intentResponse.Code, intentResponse.Body.String())
+	}
+	putRequest, err := http.NewRequest(http.MethodPut, intent.Data.UploadURL, bytes.NewReader(image))
+	if err != nil {
+		t.Fatal(err)
+	}
+	putRequest.Header.Set("Content-Type", "image/png")
+	putResponse, err := http.DefaultClient.Do(putRequest)
+	if err != nil || putResponse.StatusCode != http.StatusOK {
+		if putResponse != nil {
+			putResponse.Body.Close()
+		}
+		t.Fatalf("direct OSS put status=%v err=%v", putResponse, err)
+	}
+	putResponse.Body.Close()
+
+	complete := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents/"+intent.Data.ID+"/complete", nil)
+		request.Header.Set("X-Portal-User-Uid", owner)
+		response := httptest.NewRecorder()
+		New().ServeHTTP(response, request)
+		return response
+	}
+	first := complete()
+	second := complete()
+	var firstPayload, secondPayload struct {
+		Data struct {
+			MediaID string `json:"mediaId"`
+		} `json:"data"`
+	}
+	if first.Code != http.StatusOK || second.Code != http.StatusOK || json.Unmarshal(first.Body.Bytes(), &firstPayload) != nil || json.Unmarshal(second.Body.Bytes(), &secondPayload) != nil || firstPayload.Data.MediaID == "" || firstPayload.Data.MediaID != secondPayload.Data.MediaID {
+		t.Fatalf("completion responses = %d/%s and %d/%s", first.Code, first.Body.String(), second.Code, second.Body.String())
+	}
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	if err := database.Model(&model.Media{}).Where("id = ?", firstPayload.Data.MediaID).Count(&count).Error; err != nil || count != 1 {
+		t.Fatalf("completed media count=%d err=%v", count, err)
+	}
+
+	invalidImage := []byte("not an image")
+	invalidIntentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(fmt.Sprintf(`{"filename":"invalid.png","contentType":"image/png","bytes":%d,"intent":"library"}`, len(invalidImage))))
+	invalidIntentRequest.Header.Set("Content-Type", "application/json")
+	invalidIntentRequest.Header.Set("X-Portal-User-Uid", owner)
+	invalidIntentResponse := httptest.NewRecorder()
+	New().ServeHTTP(invalidIntentResponse, invalidIntentRequest)
+	var invalidIntent struct {
+		Data struct {
+			ID        string `json:"id"`
+			UploadURL string `json:"uploadUrl"`
+		} `json:"data"`
+	}
+	if invalidIntentResponse.Code != http.StatusOK || json.Unmarshal(invalidIntentResponse.Body.Bytes(), &invalidIntent) != nil || invalidIntent.Data.ID == "" {
+		t.Fatalf("invalid-image intent = %d/%s", invalidIntentResponse.Code, invalidIntentResponse.Body.String())
+	}
+	invalidPut, err := http.NewRequest(http.MethodPut, invalidIntent.Data.UploadURL, bytes.NewReader(invalidImage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalidPut.Header.Set("Content-Type", "image/png")
+	invalidPutResponse, err := http.DefaultClient.Do(invalidPut)
+	if err != nil || invalidPutResponse.StatusCode != http.StatusOK {
+		if invalidPutResponse != nil {
+			invalidPutResponse.Body.Close()
+		}
+		t.Fatalf("invalid-image OSS put status=%v err=%v", invalidPutResponse, err)
+	}
+	invalidPutResponse.Body.Close()
+	invalidCompleteRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents/"+invalidIntent.Data.ID+"/complete", nil)
+	invalidCompleteRequest.Header.Set("X-Portal-User-Uid", owner)
+	invalidCompleteResponse := httptest.NewRecorder()
+	New().ServeHTTP(invalidCompleteResponse, invalidCompleteRequest)
+	if invalidCompleteResponse.Code == http.StatusOK && strings.Contains(invalidCompleteResponse.Body.String(), `"code":0`) {
+		t.Fatalf("invalid image completion unexpectedly succeeded: %s", invalidCompleteResponse.Body.String())
 	}
 }
 

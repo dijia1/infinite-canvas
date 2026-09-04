@@ -41,6 +41,23 @@ export type ImageGenerationTask = {
     images: GeneratedImage[];
 };
 
+type UserImageUploadData = {
+    mediaId?: string;
+    url?: string;
+    mediaExpiresAt?: string;
+};
+
+type UserImageUploadIntent = {
+    mode?: "direct" | "proxy";
+    id?: string;
+    uploadUrl?: string;
+};
+
+export type UserImageUploadOptions = {
+    onProgress?: (percent: number) => void;
+    signal?: AbortSignal;
+};
+
 export function canUseServerMediaReferences(references: ReferenceImage[]) {
     return references.length > 0 && references.every((reference) => Boolean(reference.mediaId));
 }
@@ -73,13 +90,87 @@ function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
     };
 }
 
-export async function uploadUserImage(file: File, intent: "canvas" | "library" = "library") {
+function uploadAbortedError() {
+    return Object.assign(new Error("上传已取消"), { name: "AbortError" });
+}
+
+async function uploadDirectlyToOSS(uploadURL: string, file: File, options: UserImageUploadOptions) {
+    if (typeof XMLHttpRequest === "undefined") {
+        const response = await fetch(uploadURL, {
+            method: "PUT",
+            body: file,
+            headers: { "Content-Type": file.type },
+            credentials: "omit",
+            signal: options.signal,
+        });
+        if (!response.ok) throw new Error(`上传图片失败：OSS 返回 ${response.status}`);
+        return;
+    }
+
+    await new Promise<void>((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        let settled = false;
+        const finish = (callback: () => void) => {
+            if (settled) return;
+            settled = true;
+            options.signal?.removeEventListener("abort", abort);
+            callback();
+        };
+        const abort = () => request.abort();
+
+        request.open("PUT", uploadURL);
+        request.setRequestHeader("Content-Type", file.type);
+        request.upload.onprogress = (event) => {
+            if (!event.lengthComputable || event.total <= 0) return;
+            options.onProgress?.(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
+        };
+        request.onload = () => finish(() => {
+            if (request.status >= 200 && request.status < 300) resolve();
+            else reject(new Error(`上传图片失败：OSS 返回 ${request.status}`));
+        });
+        request.onerror = () => finish(() => reject(new Error("上传图片失败：无法连接 OSS")));
+        request.onabort = () => finish(() => reject(uploadAbortedError()));
+        if (options.signal?.aborted) {
+            abort();
+            return;
+        }
+        options.signal?.addEventListener("abort", abort, { once: true });
+        request.send(file);
+    });
+}
+
+export async function uploadUserImage(file: File, intent: "canvas" | "library" = "library", options: UserImageUploadOptions = {}) {
+    const uploadIntent = await axios.post<ImageApiResponse & { data?: UserImageUploadIntent }>(aiApiPath("/media/upload-intents"), {
+        filename: file.name,
+        contentType: file.type,
+        bytes: file.size,
+        intent,
+    }, { signal: options.signal });
+    if (uploadIntent.data.code !== 0 || !uploadIntent.data.data?.mode) throw new Error(uploadIntent.data.msg || "申请上传失败");
+    if (uploadIntent.data.data.mode === "direct") {
+        const { id, uploadUrl } = uploadIntent.data.data;
+        if (!id || !uploadUrl) throw new Error("上传服务没有返回有效凭证");
+        await uploadDirectlyToOSS(uploadUrl, file, options);
+        const completed = await axios.post<ImageApiResponse & { data?: UserImageUploadData }>(aiApiPath(`/media/upload-intents/${encodeURIComponent(id)}/complete`));
+        return parseUserImageUpload(completed.data);
+    }
+    if (uploadIntent.data.data.mode !== "proxy") throw new Error("上传服务返回了未知模式");
     const form = new FormData();
     form.set("image", file);
     form.set("intent", intent);
-    const response = await axios.post<ImageApiResponse & { data?: { mediaId?: string; url?: string; mediaExpiresAt?: string } }>(aiApiPath("/media/images"), form);
-    if (response.data.code !== 0 || !response.data.data?.mediaId || !response.data.data.url) throw new Error(response.data.msg || "上传图片失败");
-    return { mediaId: response.data.data.mediaId, url: response.data.data.url, mediaExpiresAt: response.data.data.mediaExpiresAt };
+    const response = await axios.post<ImageApiResponse & { data?: UserImageUploadData }>(aiApiPath("/media/images"), form, {
+        signal: options.signal,
+        onUploadProgress: (event) => {
+            if (!event.total || event.total <= 0) return;
+            options.onProgress?.(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
+        },
+    });
+    return parseUserImageUpload(response.data);
+}
+
+function parseUserImageUpload(payload: ImageApiResponse & { data?: UserImageUploadData }) {
+    if (payload.code !== 0 || !payload.data?.mediaId || !payload.data.url) throw new Error(payload.msg || "上传图片失败");
+    return { mediaId: payload.data.mediaId, url: payload.data.url, mediaExpiresAt: payload.data.mediaExpiresAt };
 }
 
 export async function deleteUserImage(mediaId: string) {

@@ -4,17 +4,9 @@ import (
 	"errors"
 
 	"github.com/basketikun/infinite-canvas/model"
-	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-type ImageGenerationTaskCostSummary struct {
-	ProviderID      string
-	ProviderName    string
-	SuccessfulCalls int
-	Amount          decimal.Decimal
-}
 
 func CreateImageGenerationTask(item model.ImageGenerationTask) (model.ImageGenerationTask, bool, error) {
 	database, err := DB()
@@ -211,21 +203,6 @@ func ListSucceededImageGenerationTasksFinishedBetween(start, end string) ([]mode
 	items := make([]model.ImageGenerationTask, 0)
 	err = database.Where("status = ? AND finished_at >= ? AND finished_at < ?", model.ImageTaskSucceeded, start, end).
 		Order("provider_name asc, provider_id asc, id asc").Find(&items).Error
-	return items, err
-}
-
-func ListSucceededImageGenerationTaskCostSummariesFinishedBetween(start, end string) ([]ImageGenerationTaskCostSummary, error) {
-	database, err := DB()
-	if err != nil {
-		return nil, err
-	}
-	items := make([]ImageGenerationTaskCostSummary, 0)
-	err = database.Model(&model.ImageGenerationTask{}).
-		Select("provider_id, provider_name, COUNT(*) AS successful_calls, COALESCE(SUM(CASE WHEN amount_recorded THEN amount ELSE 0 END), 0) AS amount").
-		Where("status = ? AND finished_at >= ? AND finished_at < ?", model.ImageTaskSucceeded, start, end).
-		Group("provider_id, provider_name").
-		Order("provider_name asc, provider_id asc").
-		Scan(&items).Error
 	return items, err
 }
 

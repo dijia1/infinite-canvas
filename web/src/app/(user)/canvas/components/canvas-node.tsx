@@ -607,6 +607,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             imageStorageKey={props.imageStorageKey}
             imageMask={props.imageMask}
             onImageLoaded={props.onImageLoaded}
+            onRetry={props.onRetry}
         />
     );
 }
@@ -653,6 +654,7 @@ function ImageContent({
     onToggleBatch,
     onSetBatchPrimary,
     onImageLoaded,
+    onRetry,
 }: {
     node: CanvasNodeData;
     imageSource: string;
@@ -666,6 +668,7 @@ function ImageContent({
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
+    onRetry?: (node: CanvasNodeData) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);
@@ -685,6 +688,36 @@ function ImageContent({
                     className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
                 />
                 {imageMask?.strokes.length ? <CanvasImageMaskOverlay mask={imageMask} /> : null}
+                {node.metadata?.localUploadState === "uploading" ? (
+                    <div className="pointer-events-none absolute inset-x-3 bottom-3 z-20 rounded-lg border border-black/15 bg-black/65 px-2.5 py-2 text-white shadow-sm backdrop-blur-sm">
+                        <div className="flex items-center justify-between gap-3 text-[11px] font-medium">
+                            <span>正在上传到素材库</span>
+                            <span>{node.metadata.localUploadProgress ?? 0}%</span>
+                        </div>
+                        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/25">
+                            <div className="h-full rounded-full bg-white transition-[width] duration-200" style={{ width: `${node.metadata.localUploadProgress ?? 0}%` }} />
+                        </div>
+                    </div>
+                ) : null}
+                {node.metadata?.localUploadState === "failed" ? (
+                    <div className="absolute inset-x-3 bottom-3 z-20 flex items-center justify-between gap-2 rounded-lg border border-red-300/70 bg-red-950/85 px-2.5 py-2 text-[11px] text-red-100 shadow-sm backdrop-blur-sm">
+                        <span className="min-w-0 truncate" title={node.metadata.localUploadError || "上传失败"}>
+                            上传失败：{node.metadata.localUploadError || "请重试"}
+                        </span>
+                        <button
+                            type="button"
+                            className="shrink-0 rounded border border-red-100/50 px-1.5 py-0.5 font-medium transition hover:bg-red-50/15"
+                            onClick={(event) => {
+                                event.stopPropagation();
+                                onRetry?.(node);
+                            }}
+                            onMouseDown={(event) => event.stopPropagation()}
+                            onPointerDown={(event) => event.stopPropagation()}
+                        >
+                            重试
+                        </button>
+                    </div>
+                ) : null}
             </div>
             {isBatchRoot ? (
                 <button

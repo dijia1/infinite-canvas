@@ -33,6 +33,15 @@ func (store *memoryTaskInputStore) SignedURL(context.Context, string, string) (s
 func (store *memoryTaskInputStore) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(string(store.objects[key]))), nil
 }
+func (store *memoryTaskInputStore) PresignPut(context.Context, string, string) (string, time.Time, error) {
+	return "", time.Time{}, errDirectUploadUnsupported
+}
+func (store *memoryTaskInputStore) Head(context.Context, string) (imageObjectMetadata, error) {
+	return imageObjectMetadata{}, errDirectUploadUnsupported
+}
+func (store *memoryTaskInputStore) ReadPrefix(context.Context, string, int64) ([]byte, error) {
+	return nil, errDirectUploadUnsupported
+}
 
 func TestImageTaskInputsRoundTripAndDelete(t *testing.T) {
 	store := &memoryTaskInputStore{}

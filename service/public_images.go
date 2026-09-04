@@ -11,7 +11,7 @@ import (
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-func normalizePublicTitle(value string) (string, error) {
+func normalizeMediaTitle(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if length := utf8.RuneCountInString(value); length < 1 || length > 64 {
 		return "", safeMessageError{message: "名称长度应为 1-64 个字符"}
@@ -20,7 +20,7 @@ func normalizePublicTitle(value string) (string, error) {
 }
 
 func CreatePublicFolder(title, parentID string) (model.PublicFolder, error) {
-	name, err := normalizePublicTitle(title)
+	name, err := normalizeMediaTitle(title)
 	if err != nil {
 		return model.PublicFolder{}, err
 	}
@@ -51,7 +51,7 @@ func ListPublicFolders() (model.PublicFolderList, error) {
 }
 
 func RenamePublicFolder(id, title string) (model.PublicFolder, error) {
-	name, err := normalizePublicTitle(title)
+	name, err := normalizeMediaTitle(title)
 	if err != nil {
 		return model.PublicFolder{}, err
 	}
@@ -125,7 +125,7 @@ func SavePublicImage(ctx context.Context, user PortalUser, filename, contentType
 		title = filepath.Base(filename)
 	}
 	var err error
-	title, err = normalizePublicTitle(title)
+	title, err = normalizeMediaTitle(title)
 	if err != nil {
 		return model.PublicImage{}, MediaAccess{}, err
 	}
@@ -178,7 +178,7 @@ func UpdatePublicImage(id string, title *string, folderID *string) (model.Public
 		return model.PublicImage{}, safeMessageError{message: "请提供要更新的名称或文件夹"}
 	}
 	if title != nil {
-		name, err := normalizePublicTitle(*title)
+		name, err := normalizeMediaTitle(*title)
 		if err != nil {
 			return model.PublicImage{}, err
 		}

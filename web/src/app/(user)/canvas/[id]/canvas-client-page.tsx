@@ -6,11 +6,11 @@ import { useParams, useRouter } from "next/navigation";
 import { ImageIcon, Images, List, Menu, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
-import { deleteUserImage, getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
+import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
-import { getRemoteImageAccess, imageStorageKeyForMedia, loadMediaImage, mediaIdFromImageStorageKey, releaseImageObjectURL, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageStorageKeyForMedia, loadMediaImage, mediaIdFromImageStorageKey, promoteImageStorageKey, releaseImageObjectURL, resolveImageUrl, resolveRemoteImage, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { hydrateCanvasImages, imageMetadata } from "@/services/canvas-image-hydration";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
@@ -59,6 +59,8 @@ import { useCanvasInteractions, type PendingConnectionCreate } from "../hooks/us
 import { useCanvasGeneration } from "../hooks/use-canvas-generation";
 import { getCanvasRenderDetail } from "../media/canvas-media-policy";
 import { buildCanvasMediaTargets, useCanvasImageResources } from "../media/use-canvas-image-resources";
+import { createCanvasLocalImageUploadController, type LocalImageUploadIntent } from "../media/canvas-local-image-upload-controller";
+import { isLocalImageUploadNode } from "../utils/canvas-local-image-upload";
 import { logCanvasPerf, useCanvasPerfDebugRegistration, useCanvasPerfRender } from "../utils/canvas-performance-debug";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ContextMenuState, type Position, type ViewportTransform } from "../types";
 
@@ -241,6 +243,7 @@ function InfiniteCanvasPage() {
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingCanvasImageHydrationIdsRef = useRef<Set<string>>(new Set());
     const renderedLegacyCanvasImageStorageByIdRef = useRef<Map<string, string>>(new Map());
+    const resumedLocalUploadKeysRef = useRef<Set<string>>(new Set());
 
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
@@ -321,6 +324,119 @@ function InfiniteCanvasPage() {
         return (await loadMediaImage(mediaId, async () => resolveRemoteImage(mediaId))).url;
     }, []);
 
+    const localImageUploadController = useMemo(
+        () =>
+            createCanvasLocalImageUploadController({
+                upload: uploadUserImage,
+                promote: promoteImageStorageKey,
+                onProgress: (nodeId, progress) => {
+                    setNodes((current) =>
+                        current.map((node) =>
+                            isLocalImageUploadNode(node) && node.id === nodeId && node.metadata?.localUploadState === "uploading"
+                                ? { ...node, metadata: { ...node.metadata, localUploadProgress: Math.max(0, Math.min(100, Math.round(progress))) } }
+                                : node,
+                        ),
+                    );
+                },
+                onCompleted: (nodeId, image, remote) => {
+                    setNodes((current) =>
+                        current.map((node) =>
+                            isLocalImageUploadNode(node) && node.id === nodeId
+                                ? {
+                                      ...node,
+                                      metadata: {
+                                          ...node.metadata,
+                                          ...imageMetadata({ ...image, mediaExpiresAt: remote.mediaExpiresAt }),
+                                          localUploadState: undefined,
+                                          localUploadProgress: undefined,
+                                          localUploadError: undefined,
+                                          localUploadIntent: undefined,
+                                      },
+                                  }
+                                : node,
+                        ),
+                    );
+                    void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+                },
+                onFailed: (nodeId, error) => {
+                    setNodes((current) =>
+                        current.map((node) =>
+                            isLocalImageUploadNode(node) && node.id === nodeId
+                                ? {
+                                      ...node,
+                                      metadata: {
+                                          ...node.metadata,
+                                          status: NODE_STATUS_SUCCESS,
+                                          errorDetails: undefined,
+                                          localUploadState: "failed",
+                                          localUploadProgress: undefined,
+                                          localUploadError: error,
+                                      },
+                                  }
+                                : node,
+                        ),
+                    );
+                },
+            }),
+        [],
+    );
+
+    useEffect(() => () => localImageUploadController.dispose(), [localImageUploadController]);
+
+    const startLocalImageUpload = useCallback(
+        (nodeId: string, file: File, image: UploadedImage, intent: LocalImageUploadIntent) => {
+            void localImageUploadController.start({ nodeId, file, image, intent });
+        },
+        [localImageUploadController],
+    );
+
+    const markLocalImageUploadFailed = useCallback((nodeId: string, error: string) => {
+        setNodes((current) =>
+            current.map((node) =>
+                isLocalImageUploadNode(node) && node.id === nodeId
+                    ? {
+                          ...node,
+                          metadata: {
+                              ...node.metadata,
+                              status: NODE_STATUS_SUCCESS,
+                              errorDetails: undefined,
+                              localUploadState: "failed",
+                              localUploadProgress: undefined,
+                              localUploadError: error,
+                          },
+                      }
+                    : node,
+            ),
+        );
+    }, []);
+
+    const resumeLocalImageUpload = useCallback(
+        async (node: CanvasNodeData) => {
+            if (!isLocalImageUploadNode(node) || !node.metadata?.storageKey) return;
+            const blob = await getImageBlob(node.metadata.storageKey);
+            if (!blob) {
+                markLocalImageUploadFailed(node.id, "本地图片缓存已丢失，无法继续上传");
+                return;
+            }
+            const content = await resolveImageUrl(node.metadata.storageKey, node.metadata.content || "");
+            if (!content) {
+                markLocalImageUploadFailed(node.id, "本地图片预览无法恢复，请重新选择图片");
+                return;
+            }
+            const image: UploadedImage = {
+                url: content,
+                storageKey: node.metadata.storageKey,
+                width: node.metadata.naturalWidth || node.width,
+                height: node.metadata.naturalHeight || node.height,
+                bytes: node.metadata.bytes || blob.size,
+                mimeType: node.metadata.mimeType || blob.type || "image/png",
+            };
+            const file = new File([blob], node.title || "canvas-image", { type: image.mimeType });
+            startLocalImageUpload(node.id, file, image, node.metadata.localUploadIntent || "library");
+        },
+        [markLocalImageUploadFailed, startLocalImageUpload],
+    );
+
     const historySnapshot = useMemo<CanvasHistoryEntry>(() => ({ nodes, maskResources, connections, backgroundMode, showImageInfo }), [backgroundMode, connections, maskResources, nodes, showImageInfo]);
 
     const applyHistorySnapshot = useCallback((entry: CanvasHistoryEntry) => {
@@ -393,6 +509,18 @@ function InfiniteCanvasPage() {
         void restoreProject(project);
         return () => canonicalRestore.invalidate();
     }, [canonicalGeneration, canonicalRestore, hydrated, openProject, projectId, readyForCanvasMutations, restoreProject, router]);
+
+    useEffect(() => {
+        if (!projectLoaded || isProjectReadonly) return;
+        for (const node of nodes) {
+            if (!isLocalImageUploadNode(node) || node.metadata?.localUploadState !== "uploading" || !node.metadata.storageKey) continue;
+            if (localImageUploadController.isActive(node.id)) continue;
+            const resumeKey = `${projectId}:${node.id}:${node.metadata.storageKey}`;
+            if (resumedLocalUploadKeysRef.current.has(resumeKey)) continue;
+            resumedLocalUploadKeysRef.current.add(resumeKey);
+            void resumeLocalImageUpload(node).catch((error) => markLocalImageUploadFailed(node.id, error instanceof Error ? error.message : "本地图片续传失败"));
+        }
+    }, [isProjectReadonly, localImageUploadController, markLocalImageUploadFailed, nodes, projectId, projectLoaded, resumeLocalImageUpload]);
 
     useEffect(() => {
         if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration || isPausedRef.current || isApplyingRef.current) return;
@@ -868,6 +996,19 @@ function InfiniteCanvasPage() {
         [createInteractionNode, getCanvasCenter],
     );
 
+    const discardLocalImageUploads = useCallback(
+        (candidates: Iterable<CanvasNodeData>) => {
+            const storageKeys: string[] = [];
+            for (const node of candidates) {
+                if (!isLocalImageUploadNode(node)) continue;
+                localImageUploadController.cancel(node.id);
+                if (node.metadata?.storageKey) storageKeys.push(node.metadata.storageKey);
+            }
+            if (storageKeys.length) void deleteStoredImages(storageKeys);
+        },
+        [localImageUploadController],
+    );
+
     const deleteNodes = useCallback(
         (ids: Set<string>) => {
             if (!ids.size) return;
@@ -875,6 +1016,7 @@ function InfiniteCanvasPage() {
             nodesRef.current.forEach((node) => {
                 if (ids.has(node.id)) node.metadata?.batchChildIds?.forEach((childId) => allIds.add(childId));
             });
+            discardLocalImageUploads(nodesRef.current.filter((node) => allIds.has(node.id)));
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
                 return next.map((node) => {
@@ -910,7 +1052,7 @@ function InfiniteCanvasPage() {
             setContextMenu((current) => (current && allIds.has(current.nodeId) ? null : current));
             cleanupCanvasFiles({ projectId, nodes: nodesRef.current.filter((node) => !allIds.has(node.id)) });
         },
-        [cleanupCanvasFiles, projectId],
+        [cleanupCanvasFiles, discardLocalImageUploads, projectId],
     );
 
     const deselectCanvas = useCallback(() => {
@@ -925,6 +1067,7 @@ function InfiniteCanvasPage() {
     }, [resetInteractionState]);
 
     const clearCanvas = useCallback(() => {
+        discardLocalImageUploads(nodesRef.current);
         setNodes([]);
         setConnections([]);
         setMaskNodeId(null);
@@ -935,11 +1078,15 @@ function InfiniteCanvasPage() {
         deselectCanvas();
         setClearConfirmOpen(false);
         cleanupCanvasFiles({ projectId, nodes: [] });
-    }, [cleanupCanvasFiles, deselectCanvas, projectId]);
+    }, [cleanupCanvasFiles, deselectCanvas, discardLocalImageUploads, projectId]);
 
     const duplicateNode = useCallback((nodeId: string) => {
         const source = nodesRef.current.find((node) => node.id === nodeId);
         if (!source) return;
+        if (isLocalImageUploadNode(source)) {
+            message.warning("图片正在上传，完成后再复制");
+            return;
+        }
 
         const id = `${source.type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
         const next: CanvasNodeData = {
@@ -953,14 +1100,14 @@ function InfiniteCanvasPage() {
         setSelectedNodeIds(new Set([id]));
         setSelectedConnectionId(null);
         setDialogNodeId(id);
-    }, []);
+    }, [message]);
 
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
 
         const copiedNodes = nodesRef.current
-            .filter((node) => selectedIds.has(node.id))
+            .filter((node) => selectedIds.has(node.id) && !isLocalImageUploadNode(node))
             .map((node) => ({
                 ...node,
                 position: { ...node.position },
@@ -1054,18 +1201,18 @@ function InfiniteCanvasPage() {
     }, [createProject, router]);
 
     const deleteCurrentProject = useCallback(() => {
+        discardLocalImageUploads(nodesRef.current);
         deleteProjects([projectId]);
         cleanupAssetImages();
         router.push(appPath("/canvas"));
-    }, [cleanupAssetImages, deleteProjects, projectId, router]);
+    }, [cleanupAssetImages, deleteProjects, discardLocalImageUploads, projectId, router]);
 
-    const createImageFileNode = useCallback(async (file: File, position: Position, options: { focus?: boolean; refreshAssets?: boolean } = {}) => {
-        const remote = await uploadUserImage(file, "library");
+    const createImageFileNode = useCallback(async (file: File, position: Position, options: { focus?: boolean } = {}) => {
         let image: UploadedImage;
         try {
-            image = await uploadImage(file, remote.mediaId);
+            image = await uploadImage(file);
         } catch (error) {
-            await deleteUserImage(remote.mediaId).catch(() => undefined);
+            message.error(error instanceof Error ? error.message : "无法读取本地图片");
             throw error;
         }
         const size = fitNodeSize(image.width, image.height);
@@ -1077,7 +1224,12 @@ function InfiniteCanvasPage() {
             position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
             width: size.width,
             height: size.height,
-            metadata: { ...imageMetadata(image), mediaExpiresAt: remote.mediaExpiresAt },
+            metadata: {
+                ...imageMetadata(image),
+                localUploadState: "uploading",
+                localUploadProgress: 0,
+                localUploadIntent: "library",
+            },
         };
 
         setNodes((prev) => [...prev, newNode]);
@@ -1086,9 +1238,9 @@ function InfiniteCanvasPage() {
             setSelectedConnectionId(null);
             setDialogNodeId(id);
         }
-        if (options.refreshAssets !== false) void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+        startLocalImageUpload(id, file, image, "library");
         return id;
-    }, []);
+    }, [message, startLocalImageUpload]);
 
     const createImageAssetNode = useCallback(async (asset: ImageAsset, position: Position) => {
         const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
@@ -1214,7 +1366,7 @@ function InfiniteCanvasPage() {
             if (!imageType) return;
             const blob = await imageItem.getType(imageType);
             const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
+            void createImageFileNode(file, getCanvasCenter()).catch(() => undefined);
             message.success("已从剪切板添加图片");
             return;
         }
@@ -1494,6 +1646,8 @@ function InfiniteCanvasPage() {
                 if (file.type.startsWith("video/")) {
                     const video = await uploadMediaFile(file, "video");
                     const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                    const replacedNode = nodesRef.current.find((node) => node.id === target.nodeId);
+                    if (replacedNode) discardLocalImageUploads([replacedNode]);
                     setNodes((prev) =>
                         prev.map((node) => (node.id === target.nodeId ? replaceNodeWithUploadedVideo(node, file.name, videoMetadata(video), nextSize) : node)),
                     );
@@ -1504,8 +1658,17 @@ function InfiniteCanvasPage() {
                     event.target.value = "";
                     return;
                 }
-                const remote = await uploadUserImage(file, "canvas");
-                const image = await uploadImage(file, remote.mediaId);
+                let image: UploadedImage;
+                try {
+                    image = await uploadImage(file);
+                } catch (error) {
+                    message.error(error instanceof Error ? error.message : "无法读取本地图片");
+                    uploadTargetRef.current = null;
+                    event.target.value = "";
+                    return;
+                }
+                const replacedNode = nodesRef.current.find((node) => node.id === target.nodeId);
+                if (replacedNode) discardLocalImageUploads([replacedNode]);
                 const size = fitNodeSize(image.width, image.height);
                 setNodes((prev) =>
                     prev.map((node) =>
@@ -1519,7 +1682,11 @@ function InfiniteCanvasPage() {
                                   metadata: {
                                       ...withoutLegacyModel(node.metadata),
                                       ...imageMetadata(image),
-                                      mediaExpiresAt: remote.mediaExpiresAt,
+                                      publicImageId: undefined,
+                                      localUploadState: "uploading",
+                                      localUploadProgress: 0,
+                                      localUploadError: undefined,
+                                      localUploadIntent: "canvas",
                                       errorDetails: undefined,
                                       freeResize: false,
                                       isBatchRoot: undefined,
@@ -1541,16 +1708,16 @@ function InfiniteCanvasPage() {
                 setSelectedNodeIds(new Set([target.nodeId]));
                 setSelectedConnectionId(null);
                 setDialogNodeId(target.nodeId);
-                void useAssetStore.getState().refreshFromServer().catch(() => undefined);
+                startLocalImageUpload(target.nodeId, file, image, "canvas");
             } else {
                 const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
-                void (file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position));
+                void (file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position)).catch((error) => message.error(error instanceof Error ? error.message : "素材添加失败"));
             }
 
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createImageFileNode, createVideoFileNode, screenToCanvas, size.height, size.width],
+        [createImageFileNode, createVideoFileNode, discardLocalImageUploads, message, screenToCanvas, size.height, size.width, startLocalImageUpload],
     );
 
     const startTitleEditing = useCallback(() => {
@@ -1625,11 +1792,40 @@ function InfiniteCanvasPage() {
         [hideNodeToolbar],
     );
 
+    const retryLocalImageUpload = useCallback(
+        async (node: CanvasNodeData) => {
+            if (!isLocalImageUploadNode(node)) return;
+            setNodes((current) =>
+                current.map((item) =>
+                    item.id === node.id && isLocalImageUploadNode(item)
+                        ? {
+                              ...item,
+                              metadata: {
+                                  ...item.metadata,
+                                  status: NODE_STATUS_SUCCESS,
+                                  errorDetails: undefined,
+                                  localUploadState: "uploading",
+                                  localUploadProgress: 0,
+                                  localUploadError: undefined,
+                              },
+                          }
+                        : item,
+                ),
+            );
+            await resumeLocalImageUpload(node);
+        },
+        [resumeLocalImageUpload],
+    );
+
     const handleCanvasNodeRetry = useCallback(
         (node: CanvasNodeData) => {
+            if (isLocalImageUploadNode(node) && node.metadata?.localUploadState === "failed") {
+                void retryLocalImageUpload(node);
+                return;
+            }
             void handleRetryNode(node);
         },
-        [handleRetryNode],
+        [handleRetryNode, retryLocalImageUpload],
     );
 
     const handleCanvasNodeGenerateImage = useCallback(
@@ -1708,10 +1904,10 @@ function InfiniteCanvasPage() {
             const images = collectDroppedImageFiles(files);
             if (images.files.length) {
                 if (images.files.length === 1 && images.omittedCount === 0) {
-                    void createImageFileNode(images.files[0]!, position);
+                    void createImageFileNode(images.files[0]!, position).catch(() => undefined);
                     return;
                 }
-                void importDroppedImageFiles(files, position, (file, nodePosition) => createImageFileNode(file, nodePosition, { focus: false, refreshAssets: false })).then((result) => {
+                void importDroppedImageFiles(files, position, (file, nodePosition) => createImageFileNode(file, nodePosition, { focus: false })).then((result) => {
                     if (result.nodeIds.length) {
                         setSelectedNodeIds(new Set(result.nodeIds));
                         setSelectedConnectionId(null);
@@ -1902,7 +2098,8 @@ function InfiniteCanvasPage() {
                     onAngle={(node) => setAngleNodeId(node.id)}
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onMask={(node) => setMaskNodeId(node.id)}
-                    onRetry={(node) => void handleRetryNode(node)}
+                    onRetry={handleCanvasNodeRetry}
+                    onDelete={(node) => deleteNodes(new Set([node.id]))}
                 /> : null}
 
                 <CanvasToolbar

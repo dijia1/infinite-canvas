@@ -11,6 +11,7 @@ import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap"
 import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-mask/mask-resources";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 import { createCanvasProjectCopy, nextCanvasProjectCopyTitle } from "../utils/canvas-project-copy";
+import { isLocalImageUploadNode } from "../utils/canvas-local-image-upload";
 import { createCanvasProjectWriteTracer } from "../sync/canvas-project-write-trace";
 
 export type CanvasProject = {
@@ -74,7 +75,6 @@ export type CanvasStore = {
     retryPendingSaves: () => Promise<void>;
     createProject: (title?: string) => string;
     duplicateProject: (id: string) => string | null;
-    importProject: (project: Partial<CanvasProject>) => string;
     openProject: (id: string) => CanvasProject | null;
     renameProject: (id: string, title: string) => void;
     deleteProjects: (ids: string[]) => void;
@@ -158,6 +158,24 @@ function localProject(project: CanvasProjectRecord): CanvasProject {
         showImageInfo: project.document.showImageInfo,
         viewport: project.document.viewport,
     });
+}
+
+function preserveLocalImageUploads(server: CanvasProject, local: CanvasProject): CanvasProject {
+    const serverNodeIds = new Set(server.nodes.map((node) => node.id));
+    const localNodes = local.nodes.filter((node) => isLocalImageUploadNode(node) && !serverNodeIds.has(node.id));
+    if (!localNodes.length) return server;
+
+    const localNodeIds = new Set(localNodes.map((node) => node.id));
+    const allNodeIds = new Set([...serverNodeIds, ...localNodeIds]);
+    const serverConnectionIds = new Set(server.connections.map((connection) => connection.id));
+    const localConnections = local.connections.filter(
+        (connection) =>
+            !serverConnectionIds.has(connection.id) &&
+            (localNodeIds.has(connection.fromNodeId) || localNodeIds.has(connection.toNodeId)) &&
+            allNodeIds.has(connection.fromNodeId) &&
+            allNodeIds.has(connection.toNodeId),
+    );
+    return { ...server, nodes: [...server.nodes, ...localNodes], connections: [...server.connections, ...localConnections] };
 }
 
 function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
@@ -570,8 +588,8 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
 
                             for (const record of records) {
                                 const metadata = state.projectSync[record.id];
+                                const local = localById.get(record.id);
                                 if (hasUnsyncedChanges(metadata)) {
-                                    const local = localById.get(record.id);
                                     if (local) {
                                         projects.push(local);
                                         included.add(record.id);
@@ -579,7 +597,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                     projectSync[record.id] = metadata?.serverRevision === null && !metadata.conflict ? { ...metadata, serverRevision: record.revision } : (metadata as CanvasProjectSync);
                                     continue;
                                 }
-                                projects.push(localProject(record));
+                                projects.push(local ? preserveLocalImageUploads(localProject(record), local) : localProject(record));
                                 included.add(record.id);
                                 projectSync[record.id] = cleanSyncState(record.revision);
                             }
@@ -607,9 +625,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         try {
                             await inFlightDone.get(id);
                             const record = await api.get(id);
-                            const project = localProject(record);
+                            const serverProject = localProject(record);
                             set((state) => {
                                 const index = state.projects.findIndex((item) => item.id === id);
+                                const project = index >= 0 ? preserveLocalImageUploads(serverProject, state.projects[index]!) : serverProject;
                                 const projects = [...state.projects];
                                 if (index >= 0) projects[index] = project;
                                 else projects.unshift(project);
@@ -685,24 +704,6 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         queueChange(id);
                         return id;
                     },
-                    importProject: (source) => {
-                        const now = new Date().toISOString();
-                        const project: CanvasProject = {
-                            id: nanoid(),
-                            title: source.title || "导入画布",
-                            createdAt: source.createdAt || now,
-                            updatedAt: now,
-                            nodes: source.nodes || [],
-                            maskResources: source.maskResources || {},
-                            connections: source.connections || [],
-                            backgroundMode: source.backgroundMode || "lines",
-                            showImageInfo: source.showImageInfo || false,
-                            viewport: source.viewport || initialViewport,
-                        };
-                        set((state) => ({ projects: [project, ...state.projects] }));
-                        queueChange(project.id);
-                        return project.id;
-                    },
                     openProject: (id) => get().projects.find((item) => item.id === id) || null,
                     renameProject: (id, title) => {
                         if (isProjectSyncBlocked(id)) return;
@@ -738,13 +739,15 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         if (isProjectSyncBlocked(id)) return;
                         const current = get().projects.find((project) => project.id === id);
                         if (!current || !canvasProjectPatchChanges(current, patch)) return;
+                        const nextProject: CanvasProject = { ...current, ...patch, updatedAt: new Date().toISOString() };
+                        const changesServerDocument = !sameCanvasJSON(canvasDocument(current), canvasDocument(nextProject));
                         set((state) => ({
                             projects: state.projects.map((project) => {
                                 if (project.id !== id) return project;
-                                return { ...project, ...patch, updatedAt: new Date().toISOString() };
+                                return nextProject;
                             }),
                         }));
-                        queueChange(id);
+                        if (changesServerDocument) queueChange(id);
                     },
                 };
             },

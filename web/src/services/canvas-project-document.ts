@@ -1,5 +1,6 @@
 import type { CanvasProjectDocument } from "./api/canvas-projects";
 import { migrateCanvasMaskResources } from "@/app/(user)/canvas/image-mask/mask-resources";
+import { excludeLocalUploadNodes } from "@/app/(user)/canvas/utils/canvas-local-image-upload";
 
 function isTransientCanvasUrl(value: string) {
     const normalized = value.trim();
@@ -46,8 +47,9 @@ function sanitizeMediaMetadata(value: Record<string, unknown>) {
 }
 
 export function sanitizeCanvasProjectDocument(document: CanvasProjectDocument): CanvasProjectDocument {
-    const { maskResources: existingMaskResources, ...restDocument } = document;
-    const mediaSanitizedNodes = document.nodes.map((node) => {
+    const localUploadFiltered = excludeLocalUploadNodes(document);
+    const { maskResources: existingMaskResources, ...restDocument } = localUploadFiltered;
+    const mediaSanitizedNodes = localUploadFiltered.nodes.map((node) => {
         if (node.type !== "image" && node.type !== "video") return node;
         const metadata = node.metadata as Record<string, unknown> | undefined;
         if (!metadata) return node;
@@ -60,7 +62,7 @@ export function sanitizeCanvasProjectDocument(document: CanvasProjectDocument): 
         ...restDocument,
         nodes: migratedMasks.nodes,
         ...(Object.keys(migratedMasks.maskResources).length ? { maskResources: migratedMasks.maskResources } : {}),
-        connections: [...document.connections],
-        viewport: { ...document.viewport },
+        connections: [...localUploadFiltered.connections],
+        viewport: { ...localUploadFiltered.viewport },
     };
 }

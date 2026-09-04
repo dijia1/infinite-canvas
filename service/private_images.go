@@ -51,7 +51,7 @@ func UpdatePrivateImage(_ context.Context, user PortalUser, id string, title *st
 		return model.Media{}, safeMessageError{message: "公共图片不能在我的素材中修改"}
 	}
 	if title != nil {
-		value, err := normalizePublicTitle(*title)
+		value, err := normalizeMediaTitle(*title)
 		if err != nil {
 			return model.Media{}, err
 		}
@@ -91,7 +91,7 @@ func ListPrivateFolders(_ context.Context, user PortalUser) (model.PrivateFolder
 }
 
 func CreatePrivateFolder(_ context.Context, user PortalUser, title, parentID string) (model.PrivateFolder, error) {
-	name, err := normalizePublicTitle(title)
+	name, err := normalizeMediaTitle(title)
 	if err != nil {
 		return model.PrivateFolder{}, err
 	}
@@ -112,7 +112,7 @@ func CreatePrivateFolder(_ context.Context, user PortalUser, title, parentID str
 }
 
 func RenamePrivateFolder(_ context.Context, user PortalUser, id, title string) (model.PrivateFolder, error) {
-	name, err := normalizePublicTitle(title)
+	name, err := normalizeMediaTitle(title)
 	if err != nil {
 		return model.PrivateFolder{}, err
 	}

@@ -20,6 +20,20 @@ func TestImageTaskWorkerConcurrencyDefaultsAndRejectsInvalidValues(t *testing.T)
 	}
 }
 
+func TestImageTaskTimeoutDefaultsAndRejectsInvalidValues(t *testing.T) {
+	if value, err := parseImageTaskTimeout(""); err != nil || value != 3*time.Minute {
+		t.Fatalf("parseImageTaskTimeout(empty) = %s, %v", value, err)
+	}
+	if value, err := parseImageTaskTimeout("10m"); err != nil || value != 10*time.Minute {
+		t.Fatalf("parseImageTaskTimeout(10m) = %s, %v", value, err)
+	}
+	for _, input := range []string{"invalid", "0s", "-1s"} {
+		if _, err := parseImageTaskTimeout(input); err == nil {
+			t.Errorf("parseImageTaskTimeout(%q) must reject an invalid duration", input)
+		}
+	}
+}
+
 func TestMaintainImageTaskLeaseRenewsUntilTheTaskContextEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -9,7 +9,24 @@ import (
 	"github.com/basketikun/infinite-canvas/service"
 )
 
+const maxUploadRequestBytes = 51 << 20
+
+type mediaUpdateInput struct {
+	Title    *string `json:"title"`
+	FolderID *string `json:"folderId"`
+}
+
+type folderCreateInput struct {
+	Title    string `json:"title"`
+	ParentID string `json:"parentId"`
+}
+
+type titleInput struct {
+	Title string `json:"title"`
+}
+
 func UploadImage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadRequestBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		Fail(w, "上传图片无效")
 		return
@@ -36,6 +53,42 @@ func UploadImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_image_upload", TargetType: "media", TargetID: result.MediaID, TargetName: header.Filename, MediaIDs: []string{result.MediaID}})
+	OK(w, result)
+}
+
+func CreateMediaUploadIntent(w http.ResponseWriter, r *http.Request) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input service.MediaUploadIntentInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	result, err := service.CreateMediaUploadIntent(r.Context(), user, input)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
+func CompleteMediaUploadIntent(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	result, created, err := service.CompleteMediaUploadIntent(r.Context(), user, id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	if created {
+		service.RecordOperation(r.Context(), service.OperationLogInput{Action: "private_image_upload", TargetType: "media", TargetID: result.MediaID, MediaIDs: []string{result.MediaID}})
+	}
 	OK(w, result)
 }
 
@@ -87,10 +140,7 @@ func UpdatePrivateImage(w http.ResponseWriter, r *http.Request, id string) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	var input struct {
-		Title    *string `json:"title"`
-		FolderID *string `json:"folderId"`
-	}
+	var input mediaUpdateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return
@@ -130,10 +180,7 @@ func CreatePrivateFolder(w http.ResponseWriter, r *http.Request) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	var input struct {
-		Title    string `json:"title"`
-		ParentID string `json:"parentId"`
-	}
+	var input folderCreateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return
@@ -153,9 +200,7 @@ func RenamePrivateFolder(w http.ResponseWriter, r *http.Request, id string) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	var input struct {
-		Title string `json:"title"`
-	}
+	var input titleInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return
@@ -248,6 +293,7 @@ func PublicImageContent(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func AdminUploadPublicImage(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadRequestBytes)
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		Fail(w, "上传图片无效")
 		return
@@ -287,10 +333,7 @@ func AdminDeletePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Title    string `json:"title"`
-		ParentID string `json:"parentId"`
-	}
+	var input folderCreateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return
@@ -305,9 +348,7 @@ func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
 }
 
 func AdminRenamePublicFolder(w http.ResponseWriter, r *http.Request, id string) {
-	var input struct {
-		Title string `json:"title"`
-	}
+	var input titleInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return
@@ -331,10 +372,7 @@ func AdminDeletePublicFolder(w http.ResponseWriter, r *http.Request, id string) 
 }
 
 func AdminUpdatePublicImage(w http.ResponseWriter, r *http.Request, id string) {
-	var input struct {
-		Title    *string `json:"title"`
-		FolderID *string `json:"folderId"`
-	}
+	var input mediaUpdateInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		Fail(w, "请求参数无效")
 		return

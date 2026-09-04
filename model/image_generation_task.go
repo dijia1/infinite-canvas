@@ -12,10 +12,6 @@ const (
 	ImageTaskFailed     ImageGenerationTaskStatus = "failed"
 )
 
-func (status ImageGenerationTaskStatus) IsTerminal() bool {
-	return status == ImageTaskSucceeded || status == ImageTaskFailed
-}
-
 type ImageGenerationTask struct {
 	ID                  string                    `json:"id" gorm:"primaryKey"`
 	OwnerUID            string                    `json:"-" gorm:"uniqueIndex:idx_image_task_owner_client;index"`

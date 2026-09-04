@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	imageTaskPollInterval  = 2 * time.Second
-	imageTaskTimeout       = 3 * time.Minute
-	imageTaskStaleAfter    = 45 * time.Second
-	imageTaskLeaseInterval = 10 * time.Second
-	imageTaskRetention     = 30 * 24 * time.Hour
+	imageTaskPollInterval   = 2 * time.Second
+	defaultImageTaskTimeout = 3 * time.Minute
+	imageTaskStaleAfter     = 45 * time.Second
+	imageTaskLeaseInterval  = 10 * time.Second
+	imageTaskRetention      = 30 * 24 * time.Hour
 )
 
 func parseImageTaskWorkerConcurrency(value int) (int, error) {
@@ -33,11 +33,27 @@ func parseImageTaskWorkerConcurrency(value int) (int, error) {
 	return value, nil
 }
 
+func parseImageTaskTimeout(value string) (time.Duration, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultImageTaskTimeout, nil
+	}
+	timeout, err := time.ParseDuration(value)
+	if err != nil || timeout <= 0 {
+		return 0, errors.New("AI_IMAGE_TASK_TIMEOUT 必须是大于 0 的有效时间，例如 10m")
+	}
+	return timeout, nil
+}
+
 // StartImageTaskWorker starts a bounded in-process worker pool. It holds no
 // database transaction while contacting a provider or OSS, so polling does not
 // occupy a database connection.
 func StartImageTaskWorker(parent context.Context) (func(), error) {
 	concurrency, err := parseImageTaskWorkerConcurrency(config.Cfg.AITaskWorkerConcurrency)
+	if err != nil {
+		return nil, err
+	}
+	timeout, err := parseImageTaskTimeout(config.Cfg.AIImageTaskTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +63,7 @@ func StartImageTaskWorker(parent context.Context) (func(), error) {
 		waitGroup.Add(1)
 		go func(workerID int) {
 			defer waitGroup.Done()
-			runImageTaskWorker(ctx, workerID)
+			runImageTaskWorker(ctx, workerID, timeout)
 		}(index + 1)
 	}
 	waitGroup.Add(1)
@@ -64,7 +80,7 @@ func StartImageTaskWorker(parent context.Context) (func(), error) {
 	}, nil
 }
 
-func runImageTaskWorker(ctx context.Context, workerID int) {
+func runImageTaskWorker(ctx context.Context, workerID int, timeout time.Duration) {
 	for {
 		if ctx.Err() != nil {
 			return
@@ -83,7 +99,7 @@ func runImageTaskWorker(ctx context.Context, workerID int) {
 			}
 			continue
 		}
-		workerContext, cancel := context.WithTimeout(ctx, imageTaskTimeout)
+		workerContext, cancel := context.WithTimeout(ctx, timeout)
 		stopLease := startImageTaskLeaseHeartbeat(workerContext, item.ID)
 		executeImageTask(workerContext, item)
 		stopLease()

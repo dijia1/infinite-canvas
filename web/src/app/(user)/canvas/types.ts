@@ -17,6 +17,8 @@ export enum CanvasNodeType {
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
+export type CanvasLocalImageUploadState = "uploading" | "failed";
+export type CanvasLocalImageUploadIntent = "canvas" | "library";
 export type CanvasGenerationMode = "image" | "video";
 export type CanvasImageGenerationType = "generation" | "edit";
 
@@ -65,6 +67,10 @@ export type CanvasNodeMetadata = {
     imageTaskId?: string;
     imageTaskClientRequestId?: string;
     imageMask?: import("@/types/image").ImageMask;
+    localUploadState?: CanvasLocalImageUploadState;
+    localUploadProgress?: number;
+    localUploadError?: string;
+    localUploadIntent?: CanvasLocalImageUploadIntent;
 };
 
 export type CanvasNodeData = {

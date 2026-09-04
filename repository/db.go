@@ -47,6 +47,7 @@ func DB() (*gorm.DB, error) {
 			&model.CanvasProject{},
 			&model.CanvasSaveRequest{},
 			&model.Media{},
+			&model.MediaUploadIntent{},
 			&model.ImageGenerationTask{},
 			&model.PrivateFolder{},
 			&model.PublicFolder{},

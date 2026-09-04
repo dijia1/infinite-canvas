@@ -27,6 +27,7 @@ type Config struct {
 	OSSObjectPrefix                string  `env:"OSS_OBJECT_PREFIX" envDefault:"images"`
 	OSSSignedURLTTL                string  `env:"OSS_SIGNED_URL_TTL" envDefault:"15m"`
 	AITaskWorkerConcurrency        int     `env:"AI_TASK_WORKER_CONCURRENCY" envDefault:"4"`
+	AIImageTaskTimeout             string  `env:"AI_IMAGE_TASK_TIMEOUT" envDefault:"3m"`
 	CanvasSaveSuccessLogSampleRate float64 `env:"CANVAS_SAVE_SUCCESS_LOG_SAMPLE_RATE" envDefault:"0.05"`
 }
 

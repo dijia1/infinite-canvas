@@ -182,6 +182,32 @@ test("skips persistence and server sync when a canvas patch keeps every current 
     assert.equal(store.getState().projectSync["project-1"]?.dirty, false);
 });
 
+test("persists a local image upload without sending its temporary node to the server", async () => {
+    const { api, saved } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+
+    store.getState().updateProject("project-1", {
+        nodes: [
+            {
+                id: "local-upload",
+                type: "image" as never,
+                title: "本地图片",
+                position: { x: 0, y: 0 },
+                width: 320,
+                height: 240,
+                metadata: { content: "blob:local", storageKey: "image:pending", localUploadState: "uploading", localUploadProgress: 28 },
+            },
+        ],
+    });
+    await waitForDebounce();
+
+    assert.equal(store.getState().openProject("project-1")?.nodes[0]?.metadata?.localUploadState, "uploading");
+    assert.equal(saved.length, 0);
+    assert.equal(store.getState().projectSync["project-1"]?.dirty, false);
+});
+
 test("keeps offline edits pending and saves them after connectivity returns", async () => {
     let online = false;
     const { api, saved } = apiDouble();
@@ -393,6 +419,42 @@ test("keeps a rehydrated dirty local project when server snapshots are merged", 
 
     assert.equal(store.getState().openProject(local.id)?.title, "未同步的本地标题");
     assert.deepEqual(store.getState().projectSync[local.id], localSync);
+});
+
+test("keeps locally uploading images when a fresh server snapshot replaces a clean project", () => {
+    const { api } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().updateProject("project-1", {
+        nodes: [
+            {
+                id: "local-upload",
+                type: "image" as never,
+                title: "尚未上传的图片",
+                position: { x: 0, y: 0 },
+                width: 320,
+                height: 240,
+                metadata: { content: "blob:local", storageKey: "image:pending", localUploadState: "uploading" },
+            },
+        ],
+        connections: [{ id: "local-connection", fromNodeId: "local-upload", toNodeId: "server-text" }],
+    });
+
+    store.getState().replaceProjectsFromServer([
+        serverProject({
+            revision: 2,
+            document: {
+                ...serverProject().document,
+                nodes: [{ id: "server-text", type: "text" as never, title: "服务器文本", position: { x: 440, y: 0 }, width: 320, height: 240, metadata: { content: "已保存" } }],
+            },
+        }),
+    ]);
+
+    const project = store.getState().openProject("project-1");
+    assert.deepEqual(project?.nodes.map((node) => node.id), ["server-text", "local-upload"]);
+    assert.deepEqual(project?.connections.map((connection) => connection.id), ["local-connection"]);
+    assert.equal(store.getState().projectSync["project-1"]?.serverRevision, 2);
+    assert.equal(store.getState().projectSync["project-1"]?.dirty, false);
 });
 
 test("waits for the newest local persistence write before mutating the server", async () => {

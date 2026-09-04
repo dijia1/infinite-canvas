@@ -2,7 +2,7 @@
 
 import { type ReactNode } from "react";
 import { Tooltip } from "antd";
-import { Brush, Camera, Download, FolderPlus, Image as ImageIcon, Maximize2, MessageSquare, Minus, Pencil, Plus, RefreshCw, Scissors, Upload, Video } from "lucide-react";
+import { Brush, Camera, Download, FolderPlus, Image as ImageIcon, Maximize2, MessageSquare, Minus, Pencil, Plus, RefreshCw, Scissors, Trash2, Upload, Video } from "lucide-react";
 import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
 import { useConfigStore } from "@/stores/use-config-store";
 import { canOpenNodeGenerationDialog, canSaveNodeAsAsset } from "./canvas-node-actions";
@@ -25,6 +25,7 @@ type CanvasNodeHoverToolbarProps = {
     onViewImage: (node: CanvasNodeData) => void;
     onMask: (node: CanvasNodeData) => void;
     onRetry: (node: CanvasNodeData) => void;
+    onDelete: (node: CanvasNodeData) => void;
 };
 
 export function CanvasNodeHoverToolbar({
@@ -45,6 +46,7 @@ export function CanvasNodeHoverToolbar({
     onViewImage,
     onMask,
     onRetry,
+    onDelete,
 }: CanvasNodeHoverToolbarProps) {
 	const supportsMask = useConfigStore((state) => state.status?.imageRequestSchema?.supportsMask ?? true);
     if (!node) return null;
@@ -57,7 +59,9 @@ export function CanvasNodeHoverToolbar({
     const hasVideo = isVideo && Boolean(node.metadata?.content);
     const isText = node.type === CanvasNodeType.Text;
     const canOpenDialog = canOpenNodeGenerationDialog(node);
-    const canRetry = node.metadata?.status === "error";
+    const retryingLocalUpload = node.metadata?.localUploadState === "failed";
+    const canRetry = node.metadata?.status === "error" || retryingLocalUpload;
+    const canDeleteLocalUpload = Boolean(node.metadata?.localUploadState);
     const hasSpecificTools = canRetry || isText || isImage || isVideo;
 
     if (!hasSpecificTools) return null;
@@ -71,7 +75,8 @@ export function CanvasNodeHoverToolbar({
             onMouseDown={(event) => event.stopPropagation()}
             onPointerDown={(event) => event.stopPropagation()}
         >
-            {canRetry ? <ToolbarAction title="重新生成" label="重试" icon={<RefreshCw className="size-4" />} onClick={() => onRetry(node)} /> : null}
+            {canRetry ? <ToolbarAction title={retryingLocalUpload ? "重新上传" : "重新生成"} label="重试" icon={<RefreshCw className="size-4" />} onClick={() => onRetry(node)} /> : null}
+            {canDeleteLocalUpload ? <ToolbarAction title="删除本地图片" label="删除" icon={<Trash2 className="size-4" />} onClick={() => onDelete(node)} /> : null}
             {canSaveNodeAsAsset(node) ? <ToolbarAction title="加入我的素材" label="存素材" icon={<FolderPlus className="size-4" />} onClick={() => onSaveAsset(node)} /> : null}
             {hasImage || hasVideo ? <IconAction title={hasVideo ? "下载视频" : "下载图片"} icon={<Download className="size-5" />} onClick={() => onDownload(node)} /> : null}
             {canOpenDialog ? <ToolbarAction title="编辑" label="编辑" icon={<MessageSquare className="size-4" />} onClick={() => onToggleDialog(node)} /> : null}

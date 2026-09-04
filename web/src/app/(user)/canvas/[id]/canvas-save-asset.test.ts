@@ -16,6 +16,18 @@ test("saving a non-image node does not create an invisible private asset", () =>
     assert.equal(canSaveNodeAsAsset(node(CanvasNodeType.Image, "blob:image")), true);
 });
 
+test("a locally uploading or failed image cannot be saved as a private asset", () => {
+    const uploading = node(CanvasNodeType.Image, "blob:local");
+    uploading.metadata!.storageKey = "image:pending";
+    uploading.metadata!.localUploadState = "uploading";
+    assert.equal(canSaveNodeAsAsset(uploading), false);
+
+    const failed = node(CanvasNodeType.Image, "blob:local");
+    failed.metadata!.storageKey = "image:failed";
+    failed.metadata!.localUploadState = "failed";
+    assert.equal(canSaveNodeAsAsset(failed), false);
+});
+
 test("text nodes cannot enter an unavailable text-model generation path", () => {
     assert.equal(defaultMode(CanvasNodeType.Text), "image");
     assert.equal(canOpenNodeGenerationDialog(node(CanvasNodeType.Text, "note")), false);

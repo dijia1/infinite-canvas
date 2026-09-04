@@ -79,3 +79,25 @@ test("migrates repeated legacy mask strokes into one document-level mask resourc
     assert.equal("imageMask" in (sanitized.nodes[0]?.metadata || {}), false);
     assert.equal("referenceMasks" in (sanitized.nodes[1]?.metadata || {}), false);
 });
+
+test("omits local image uploads from documents sent to the server", () => {
+    const document = {
+        nodes: [
+            { id: "saved", type: "image", title: "saved", position: { x: 0, y: 0 }, width: 320, height: 240, metadata: { mediaId: "media-saved" } },
+            { id: "uploading", type: "image", title: "uploading", position: { x: 400, y: 0 }, width: 320, height: 240, metadata: { localUploadState: "uploading", storageKey: "image:uploading", content: "blob:local" } },
+            { id: "note", type: "text", title: "note", position: { x: 800, y: 0 }, width: 320, height: 240 },
+        ],
+        connections: [
+            { id: "saved-note", fromNodeId: "saved", toNodeId: "note" },
+            { id: "upload-note", fromNodeId: "uploading", toNodeId: "note" },
+        ],
+        backgroundMode: "lines",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+    } as unknown as CanvasProjectDocument;
+
+    const sanitized = sanitizeCanvasProjectDocument(document);
+
+    assert.deepEqual(sanitized.nodes.map((node) => node.id), ["saved", "note"]);
+    assert.deepEqual(sanitized.connections.map((connection) => connection.id), ["saved-note"]);
+});

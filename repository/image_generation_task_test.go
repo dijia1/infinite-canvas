@@ -38,24 +38,6 @@ func TestListSucceededImageGenerationTasksFinishedBetweenReturnsOnlyCompletedTas
 	}
 }
 
-func TestSucceededImageGenerationTaskCostSummariesUseRecordedAmountsOnly(t *testing.T) {
-	useImageTaskTestDB(t)
-	for _, item := range []model.ImageGenerationTask{
-		{ID: "priced-a", OwnerUID: "user", ClientRequestID: "priced-a", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true, FinishedAt: "2026-09-02T16:00:00Z"},
-		{ID: "priced-b", OwnerUID: "user", ClientRequestID: "priced-b", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("0.2000"), AmountRecorded: true, FinishedAt: "2026-09-02T16:01:00Z"},
-		{ID: "legacy", OwnerUID: "user", ClientRequestID: "legacy", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("9.9999"), AmountRecorded: false, FinishedAt: "2026-09-02T16:02:00Z"},
-	} {
-		if _, _, err := CreateImageGenerationTask(item); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	rows, err := ListSucceededImageGenerationTaskCostSummariesFinishedBetween("2026-09-02T16:00:00Z", "2026-09-03T16:00:00Z")
-	if err != nil || len(rows) != 1 || rows[0].ProviderID != "provider" || rows[0].SuccessfulCalls != 3 || !rows[0].Amount.Equal(decimal.RequireFromString("0.3234")) {
-		t.Fatalf("ListSucceededImageGenerationTaskCostSummariesFinishedBetween() = %#v, %v", rows, err)
-	}
-}
-
 func TestCreateImageGenerationTaskIsIdempotentPerOwnerAndClientRequest(t *testing.T) {
 	useImageTaskTestDB(t)
 	item := model.ImageGenerationTask{ID: "task-1", OwnerUID: "user-1", ClientRequestID: "client-1", Status: model.ImageTaskQueued, CreatedAt: "2026-08-24T10:00:00Z", UpdatedAt: "2026-08-24T10:00:00Z"}

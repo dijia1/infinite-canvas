@@ -1,10 +1,11 @@
 "use client";
 
 import { Drawer } from "antd";
-import { ClipboardList, Images, Library, Users } from "lucide-react";
+import { Images, Library } from "lucide-react";
 import Link from "next/link";
 
 import { navigationTools, type NavigationToolSlug } from "@/constant/navigation-tools";
+import { adminNavigationItems } from "@/components/layout/admin-navigation";
 import { appPath } from "@/lib/app-path";
 import { cn } from "@/lib/utils";
 
@@ -62,24 +63,15 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose, onOpenMyAssets,
                     <span>公共素材</span>
                 </button>
                 {isAdmin ? (
-                    <>
-                        <Link
-                            href={appPath("/admin/members")}
-                            onClick={onClose}
-                            className="flex items-center gap-3 rounded-lg px-3 py-3 text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
-                        >
-                            <Users className="size-5" />
-                            <span>成员管理</span>
-                        </Link>
-                        <Link
-                            href={appPath("/admin/operations")}
-                            onClick={onClose}
-                            className="flex items-center gap-3 rounded-lg px-3 py-3 text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100"
-                        >
-                            <ClipboardList className="size-5" />
-                            <span>操作记录</span>
-                        </Link>
-                    </>
+                    adminNavigationItems.map((item) => {
+                        const Icon = item.icon;
+                        return (
+                            <Link key={item.key} href={appPath(item.href)} onClick={onClose} className="flex items-center gap-3 rounded-lg px-3 py-3 text-base text-stone-600 transition hover:bg-stone-100 hover:text-stone-950 dark:text-stone-300 dark:hover:bg-stone-800 dark:hover:text-stone-100">
+                                <Icon className="size-5" />
+                                <span>{item.label}</span>
+                            </Link>
+                        );
+                    })
                 ) : null}
             </div>
         </Drawer>

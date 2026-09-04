@@ -27,5 +27,7 @@ func main() {
 	defer stopAuditRetention()
 	stopCanvasSaveRetention := service.StartCanvasSaveRequestRetention(context.Background())
 	defer stopCanvasSaveRetention()
+	stopMediaUploadIntentRetention := service.StartMediaUploadIntentRetention(context.Background())
+	defer stopMediaUploadIntentRetention()
 	log.Fatal(router.New().Run(":" + config.Cfg.Port))
 }

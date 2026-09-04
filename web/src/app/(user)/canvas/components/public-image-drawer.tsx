@@ -19,13 +19,12 @@ import {
     type PublicImage,
 } from "@/services/api/public-images";
 import { fetchPortalSession } from "@/services/api/session";
-import { loadMediaImage, loadMediaThumbnail } from "@/services/image-storage";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailGridClass, type MaterialFolder } from "./material-folder-ui";
 import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal } from "./material-image-preview";
 import { PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PublicImageDropPayload } from "./material-image-drag";
-import { useVisibleMediaPreview } from "./use-visible-media-preview";
+import { useMaterialMediaPreview } from "./use-material-media-preview";
 
 const PAGE_SIZE = 24;
 type ContextMenu = { x: number; y: number };
@@ -376,13 +375,8 @@ export function PublicImageDrawer({ open, onClose }: { open: boolean; onClose: (
 
 function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { image: PublicImage; isAdmin: boolean; onPreview: (preview: { title: string; url: string }) => void; onImageContextMenu: (event: MouseEvent) => void }) {
     const [loadFailed, setLoadFailed] = useState(false);
-    const loadPreview = useCallback(async () => {
-        return await loadMediaThumbnail(image.mediaId, async () => {
-                const access = await fetchPublicImageAccess(image.id);
-                return access.previewUrl || access.url;
-            });
-    }, [image.id, image.mediaId]);
-    const { ref, url, error, loading } = useVisibleMediaPreview({ identity: image.id, enabled: true, load: loadPreview });
+    const loadAccess = useCallback(async () => await fetchPublicImageAccess(image.id), [image.id]);
+    const { ref, url, error, loading, loadOriginal } = useMaterialMediaPreview({ identity: image.id, mediaId: image.mediaId, enabled: true, loadAccess });
     useEffect(() => {
         if (url) setLoadFailed(false);
     }, [url]);
@@ -400,7 +394,7 @@ function PublicImageCard({ image, isAdmin, onPreview, onImageContextMenu }: { im
             }}
             onClick={() => {
                 if (!url || previewFailed) return;
-                void loadMediaImage(image.mediaId, async () => (await fetchPublicImageAccess(image.id)).url)
+                void loadOriginal()
                     .then((original) => onPreview({ title: image.title, url: original.url }))
                     .catch(() => onPreview({ title: image.title, url }));
             }}

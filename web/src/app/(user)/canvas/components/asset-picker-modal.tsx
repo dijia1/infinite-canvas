@@ -9,14 +9,14 @@ import { isEditableTarget } from "@/lib/editable-target";
 import { deleteUserImage, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { createPrivateFolder, deletePrivateFolder, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
-import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailStorageKey, loadMediaImage, loadMediaThumbnail, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
+import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailStorageKey, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailGridClass } from "./material-folder-ui";
 import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal } from "./material-image-preview";
 import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload } from "./material-image-drag";
-import { useVisibleMediaPreview } from "./use-visible-media-preview";
+import { useMaterialMediaPreview } from "./use-material-media-preview";
 
 const PAGE_SIZE = 24;
 type PrivateMediaSource = "upload" | "generated";
@@ -618,18 +618,14 @@ function PickerCard({
     const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
     const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
     const [loadFailed, setLoadFailed] = useState(false);
-    const loadPreview = useCallback(async () => {
-        return await loadMediaThumbnail(mediaId, async () => {
-                const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
-                return access.previewUrl || access.url;
-            });
-    }, [mediaId, publicImageId]);
+    const loadAccess = useCallback(async () => (publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId)), [mediaId, publicImageId]);
     const shouldLoadPreview = Boolean(mediaId) && uploadState !== "pending" && !failed;
-    const { ref, url: previewURL, error: previewLoadError, loading } = useVisibleMediaPreview({
+    const { ref, url: previewURL, error: previewLoadError, loading, loadOriginal } = useMaterialMediaPreview({
         identity: asset.id,
+        mediaId,
         enabled: shouldLoadPreview,
         fallback: cover,
-        load: loadPreview,
+        loadAccess,
     });
     useEffect(() => {
         if (previewURL) setLoadFailed(false);
@@ -653,10 +649,7 @@ function PickerCard({
                     onPreview({ title: asset.title, url: preview });
                     return;
                 }
-                void loadMediaImage(mediaId, async () => {
-                    const access = publicImageId ? await fetchPublicImageAccess(publicImageId) : await getRemoteImageAccess(mediaId);
-                    return access.url;
-                })
+                void loadOriginal()
                     .then((image) => onPreview({ title: asset.title, url: image.url }))
                     .catch(() => onPreview({ title: asset.title, url: preview }));
             }}
