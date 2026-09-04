@@ -4,9 +4,12 @@ import test from "node:test";
 
 const sourceURL = new URL("./admin-statistics.ts", import.meta.url);
 
-test("today statistics API preserves amount as a string", async () => {
+test("range statistics API preserves amounts as strings", async () => {
     const source = await readFile(sourceURL, "utf8");
 
     assert.match(source, /amount: string/);
-    assert.match(source, /apiGet<TodayStatistics>\("\/api\/admin\/statistics\/today", undefined, token\)/);
+    assert.match(source, /startDate: string/);
+    assert.match(source, /endDate: string/);
+    assert.match(source, /users: StatisticsUser\[\]/);
+    assert.match(source, /apiGet<Statistics>\("\/api\/admin\/statistics", range, token\)/);
 });

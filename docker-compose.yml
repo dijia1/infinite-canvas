@@ -21,6 +21,11 @@ services:
         aliases:
           - infinite-canvas-directory
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     volumes:
       - ${INFINITE_CANVAS_MEDIA_DIR:-./data/media}:/app/data/media
 

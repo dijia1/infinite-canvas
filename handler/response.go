@@ -24,9 +24,13 @@ func Fail(w http.ResponseWriter, msg string) {
 }
 
 func FailStatus(w http.ResponseWriter, status int, msg string) {
+	FailDataStatus(w, status, msg, nil)
+}
+
+func FailDataStatus(w http.ResponseWriter, status int, msg string, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	writeJSON(w, response{Code: 1, Data: nil, Msg: msg})
+	writeJSON(w, response{Code: 1, Data: data, Msg: msg})
 }
 
 func FailError(w http.ResponseWriter, err error) {

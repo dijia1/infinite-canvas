@@ -41,13 +41,20 @@ export type UpdateCanvasProjectInput = {
     document: CanvasProjectDocument;
 };
 
+export type CanvasProjectWriteTrace = {
+    tabId: string;
+    requestId: string;
+    requestSeq: number;
+    reason: "autosave" | "retry" | "delete";
+};
+
 export type CanvasProjectsApi = {
     list: () => Promise<CanvasProjectList>;
     get: (id: string) => Promise<CanvasProjectRecord>;
     create: (input: CreateCanvasProjectInput) => Promise<CanvasProjectRecord>;
     importProjects: (projects: CreateCanvasProjectInput[]) => Promise<CanvasProjectList>;
-    update: (id: string, input: UpdateCanvasProjectInput) => Promise<CanvasProjectRecord>;
-    delete: (id: string, revision: number) => Promise<void>;
+    update: (id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) => Promise<CanvasProjectRecord>;
+    delete: (id: string, revision: number, trace?: CanvasProjectWriteTrace) => Promise<void>;
 };
 
 export function fetchCanvasProjects() {
@@ -66,12 +73,22 @@ export function importCanvasProjects(projects: CreateCanvasProjectInput[]) {
     return apiPost<CanvasProjectList>("/api/v1/canvas/projects/import", { projects: projects.map((project) => ({ ...project, document: sanitizeCanvasProjectDocument(project.document) })) });
 }
 
-export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput) {
-    return apiPut<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) });
+function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {
+    if (!trace) return undefined;
+    return {
+        "X-Canvas-Tab-Id": trace.tabId,
+        "X-Canvas-Request-Id": trace.requestId,
+        "X-Canvas-Request-Seq": String(trace.requestSeq),
+        "X-Canvas-Save-Reason": trace.reason,
+    };
 }
 
-export async function deleteCanvasProject(id: string, revision: number) {
-    await apiDelete<true>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, undefined, { revision });
+export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) {
+    return apiPut<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, canvasProjectWriteHeaders(trace));
+}
+
+export async function deleteCanvasProject(id: string, revision: number, trace?: CanvasProjectWriteTrace) {
+    await apiDelete<true>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, undefined, { revision }, canvasProjectWriteHeaders(trace));
 }
 
 export const canvasProjectsApi: CanvasProjectsApi = {

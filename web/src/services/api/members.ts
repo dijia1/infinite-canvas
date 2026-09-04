@@ -5,7 +5,6 @@ export type PortalMember = {
     displayName: string;
     enabled: boolean;
     roles: string[];
-    departments: string[];
     syncedAt: string;
 };
 

@@ -6,6 +6,12 @@ localforage.config({
     storeName: "app_state",
 });
 
+const canvasDocumentForage = localforage.createInstance({
+    name: "infinite-canvas",
+    storeName: "canvas_documents",
+});
+const canvasDocumentStorageReady = typeof window === "undefined" ? Promise.resolve() : canvasDocumentForage.setDriver([canvasDocumentForage.INDEXEDDB]);
+
 export const localForageStorage: StateStorage = {
     getItem: async (name) => {
         if (typeof window === "undefined") return null;
@@ -30,5 +36,26 @@ export const localForageStorage: StateStorage = {
         } catch {
             window.localStorage.removeItem(name);
         }
+    },
+};
+
+// Canvas documents can grow to several megabytes. Do not silently fall back to
+// localStorage when IndexedDB is unavailable: a failed local write is safer
+// than claiming that a large working document has been persisted.
+export const canvasDocumentStorage: StateStorage = {
+    getItem: async (name) => {
+        if (typeof window === "undefined") return null;
+        await canvasDocumentStorageReady;
+        return (await canvasDocumentForage.getItem<string>(name)) || null;
+    },
+    setItem: async (name, value) => {
+        if (typeof window === "undefined") return;
+        await canvasDocumentStorageReady;
+        await canvasDocumentForage.setItem(name, value);
+    },
+    removeItem: async (name) => {
+        if (typeof window === "undefined") return;
+        await canvasDocumentStorageReady;
+        await canvasDocumentForage.removeItem(name);
     },
 };

@@ -15,7 +15,7 @@ const document: CanvasProjectDocument = {
 
 test("uses the typed canvas CRUD and import endpoints", async () => {
     const originalRequest = axios.request;
-    const requests: Array<{ url?: string; method?: string; data?: unknown }> = [];
+    const requests: Array<{ url?: string; method?: string; data?: unknown; headers?: unknown }> = [];
     axios.request = (async (config) => {
         requests.push(config);
         return { status: 200, data: { code: 0, data: config.method === "DELETE" ? true : { items: [], total: 0 }, msg: "ok" } } as never;
@@ -26,19 +26,30 @@ test("uses the typed canvas CRUD and import endpoints", async () => {
         await fetchCanvasProject("project/1");
         await createCanvasProject({ id: "project-1", title: "新画布", document });
         await importCanvasProjects([{ id: "project-1", title: "导入画布", document }]);
-        await updateCanvasProject("project-1", { revision: 1, title: "更新画布", document });
+        await updateCanvasProject("project-1", { revision: 1, title: "更新画布", document }, { tabId: "tab-a", requestId: "tab-a-7", requestSeq: 7, reason: "autosave" });
         await deleteCanvasProject("project-1", 2);
         const sanitizedDocument = { ...document, nodes: [{ ...document.nodes[0], metadata: { mediaId: "media-1" } }] };
 
         assert.deepEqual(
-            requests.map(({ url, method, data }) => ({ url, method, data })),
+            requests.map(({ url, method, data, headers }) => ({ url, method, data, headers })),
             [
-                { url: "/api/v1/canvas/projects", method: "GET", data: undefined },
-                { url: "/api/v1/canvas/projects/project%2F1", method: "GET", data: undefined },
-                { url: "/api/v1/canvas/projects", method: "POST", data: { id: "project-1", title: "新画布", document: sanitizedDocument } },
-                { url: "/api/v1/canvas/projects/import", method: "POST", data: { projects: [{ id: "project-1", title: "导入画布", document: sanitizedDocument }] } },
-                { url: "/api/v1/canvas/projects/project-1", method: "PUT", data: { revision: 1, title: "更新画布", document: sanitizedDocument } },
-                { url: "/api/v1/canvas/projects/project-1", method: "DELETE", data: { revision: 2 } },
+                { url: "/api/v1/canvas/projects", method: "GET", data: undefined, headers: undefined },
+                { url: "/api/v1/canvas/projects/project%2F1", method: "GET", data: undefined, headers: undefined },
+                { url: "/api/v1/canvas/projects", method: "POST", data: { id: "project-1", title: "新画布", document: sanitizedDocument }, headers: { "Content-Type": "application/json" } },
+                { url: "/api/v1/canvas/projects/import", method: "POST", data: { projects: [{ id: "project-1", title: "导入画布", document: sanitizedDocument }] }, headers: { "Content-Type": "application/json" } },
+                {
+                    url: "/api/v1/canvas/projects/project-1",
+                    method: "PUT",
+                    data: { revision: 1, title: "更新画布", document: sanitizedDocument },
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-Canvas-Request-Id": "tab-a-7",
+                        "X-Canvas-Request-Seq": "7",
+                        "X-Canvas-Save-Reason": "autosave",
+                        "X-Canvas-Tab-Id": "tab-a",
+                    },
+                },
+                { url: "/api/v1/canvas/projects/project-1", method: "DELETE", data: { revision: 2 }, headers: { "Content-Type": "application/json" } },
             ],
         );
     } finally {

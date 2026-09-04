@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/service"
 )
@@ -77,6 +78,7 @@ func CanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
+	startedAt := time.Now()
 	user, ok := service.PortalUserFromContext(r.Context())
 	if !ok {
 		Fail(w, "未经过 Portal Gateway 身份验证")
@@ -87,11 +89,45 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		FailStatus(w, http.StatusBadRequest, "请求参数无效")
 		return
 	}
-	item, err := service.UpdateCanvasProject(r.Context(), user, id, input)
+	trace := canvasProjectWriteTraceFromRequest(r)
+	writeLog := func(outcome string, serverRevision int, userAgent string) {
+		logCanvasProjectWrite(canvasProjectWriteLogEntry{
+			Outcome:           outcome,
+			UserUID:           user.UID,
+			ProjectID:         id,
+			RequestedRevision: input.Revision,
+			ServerRevision:    serverRevision,
+			DurationMS:        time.Since(startedAt).Milliseconds(),
+			PayloadBytes:      r.ContentLength,
+			UserAgent:         userAgent,
+			Trace:             trace,
+		})
+	}
+	item, deduplicated, err := service.UpdateCanvasProject(r.Context(), user, id, input, trace.RequestID)
 	if err != nil {
+		if errors.Is(err, service.ErrCanvasProjectConflict) {
+			serverRevision := 0
+			if current, currentErr := service.GetCanvasProject(r.Context(), user, id); currentErr == nil {
+				serverRevision = current.Revision
+			}
+			writeLog("conflict", serverRevision, r.UserAgent())
+			FailDataStatus(w, http.StatusConflict, "画布已在其他位置更新，请刷新后重试", map[string]any{
+				"code":              "canvas_revision_conflict",
+				"projectId":         id,
+				"requestedRevision": input.Revision,
+				"serverRevision":    serverRevision,
+			})
+			return
+		}
+		writeLog("failed", 0, r.UserAgent())
 		writeCanvasProjectError(w, err)
 		return
 	}
+	outcome := "saved"
+	if deduplicated {
+		outcome = "deduplicated"
+	}
+	writeLog(outcome, item.Revision, "")
 	OK(w, item)
 }
 

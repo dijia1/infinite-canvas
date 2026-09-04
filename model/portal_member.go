@@ -8,7 +8,6 @@ type PortalMember struct {
 	DisplayName string    `json:"displayName"`
 	Enabled     bool      `json:"enabled" gorm:"index"`
 	Roles       []string  `json:"roles" gorm:"serializer:json"`
-	Departments []string  `json:"departments" gorm:"serializer:json"`
 	SyncedAt    time.Time `json:"syncedAt"`
 }
 

@@ -85,12 +85,12 @@ export async function apiPost<T>(url: string, body?: unknown, token?: string) {
     });
 }
 
-export async function apiDelete<T>(url: string, token?: string, body?: unknown) {
+export async function apiDelete<T>(url: string, token?: string, body?: unknown, headers?: Record<string, string>) {
     return apiRequest<T>({
         url,
         method: "DELETE",
         data: body,
-        headers: jsonRequestHeaders(body, token),
+        headers: { ...jsonRequestHeaders(body, token), ...headers },
     });
 }
 
@@ -103,12 +103,12 @@ export async function apiPatch<T>(url: string, body: unknown, token?: string) {
     });
 }
 
-export async function apiPut<T>(url: string, body: unknown, token?: string) {
+export async function apiPut<T>(url: string, body: unknown, token?: string, headers?: Record<string, string>) {
     return apiRequest<T>({
         url,
         method: "PUT",
         data: body,
-        headers: jsonRequestHeaders(body, token),
+        headers: { ...jsonRequestHeaders(body, token), ...headers },
     });
 }
 

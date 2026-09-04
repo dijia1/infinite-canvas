@@ -53,6 +53,7 @@ import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore } from "../stores/use-canvas-store";
+import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
 import { useCanvasInteractions, type PendingConnectionCreate } from "../hooks/use-canvas-interactions";
 import { useCanvasGeneration } from "../hooks/use-canvas-generation";
@@ -228,6 +229,7 @@ function InfiniteCanvasPage() {
     const params = useParams<{ id: string }>();
     const router = useRouter();
     const projectId = params.id;
+    useCanvasProjectEditorLease(projectId);
     const containerRef = useRef<HTMLDivElement>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
@@ -256,6 +258,7 @@ function InfiniteCanvasPage() {
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
+    const isProjectReadonly = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [maskResources, setMaskResources] = useState<CanvasMaskResources>({});
@@ -1222,6 +1225,7 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (isProjectReadonly) return;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
 
             const key = event.key.toLowerCase();
@@ -1286,7 +1290,7 @@ function InfiniteCanvasPage() {
 
         window.addEventListener("keydown", handleKeyDown);
         return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteNodes, pasteCopiedNodes, pasteSystemClipboard, redo, resetInteractionState, selectedConnectionId, undo]);
+    }, [copySelectedNodes, deleteNodes, isProjectReadonly, pasteCopiedNodes, pasteSystemClipboard, redo, resetInteractionState, selectedConnectionId, undo]);
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
@@ -1756,17 +1760,17 @@ function InfiniteCanvasPage() {
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
-                    onStartTitleEditing={startTitleEditing}
+                    onStartTitleEditing={isProjectReadonly ? () => undefined : startTitleEditing}
                     onFinishTitleEditing={finishTitleEditing}
                     onCancelTitleEditing={() => setTitleEditing(false)}
                     canUndo={canUndo}
                     canRedo={canRedo}
                     onProjects={() => router.push(appPath("/canvas"))}
-                    onCreateProject={createAndOpenProject}
-                    onDeleteProject={deleteCurrentProject}
-                    onImportImage={() => handleUploadRequest()}
-                    onUndo={undo}
-                    onRedo={redo}
+                    onCreateProject={isProjectReadonly ? () => undefined : createAndOpenProject}
+                    onDeleteProject={isProjectReadonly ? () => undefined : deleteCurrentProject}
+                    onImportImage={isProjectReadonly ? () => undefined : () => handleUploadRequest()}
+                    onUndo={isProjectReadonly ? () => undefined : undo}
+                    onRedo={isProjectReadonly ? () => undefined : redo}
                 />
 
                 <InfiniteCanvas
@@ -1878,9 +1882,10 @@ function InfiniteCanvasPage() {
                         />
                     ) : null}
                     {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                    {isProjectReadonly ? <div className="absolute inset-0 z-[200] cursor-not-allowed" aria-label="当前画布由另一标签页编辑" onContextMenu={(event) => event.preventDefault()} /> : null}
                 </InfiniteCanvas>
 
-                <CanvasNodeHoverToolbar
+                {!isProjectReadonly ? <CanvasNodeHoverToolbar
                     node={isNodeDragging || nodeImageSettingsOpen ? null : toolbarNode}
                     viewport={viewport}
                     onKeep={keepNodeToolbar}
@@ -1898,7 +1903,7 @@ function InfiniteCanvasPage() {
                     onViewImage={(node) => setPreviewNodeId(node.id)}
                     onMask={(node) => setMaskNodeId(node.id)}
                     onRetry={(node) => void handleRetryNode(node)}
-                />
+                /> : null}
 
                 <CanvasToolbar
                     selectedCount={selectedNodeIds.size}
@@ -1906,25 +1911,25 @@ function InfiniteCanvasPage() {
                     canRedo={canRedo}
                     backgroundMode={backgroundMode}
                     showImageInfo={showImageInfo}
-                    onAddImage={() => createNode(CanvasNodeType.Image)}
-                    onAddVideo={() => createNode(CanvasNodeType.Video)}
-                    onAddText={() => createNode(CanvasNodeType.Text)}
-                    onAddConfig={() => createNode(CanvasNodeType.Config)}
-                    onUndo={undo}
-                    onRedo={redo}
-                    onUpload={() => handleUploadRequest()}
-                    onDelete={() => deleteNodes(new Set(selectedNodeIds))}
-                    onClear={() => setClearConfirmOpen(true)}
+                    onAddImage={isProjectReadonly ? () => undefined : () => createNode(CanvasNodeType.Image)}
+                    onAddVideo={isProjectReadonly ? () => undefined : () => createNode(CanvasNodeType.Video)}
+                    onAddText={isProjectReadonly ? () => undefined : () => createNode(CanvasNodeType.Text)}
+                    onAddConfig={isProjectReadonly ? () => undefined : () => createNode(CanvasNodeType.Config)}
+                    onUndo={isProjectReadonly ? () => undefined : undo}
+                    onRedo={isProjectReadonly ? () => undefined : redo}
+                    onUpload={isProjectReadonly ? () => undefined : () => handleUploadRequest()}
+                    onDelete={isProjectReadonly ? () => undefined : () => deleteNodes(new Set(selectedNodeIds))}
+                    onClear={isProjectReadonly ? () => undefined : () => setClearConfirmOpen(true)}
                     onDeselect={deselectCanvas}
-                    onBackgroundModeChange={setBackgroundMode}
-                    onShowImageInfoChange={setShowImageInfo}
+                    onBackgroundModeChange={isProjectReadonly ? () => undefined : setBackgroundMode}
+                    onShowImageInfoChange={isProjectReadonly ? () => undefined : setShowImageInfo}
                 />
 
                 {isMiniMapOpen ? <Minimap nodes={deferredMiniMapNodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
                 <CanvasZoomControls scale={viewport.k} onScaleChange={setZoomScale} onReset={resetViewport} isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
 
-                {contextMenu ? (
+                {contextMenu && !isProjectReadonly ? (
                     <CanvasNodeContextMenu
                         menu={contextMenu}
                         onClose={() => setContextMenu(null)}

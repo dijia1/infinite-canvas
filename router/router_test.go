@@ -32,11 +32,12 @@ func TestMain(m *testing.M) {
 	}
 	mediaTestDirectory = directory
 	config.Cfg = config.Config{
-		StorageDriver:   "sqlite",
-		DatabaseDSN:     filepath.Join(directory, "canvas.db"),
-		PortalAdminRole: "portal-admin",
-		MediaStorage:    "local",
-		MediaLocalDir:   directory,
+		StorageDriver:                  "sqlite",
+		DatabaseDSN:                    filepath.Join(directory, "canvas.db"),
+		PortalAdminRole:                "portal-admin",
+		MediaStorage:                   "local",
+		MediaLocalDir:                  directory,
+		CanvasSaveSuccessLogSampleRate: 1,
 	}
 	code := m.Run()
 	_ = os.RemoveAll(directory)
@@ -339,7 +340,7 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 	}
 }
 
-func TestTodayStatisticsRouteIsAdminOnlyAndReturnsDecimalAmounts(t *testing.T) {
+func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T) {
 	stamp := time.Now().UTC().Format("20060102150405.000000000")
 	if _, _, err := repository.CreateImageGenerationTask(model.ImageGenerationTask{
 		ID: "statistics-" + stamp, OwnerUID: "statistics-user", ClientRequestID: "statistics-" + stamp,
@@ -349,7 +350,7 @@ func TestTodayStatisticsRouteIsAdminOnlyAndReturnsDecimalAmounts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	denied := httptest.NewRequest(http.MethodGet, "/api/admin/statistics/today", nil)
+	denied := httptest.NewRequest(http.MethodGet, "/api/admin/statistics", nil)
 	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
 	deniedResponse := httptest.NewRecorder()
 	New().ServeHTTP(deniedResponse, denied)
@@ -357,7 +358,7 @@ func TestTodayStatisticsRouteIsAdminOnlyAndReturnsDecimalAmounts(t *testing.T) {
 		t.Fatalf("non-admin statistics status = %d, want %d; body = %s", deniedResponse.Code, http.StatusForbidden, deniedResponse.Body.String())
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/api/admin/statistics/today", nil)
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/statistics?start="+time.Now().In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02")+"&end="+time.Now().In(time.FixedZone("CST", 8*60*60)).Format("2006-01-02"), nil)
 	request.Header.Set("X-Portal-User-Uid", "statistics-admin")
 	request.Header.Set("X-Portal-Roles", "portal-admin")
 	response := httptest.NewRecorder()
@@ -365,19 +366,32 @@ func TestTodayStatisticsRouteIsAdminOnlyAndReturnsDecimalAmounts(t *testing.T) {
 	var payload struct {
 		Code int `json:"code"`
 		Data struct {
-			Amount string `json:"amount"`
-			Models []struct {
+			StartDate string `json:"startDate"`
+			EndDate   string `json:"endDate"`
+			Amount    string `json:"amount"`
+			Models    []struct {
 				ProviderID string `json:"providerId"`
 				Amount     string `json:"amount"`
 			} `json:"models"`
+			Users []struct {
+				UserUID string `json:"userUid"`
+				Models  []struct {
+					ProviderID string `json:"providerId"`
+				} `json:"models"`
+			} `json:"users"`
 		} `json:"data"`
 	}
-	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Code != 0 || payload.Data.Amount == "" {
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Code != 0 || payload.Data.Amount == "" || payload.Data.StartDate == "" || payload.Data.EndDate == "" {
 		t.Fatalf("statistics status/body = %d/%s", response.Code, response.Body.String())
 	}
 	for _, item := range payload.Data.Models {
 		if item.ProviderID == "statistics-provider" && item.Amount == "0.1234" {
-			return
+			for _, user := range payload.Data.Users {
+				if user.UserUID == "statistics-user" && len(user.Models) == 1 && user.Models[0].ProviderID == "statistics-provider" {
+					return
+				}
+			}
+			break
 		}
 	}
 	t.Fatalf("statistics provider snapshot missing: %+v", payload.Data.Models)
@@ -428,7 +442,7 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 
 func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	const userUID = "2b5892c4-3dd2-4f82-8644-f0d14a0b5e71"
-	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"],"departments":["设计部"]}`}
+	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"]}`}
 	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Portal-Service-Key") != "infinite-canvas" || r.Header.Get("X-Portal-Service-Secret") != "directory-secret" {
 			t.Fatalf("directory headers = %q/%q", r.Header.Get("X-Portal-Service-Key"), r.Header.Get("X-Portal-Service-Secret"))

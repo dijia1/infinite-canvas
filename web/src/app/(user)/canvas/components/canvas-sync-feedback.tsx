@@ -8,14 +8,15 @@ import { useCanvasStore, type CanvasBootstrapStatus, type CanvasProjectSync } fr
 
 export type CanvasSyncDescription = {
     label: string;
-    kind: "saved" | "saving" | "offline" | "error" | "conflict";
+    kind: "saved" | "saving" | "offline" | "error" | "conflict" | "blocked";
     presentation: "icon" | "tag";
     refreshable: boolean;
 };
 
 const canvasDocumentTooLargeMessage = "画板数据超过保存上限（4MB）";
 
-export function describeCanvasSync(sync: CanvasProjectSync): CanvasSyncDescription {
+export function describeCanvasSync(sync: CanvasProjectSync, blocked = false): CanvasSyncDescription {
+    if (blocked) return { label: "另一标签页正在编辑", kind: "blocked", presentation: "tag", refreshable: false };
     if (sync.conflict) return { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true };
     if (sync.error) return { label: sync.error.includes(canvasDocumentTooLargeMessage) ? canvasDocumentTooLargeMessage : "保存失败", kind: "error", presentation: "tag", refreshable: false };
     if (sync.offline && (sync.dirty || sync.pending)) return { label: "离线待同步", kind: "offline", presentation: "tag", refreshable: false };
@@ -42,6 +43,7 @@ const syncAppearance = {
     offline: { color: "default", icon: <CloudOff className="size-3" /> },
     error: { color: "error", icon: <TriangleAlert className="size-3" /> },
     conflict: { color: "warning", icon: <TriangleAlert className="size-3" /> },
+    blocked: { color: "default", icon: <CloudOff className="size-3" /> },
 } as const;
 
 export function CanvasBootstrapFeedback() {
@@ -81,11 +83,12 @@ export function CanvasBootstrapFeedback() {
 export function CanvasSyncFeedback({ projectId }: { projectId: string }) {
     const syncEnabled = useCanvasStore((state) => state.syncEnabled);
     const sync = useCanvasStore((state) => state.projectSync[projectId]);
+    const blocked = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const [refreshing, setRefreshing] = useState(false);
 
     if (!syncEnabled || !sync) return null;
-    const description = describeCanvasSync(sync);
+    const description = describeCanvasSync(sync, blocked);
     const appearance = syncAppearance[description.kind];
 
     const refresh = async () => {

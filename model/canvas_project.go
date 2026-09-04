@@ -43,3 +43,18 @@ type CanvasProjectList struct {
 	Items []CanvasProject `json:"items"`
 	Total int             `json:"total"`
 }
+
+// CanvasSaveRequest records a successfully accepted PUT request for a short
+// period. It lets clients safely retry when the server completed the write but
+// the response did not reach the browser.
+type CanvasSaveRequest struct {
+	RequestID       string `gorm:"primaryKey;size:36"`
+	ProjectID       string `gorm:"index"`
+	UserUID         string `gorm:"index"`
+	BaseRevision    int
+	PayloadHash     string `gorm:"size:64"`
+	ResultRevision  int
+	ResultCreatedAt string
+	ResultUpdatedAt string
+	CreatedAt       string `gorm:"index"`
+}

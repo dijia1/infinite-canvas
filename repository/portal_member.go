@@ -18,7 +18,7 @@ func UpsertPortalMembers(items []model.PortalMember) error {
 	}
 	return db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "user_uid"}},
-		DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "departments", "synced_at"}),
+		DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "synced_at"}),
 	}).Create(&items).Error
 }
 
@@ -31,7 +31,7 @@ func SyncPortalMembers(items []model.PortalMember) error {
 		if len(items) > 0 {
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "user_uid"}},
-				DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "departments", "synced_at"}),
+				DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "synced_at"}),
 			}).Create(&items).Error; err != nil {
 				return err
 			}
@@ -59,6 +59,38 @@ func GetPortalMember(userUID string) (model.PortalMember, bool, error) {
 		return model.PortalMember{}, false, result.Error
 	}
 	return item, result.RowsAffected > 0, nil
+}
+
+func PortalMemberDisplayNames(userUIDs []string) (map[string]string, error) {
+	db, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	uniqueUIDs := make([]string, 0, len(userUIDs))
+	seen := make(map[string]struct{}, len(userUIDs))
+	for _, userUID := range userUIDs {
+		userUID = strings.TrimSpace(userUID)
+		if userUID == "" {
+			continue
+		}
+		if _, exists := seen[userUID]; exists {
+			continue
+		}
+		seen[userUID] = struct{}{}
+		uniqueUIDs = append(uniqueUIDs, userUID)
+	}
+	if len(uniqueUIDs) == 0 {
+		return map[string]string{}, nil
+	}
+	items := make([]model.PortalMember, 0, len(uniqueUIDs))
+	if err := db.Where("user_uid IN ?", uniqueUIDs).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]string, len(items))
+	for _, item := range items {
+		result[item.UserUID] = item.DisplayName
+	}
+	return result, nil
 }
 
 func ListPortalMembers(q model.PortalMemberQuery) ([]model.PortalMember, int64, error) {

@@ -68,6 +68,66 @@ test("coalesces rapid local edits into one latest server save", async () => {
     });
 });
 
+test("attaches one trace record to each cloud canvas save", async () => {
+    const traces: unknown[] = [];
+    const { api } = apiDouble({
+        update: async (id, input, trace) => {
+            traces.push(trace);
+            return serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
+        },
+    });
+    const store = createCanvasStore({
+        api,
+        serverDebounceMs: 10,
+        isOnline: () => true,
+        writeTracer: { next: (reason: "autosave" | "retry" | "delete") => ({ tabId: "tab-1", requestId: `request-${reason}`, requestSeq: 1, reason }) },
+    });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+
+    store.getState().renameProject("project-1", "已追踪保存");
+    await waitForDebounce();
+
+    assert.deepEqual(traces, [{ tabId: "tab-1", requestId: "request-autosave", requestSeq: 1, reason: "autosave" }]);
+});
+
+test("retries an unknown save result with its original request snapshot before saving later edits", async () => {
+    const calls: Array<{ title: string; revision: number; requestId?: string }> = [];
+    let attempt = 0;
+    const { api } = apiDouble({
+        update: async (id, input, trace) => {
+            calls.push({ title: input.title, revision: input.revision, requestId: trace?.requestId });
+            attempt += 1;
+            if (attempt === 1) throw new Error("network response lost");
+            return serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
+        },
+    });
+    const store = createCanvasStore({
+        api,
+        serverDebounceMs: 10,
+        isOnline: () => true,
+        writeTracer: {
+            next: (reason) => ({ tabId: "tab-1", requestId: `request-${reason}-1`, requestSeq: 1, reason }),
+        },
+    });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+
+    store.getState().renameProject("project-1", "第一次修改");
+    await waitForDebounce();
+    store.getState().renameProject("project-1", "第二次修改");
+    await store.getState().retryPendingSaves();
+    await waitForDebounce();
+
+    assert.deepEqual(calls.slice(0, 2), [
+        { title: "第一次修改", revision: 1, requestId: "request-autosave-1" },
+        { title: "第一次修改", revision: 1, requestId: "request-autosave-1" },
+    ]);
+    assert.equal(calls[2]?.title, "第二次修改");
+    assert.equal(calls[2]?.revision, 2);
+    assert.equal(store.getState().projectSync["project-1"]?.conflict, false);
+});
+
 test("duplicates a project as a fresh server-created project", async () => {
     const created: CanvasProjectRecord[] = [];
     const { api } = apiDouble({
@@ -144,6 +204,26 @@ test("keeps offline edits pending and saves them after connectivity returns", as
     assert.equal(saved[0]?.title, "离线修改");
     assert.equal(store.getState().projectSync["project-1"]?.serverRevision, 2);
     assert.equal(store.getState().projectSync["project-1"]?.pending, false);
+});
+
+test("rejects canvas mutations while a secondary tab is readonly", async () => {
+    const { api, saved } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+    store.getState().setProjectSyncBlocked("project-1", true);
+
+    store.getState().renameProject("project-1", "第二个标签页的修改");
+    await waitForDebounce();
+    assert.equal(saved.length, 0);
+    assert.equal(store.getState().openProject("project-1")?.title, "服务器画布");
+    assert.equal(store.getState().projectSync["project-1"]?.pending, false);
+
+    store.getState().setProjectSyncBlocked("project-1", false);
+    store.getState().renameProject("project-1", "接管后的修改");
+    await waitForDebounce();
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0]?.title, "接管后的修改");
 });
 
 test("stops retrying a revision conflict until the user refreshes the server copy", async () => {
@@ -377,6 +457,31 @@ test("serializes writes for one project while preserving edits made during a sav
     assert.equal(maxActive, 1);
     assert.equal(store.getState().projectSync["project-1"]?.serverRevision, 3);
     assert.equal(store.getState().projectSync["project-1"]?.pending, false);
+});
+
+test("keeps the debounce delay after an in-flight save receives more drag updates", async () => {
+    const firstSave = Promise.withResolvers<void>();
+    let saveCount = 0;
+    const { api } = apiDouble({
+        update: async (id, input) => {
+            saveCount += 1;
+            if (saveCount === 1) await firstSave.promise;
+            return serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
+        },
+    });
+    const store = createCanvasStore({ api, serverDebounceMs: 50, isOnline: () => true });
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+
+    store.getState().renameProject("project-1", "拖动开始");
+    await new Promise((resolve) => setTimeout(resolve, 55));
+    store.getState().renameProject("project-1", "拖动结束");
+    firstSave.resolve();
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(saveCount, 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(saveCount, 2);
 });
 
 test("serializes deletion after an in-flight save without saving the deleted project again", async () => {

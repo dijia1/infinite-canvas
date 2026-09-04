@@ -3,14 +3,15 @@ import { create, type StoreApi, type UseBoundStore } from "zustand";
 import { persist, type PersistStorage, type StateStorage, type StorageValue } from "zustand/middleware";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { localForageStorage } from "@/lib/localforage-storage";
-import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord, type CanvasProjectsApi } from "@/services/api/canvas-projects";
+import { canvasDocumentStorage } from "@/lib/localforage-storage";
+import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord, type CanvasProjectsApi, type CanvasProjectWriteTrace } from "@/services/api/canvas-projects";
 import { ApiRequestError } from "@/services/api/request";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
 import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap";
 import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-mask/mask-resources";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 import { createCanvasProjectCopy, nextCanvasProjectCopyTitle } from "../utils/canvas-project-copy";
+import { createCanvasProjectWriteTracer } from "../sync/canvas-project-write-trace";
 
 export type CanvasProject = {
     id: string;
@@ -35,6 +36,14 @@ export type CanvasProjectSync = {
     conflict: boolean;
     operation: "save" | "delete";
     deletedProject?: CanvasProject;
+    unknownRequest?: CanvasProjectSaveRequestSnapshot;
+};
+
+type CanvasProjectSaveRequestSnapshot = {
+    trace: CanvasProjectWriteTrace;
+    baseRevision: number;
+    title: string;
+    document: CanvasProjectDocument;
 };
 
 export type CanvasBootstrapStatus = "loading" | "ready" | "offline" | "error";
@@ -49,6 +58,7 @@ export type CanvasStore = {
     canonicalGeneration: number;
     projects: CanvasProject[];
     projectSync: Record<string, CanvasProjectSync>;
+    blockedProjectSync: Record<string, true>;
     syncScope: string | null;
     syncEnabled: boolean;
     hydrate: (scope?: string) => Promise<void>;
@@ -56,11 +66,12 @@ export type CanvasStore = {
     setBootstrapRetry: (retry: (() => Promise<void>) | null) => void;
     retryBootstrap: () => Promise<void>;
     startSync: (scope: string) => void;
+    setProjectSyncBlocked: (id: string, blocked: boolean) => void;
     adoptImportedProjects: (projects: CanvasProjectRecord[], snapshots: Map<string, CanvasProject>) => void;
     applyLegacyImageNormalization: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean;
     replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
     refreshProjectFromServer: (id: string) => Promise<void>;
-    retryPendingSaves: () => void;
+    retryPendingSaves: () => Promise<void>;
     createProject: (title?: string) => string;
     duplicateProject: (id: string) => string | null;
     importProject: (project: Partial<CanvasProject>) => string;
@@ -75,6 +86,7 @@ type CanvasStoreOptions = {
     storage?: PersistStorage<CanvasStore>;
     serverDebounceMs?: number;
     isOnline?: () => boolean;
+    writeTracer?: { next: (reason: CanvasProjectWriteTrace["reason"]) => CanvasProjectWriteTrace };
 };
 
 const initialViewport: ViewportTransform = { x: 0, y: 0, k: 1 };
@@ -154,7 +166,7 @@ function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
     return value;
 }
 
-export function createCanvasStorage(storage: StateStorage = localForageStorage): PersistStorage<CanvasStore> {
+export function createCanvasStorage(storage: StateStorage = canvasDocumentStorage): PersistStorage<CanvasStore> {
     const cachedProjects = new Map<string, CanvasStore["projects"]>();
     const projectsKey = (name: string) => `${name}:projects`;
     const syncKey = (name: string) => `${name}:sync`;
@@ -267,6 +279,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
     const api = options.api || canvasProjectsApi;
     const serverDebounceMs = options.serverDebounceMs ?? DEFAULT_SERVER_DEBOUNCE_MS;
     const isOnline = options.isOnline || browserIsOnline;
+    const writeTracer = options.writeTracer || createCanvasProjectWriteTracer();
     const saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
     const inFlight = new Set<string>();
     const inFlightDone = new Map<string, Promise<void>>();
@@ -287,6 +300,8 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         return { projectSync };
                     });
                 };
+
+                const isProjectSyncBlocked = (id: string) => Boolean(get().blockedProjectSync[id]);
 
                 const scheduleSave = (id: string, delay = serverDebounceMs) => {
                     if (!get().syncEnabled) return;
@@ -312,13 +327,13 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         const offline = current?.offline || state.bootstrapStatus === "offline" || !isOnline();
                         return conflict ? { ...next, pending: false, offline } : { ...next, offline };
                     });
-                    if (state.syncEnabled && !conflict) scheduleSave(id);
+                    if (state.syncEnabled && !conflict && !state.blockedProjectSync[id]) scheduleSave(id);
                 };
 
-                const saveProject = async (id: string) => {
+                    const saveProject = async (id: string) => {
                     let state = get();
                     let metadata = state.projectSync[id];
-                    if (refreshing.has(id) || !state.syncEnabled || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
+                    if (refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
                     if (!isOnline()) {
                         updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
                         return;
@@ -347,7 +362,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
 
                     state = get();
                     metadata = state.projectSync[id];
-                    if (refreshing.has(id) || !state.syncEnabled || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
+                    if (refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
                     if (!isOnline()) {
                         updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
                         return;
@@ -360,7 +375,11 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     const operation = metadata.operation;
                     const project = state.projects.find((item) => item.id === id);
                     if (operation === "save" && !project) return;
-                    const submittedDocument = project ? canvasDocument(project) : undefined;
+                    const unknownRequest = operation === "save" ? metadata.unknownRequest : undefined;
+                    const submittedDocument = unknownRequest?.document || (project ? canvasDocument(project) : undefined);
+                    const submittedTitle = unknownRequest?.title || project?.title;
+                    const submittedRevision = unknownRequest?.baseRevision ?? metadata.serverRevision;
+                    const trace = unknownRequest?.trace || writeTracer.next(operation === "delete" ? "delete" : metadata.offline ? "retry" : "autosave");
 
                     inFlight.add(id);
                     inFlightDone.set(
@@ -373,7 +392,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     let completed = false;
                     try {
                         if (operation === "delete") {
-                            await api.delete(id, metadata.serverRevision ?? 1);
+                            await api.delete(id, metadata.serverRevision ?? 1, trace);
                             updateSync(id, () => undefined);
                         } else if (project && submittedDocument) {
                             const record =
@@ -386,15 +405,17 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                           updatedAt: project.updatedAt,
                                       })
                                     : await api.update(id, {
-                                          revision: metadata.serverRevision,
-                                          title: project.title,
-                                          document: submittedDocument,
-                                      });
+                                      revision: submittedRevision ?? 1,
+                                      title: submittedTitle || project.title,
+                                      document: submittedDocument,
+                                  }, trace);
                             updateSync(id, (current) => {
                                 if (!current) return cleanSyncState(record.revision);
-                                const changedWhileSaving = current.dirty || current.pending || current.operation !== operation || (metadata.serverRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument));
+                                const latestProject = get().projects.find((item) => item.id === id);
+                                const changedWhileSaving = current.dirty || current.pending || current.operation !== operation || !latestProject || latestProject.title !== submittedTitle || !sameCanvasJSON(canvasDocument(latestProject), submittedDocument) || (metadata.serverRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument));
+                                const { unknownRequest: _unknownRequest, ...synced } = current;
                                 return {
-                                    ...current,
+                                    ...synced,
                                     serverRevision: record.revision,
                                     saving: false,
                                     dirty: changedWhileSaving,
@@ -407,6 +428,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         completed = true;
                     } catch (error) {
                         const conflict = error instanceof ApiRequestError && error.status === 409;
+                        const resultUnknown = operation === "save" && !conflict && (!(error instanceof ApiRequestError) || error.status >= 500);
                         set((state) => {
                             const current = state.projectSync[id];
                             if (!current) return state;
@@ -417,9 +439,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                     saving: false,
                                     dirty: true,
                                     pending: !conflict,
-                                    offline: !isOnline(),
+                                    offline: resultUnknown || !isOnline(),
                                     error: error instanceof Error ? error.message : "画布保存失败",
                                     conflict,
+                                    unknownRequest: resultUnknown && submittedDocument && submittedTitle && submittedRevision !== null ? { trace, baseRevision: submittedRevision, title: submittedTitle, document: submittedDocument } : current.unknownRequest,
                                 },
                             };
                             const shouldRestoreDelete = conflict && operation === "delete" && current.deletedProject && !state.projects.some((item) => item.id === id);
@@ -434,7 +457,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         finishInFlight.delete(id);
                         inFlightDone.delete(id);
                         const current = get().projectSync[id];
-                        if (current && !current.conflict && (current.dirty || current.pending) && (completed || current.operation !== operation)) scheduleSave(id, 0);
+                        if (current && !current.offline && !isProjectSyncBlocked(id) && !current.conflict && (current.dirty || current.pending) && (completed || current.operation !== operation)) scheduleSave(id);
                     }
                 };
 
@@ -447,6 +470,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     canonicalGeneration: 0,
                     projects: [],
                     projectSync: {},
+                    blockedProjectSync: {},
                     syncScope: null,
                     syncEnabled: false,
                     hydrate: async (scope = CANVAS_GUEST_SCOPE) => {
@@ -490,6 +514,19 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         }
                         get().retryPendingSaves();
                     },
+                    setProjectSyncBlocked: (id, blocked) => {
+                        const timer = saveTimers.get(id);
+                        if (blocked && timer) clearTimeout(timer);
+                        if (blocked) saveTimers.delete(id);
+                        set((state) => {
+                            const blockedProjectSync = { ...state.blockedProjectSync };
+                            if (blocked) blockedProjectSync[id] = true;
+                            else delete blockedProjectSync[id];
+                            return { blockedProjectSync };
+                        });
+                        const sync = get().projectSync[id];
+                        if (!blocked && get().syncEnabled && sync && !sync.conflict && (sync.dirty || sync.pending)) scheduleSave(id);
+                    },
                     adoptImportedProjects: (records, snapshots) => {
                         set((state) => {
                             const projectSync = { ...state.projectSync };
@@ -509,6 +546,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         });
                     },
                     applyLegacyImageNormalization: (id, capturedNodes, normalizedNodes) => {
+                        if (isProjectSyncBlocked(id)) return false;
                         let complete = false;
                         let changed = false;
                         set((state) => ({
@@ -584,13 +622,34 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             refreshing.delete(id);
                         }
                     },
-                    retryPendingSaves: () => {
+                    retryPendingSaves: async () => {
                         if (!get().syncEnabled || !isOnline()) return;
+                        const pending = Object.entries(get().projectSync);
                         set((state) => ({
                             projectSync: Object.fromEntries(Object.entries(state.projectSync).map(([id, metadata]) => [id, { ...metadata, offline: false }])),
                         }));
-                        for (const [id, metadata] of Object.entries(get().projectSync)) {
-                            if (!metadata.conflict && (metadata.dirty || metadata.pending)) scheduleSave(id, 0);
+                        for (const [id, previous] of pending) {
+                            const metadata = get().projectSync[id];
+                            if (!metadata) continue;
+                            if (get().blockedProjectSync[id] || metadata.conflict || (!metadata.dirty && !metadata.pending)) continue;
+                            if (metadata.unknownRequest) {
+                                await saveProject(id);
+                                continue;
+                            }
+                            if (metadata.serverRevision === null || !previous.offline) {
+                                scheduleSave(id, 0);
+                                continue;
+                            }
+                            try {
+                                const server = await api.get(id);
+                                if (server.revision !== metadata.serverRevision) {
+                                    updateSync(id, (current) => (current ? { ...current, conflict: true, pending: false, error: "画布已在其他位置更新，请刷新后重试" } : current));
+                                    continue;
+                                }
+                                scheduleSave(id, 0);
+                            } catch (error) {
+                                updateSync(id, (current) => (current ? { ...current, offline: true, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
+                            }
                         }
                     },
                     createProject: (title = "未命名画布") => {
@@ -646,6 +705,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     openProject: (id) => get().projects.find((item) => item.id === id) || null,
                     renameProject: (id, title) => {
+                        if (isProjectSyncBlocked(id)) return;
                         const current = get().projects.find((project) => project.id === id);
                         if (!current) return;
                         const nextTitle = title.trim() || current.title;
@@ -660,8 +720,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     deleteProjects: (ids) => {
                         const current = get();
-                        set((state) => ({ projects: state.projects.filter((project) => !ids.includes(project.id)) }));
-                        for (const id of ids) {
+                        const deletableIDs = ids.filter((id) => !isProjectSyncBlocked(id));
+                        if (deletableIDs.length === 0) return;
+                        set((state) => ({ projects: state.projects.filter((project) => !deletableIDs.includes(project.id)) }));
+                        for (const id of deletableIDs) {
                             const metadata = current.projectSync[id];
                             const timer = saveTimers.get(id);
                             if (timer) clearTimeout(timer);
@@ -673,6 +735,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         }
                     },
                     updateProject: (id, patch) => {
+                        if (isProjectSyncBlocked(id)) return;
                         const current = get().projects.find((project) => project.id === id);
                         if (!current || !canvasProjectPatchChanges(current, patch)) return;
                         set((state) => ({

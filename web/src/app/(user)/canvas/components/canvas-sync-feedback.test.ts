@@ -25,6 +25,7 @@ test("describes clean, saving, offline pending, error, and conflict project stat
     assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, error: "网络错误" })), { label: "保存失败", kind: "error", presentation: "tag", refreshable: false });
     assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true, error: "画板数据超过保存上限（4MB）" })), { label: "画板数据超过保存上限（4MB）", kind: "error", presentation: "tag", refreshable: false });
     assert.deepEqual(describeCanvasSync(sync({ dirty: true, conflict: true, error: "版本冲突" })), { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true });
+    assert.deepEqual(describeCanvasSync(sync({ dirty: true, pending: true }), true), { label: "另一标签页正在编辑", kind: "blocked", presentation: "tag", refreshable: false });
 });
 
 test("treats online dirty or pending work as saving feedback", () => {

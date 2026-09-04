@@ -3,8 +3,10 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"net/url"
 	"regexp"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
+	"github.com/google/uuid"
 )
 
 const maxCanvasDocumentBytes = 4 << 20
@@ -124,35 +127,58 @@ func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasP
 	return model.CanvasProjectList{Items: imported, Total: len(imported)}, nil
 }
 
-func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput) (model.CanvasProject, error) {
+func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput, requestID string) (model.CanvasProject, bool, error) {
 	id, err := normalizeCanvasProjectID(id)
 	if err != nil {
-		return model.CanvasProject{}, err
+		return model.CanvasProject{}, false, err
 	}
 	if input.Revision < 1 {
-		return model.CanvasProject{}, ErrCanvasProjectConflict
+		return model.CanvasProject{}, false, ErrCanvasProjectConflict
 	}
 	title, err := normalizeCanvasProjectTitle(input.Title)
 	if err != nil {
-		return model.CanvasProject{}, err
+		return model.CanvasProject{}, false, err
 	}
 	document, err := sanitizeCanvasDocument(input.Document)
 	if err != nil {
-		return model.CanvasProject{}, err
+		return model.CanvasProject{}, false, err
 	}
-	updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
-	if err != nil {
-		return model.CanvasProject{}, err
-	}
-	if accepted {
-		return updated, nil
+	requestID = strings.TrimSpace(requestID)
+	if requestID != "" {
+		if _, err := uuid.Parse(requestID); err != nil {
+			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识无效"}
+		}
+		updated, accepted, deduplicated, err := repository.UpdateCanvasProjectIdempotently(user.UID, id, input.Revision, title, document, now(), requestID, canvasProjectPayloadHash(title, input.Revision, document))
+		if errors.Is(err, repository.ErrCanvasSaveRequestMismatch) {
+			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识与原请求不一致"}
+		}
+		if err != nil {
+			return model.CanvasProject{}, false, err
+		}
+		if accepted {
+			return updated, deduplicated, nil
+		}
+	} else {
+		updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
+		if err != nil {
+			return model.CanvasProject{}, false, err
+		}
+		if accepted {
+			return updated, false, nil
+		}
 	}
 	if _, found, err := repository.GetCanvasProject(user.UID, id); err != nil {
-		return model.CanvasProject{}, err
+		return model.CanvasProject{}, false, err
 	} else if !found {
-		return model.CanvasProject{}, safeMessageError{message: "画布不存在"}
+		return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
 	}
-	return model.CanvasProject{}, ErrCanvasProjectConflict
+	return model.CanvasProject{}, false, ErrCanvasProjectConflict
+}
+
+func canvasProjectPayloadHash(title string, revision int, document []byte) string {
+	payload := append([]byte(title+"\x00"+fmt.Sprint(revision)+"\x00"), document...)
+	sum := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func DeleteCanvasProject(_ context.Context, user PortalUser, id string, revision int) error {

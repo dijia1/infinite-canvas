@@ -5,17 +5,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
+	"github.com/basketikun/infinite-canvas/service"
 	"gorm.io/gorm"
 )
 
@@ -112,6 +115,165 @@ func TestCanvasProjectOwnerCRUDSanitizesTransientImageContent(t *testing.T) {
 	missing := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, owner, "")
 	if missing.Code != http.StatusOK || decodeCanvasResponse(t, missing).Code != 1 {
 		t.Fatalf("deleted project lookup = %d/%s", missing.Code, missing.Body.String())
+	}
+}
+
+func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
+	id := "canvas-log-" + time.Now().Format("20060102150405.000000000")
+	owner := "canvas-log-owner-" + id
+	body := `{"id":"` + id + `","title":"日志画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, body); response.Code != http.StatusOK {
+		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
+	}
+
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	previousFlags := log.Flags()
+	log.SetOutput(&output)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(previousOutput)
+		log.SetFlags(previousFlags)
+	})
+	request := httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(`{"revision":1,"title":"已保存","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", owner)
+	request.Header.Set("X-Canvas-Tab-Id", "tab-1")
+	request.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d71")
+	request.Header.Set("X-Canvas-Request-Seq", "1")
+	request.Header.Set("X-Canvas-Save-Reason", "autosave")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("update canvas project = %d/%s", response.Code, response.Body.String())
+	}
+	if !strings.Contains(output.String(), "canvas_project_write outcome=saved") || !strings.Contains(output.String(), "requested_revision=1") || !strings.Contains(output.String(), "server_revision=2") || !strings.Contains(output.String(), `tab_id="tab-1"`) {
+		t.Fatalf("save log = %q", output.String())
+	}
+
+	output.Reset()
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(`{"revision":1,"title":"已保存","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", owner)
+	request.Header.Set("X-Canvas-Tab-Id", "tab-1")
+	request.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d72")
+	request.Header.Set("X-Canvas-Request-Seq", "2")
+	request.Header.Set("X-Canvas-Save-Reason", "autosave")
+	conflict := httptest.NewRecorder()
+	New().ServeHTTP(conflict, request)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("stale update = %d/%s", conflict.Code, conflict.Body.String())
+	}
+	var conflictData struct {
+		Code              string `json:"code"`
+		ProjectID         string `json:"projectId"`
+		RequestedRevision int    `json:"requestedRevision"`
+		ServerRevision    int    `json:"serverRevision"`
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, conflict).Data, &conflictData); err != nil || conflictData.Code != "canvas_revision_conflict" || conflictData.ProjectID != id || conflictData.RequestedRevision != 1 || conflictData.ServerRevision != 2 {
+		t.Fatalf("conflict payload = %s, decoded=%#v, err=%v", conflict.Body.String(), conflictData, err)
+	}
+	if !strings.Contains(output.String(), "canvas_project_write outcome=conflict") || !strings.Contains(output.String(), "requested_revision=1") || !strings.Contains(output.String(), "server_revision=2") || !strings.Contains(output.String(), `request_id="c75e2ccf-40e9-4d29-bbb9-b5de9ee39d72"`) {
+		t.Fatalf("conflict log = %q", output.String())
+	}
+}
+
+func TestCanvasProjectConcurrentRevisionAndRequestIDGuards(t *testing.T) {
+	id := "canvas-concurrent-" + time.Now().Format("20060102150405.000000000")
+	owner := "canvas-concurrent-owner-" + id
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"并发画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`); response.Code != http.StatusOK {
+		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
+	}
+
+	update := func(requestID, title string, revision int) int {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(`{"revision":`+fmt.Sprint(revision)+`,"title":"`+title+`","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Portal-User-Uid", owner)
+		request.Header.Set("X-Canvas-Request-Id", requestID)
+		request.Header.Set("X-Canvas-Request-Seq", "1")
+		response := httptest.NewRecorder()
+		New().ServeHTTP(response, request)
+		return response.Code
+	}
+
+	var concurrent sync.WaitGroup
+	codes := make(chan int, 2)
+	for index, requestID := range []string{"a75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", "b75e2ccf-40e9-4d29-bbb9-b5de9ee39d72"} {
+		concurrent.Add(1)
+		go func(index int, requestID string) {
+			defer concurrent.Done()
+			codes <- update(requestID, fmt.Sprintf("并发更新-%d", index), 1)
+		}(index, requestID)
+	}
+	concurrent.Wait()
+	close(codes)
+	successes, conflicts := 0, 0
+	for code := range codes {
+		if code == http.StatusOK {
+			successes++
+		} else if code == http.StatusConflict {
+			conflicts++
+		} else {
+			t.Fatalf("concurrent update status = %d", code)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent updates: successes=%d conflicts=%d", successes, conflicts)
+	}
+
+	requestID := "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d73"
+	var duplicate sync.WaitGroup
+	duplicateCodes := make(chan int, 2)
+	for range 2 {
+		duplicate.Add(1)
+		go func() {
+			defer duplicate.Done()
+			duplicateCodes <- update(requestID, "幂等并发重试", 2)
+		}()
+	}
+	duplicate.Wait()
+	close(duplicateCodes)
+	for code := range duplicateCodes {
+		if code != http.StatusOK {
+			t.Fatalf("same request ID retry = %d", code)
+		}
+	}
+
+	current := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, owner, "")
+	var project struct {
+		Revision int `json:"revision"`
+	}
+	if current.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, current).Data, &project) != nil || project.Revision != 3 {
+		t.Fatalf("final project = %d/%s", current.Code, current.Body.String())
+	}
+}
+
+func TestCanvasSaveRequestRetentionRemovesOnlyExpiredRequests(t *testing.T) {
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	expired := model.CanvasSaveRequest{RequestID: "d75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)}
+	recent := model.CanvasSaveRequest{RequestID: "e75e2ccf-40e9-4d29-bbb9-b5de9ee39d72", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-23 * time.Hour).Format(time.RFC3339Nano)}
+	if err := database.Create(&expired).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&recent).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := service.CleanupExpiredCanvasSaveRequests(now); err != nil {
+		t.Fatal(err)
+	}
+	var expiredCount, recentCount int64
+	if err := database.Model(&model.CanvasSaveRequest{}).Where("request_id = ?", expired.RequestID).Count(&expiredCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&model.CanvasSaveRequest{}).Where("request_id = ?", recent.RequestID).Count(&recentCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if expiredCount != 0 || recentCount != 1 {
+		t.Fatalf("retention counts expired=%d recent=%d", expiredCount, recentCount)
 	}
 }
 
@@ -456,6 +618,47 @@ func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 	}
 	if current.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, current).Data, &project) != nil || project.Title != "服务器版本" || project.Revision != 2 || !bytes.Contains(project.Document, []byte("server-node")) || bytes.Contains(project.Document, []byte("stale-node")) {
 		t.Fatalf("stale writes changed server snapshot = %d/%s", current.Code, current.Body.String())
+	}
+}
+
+func TestCanvasProjectUpdateDeduplicatesAnUnknownResultRetry(t *testing.T) {
+	id := "canvas-idempotency-" + time.Now().Format("20060102150405.000000000")
+	owner := "canvas-idempotency-owner-" + id
+	document := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"初始画布","document":`+document+`}`); response.Code != http.StatusOK {
+		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
+	}
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(`{"revision":1,"title":"已保存","document":`+document+`}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Portal-User-Uid", owner)
+		req.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d7a")
+		response := httptest.NewRecorder()
+		New().ServeHTTP(response, req)
+		return response
+	}
+
+	first := request()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first save = %d/%s", first.Code, first.Body.String())
+	}
+	second := request()
+	if second.Code != http.StatusOK {
+		t.Fatalf("retry of accepted save = %d/%s", second.Code, second.Body.String())
+	}
+	var saved struct {
+		Revision int `json:"revision"`
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, second).Data, &saved); err != nil || saved.Revision != 2 {
+		t.Fatalf("deduplicated save = %#v, err=%v", saved, err)
+	}
+	current := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, owner, "")
+	if current.Code != http.StatusOK {
+		t.Fatalf("load saved project = %d/%s", current.Code, current.Body.String())
+	}
+	if err := json.Unmarshal(decodeCanvasResponse(t, current).Data, &saved); err != nil || saved.Revision != 2 {
+		t.Fatalf("retry must not increment revision twice: %#v, err=%v", saved, err)
 	}
 }
 
