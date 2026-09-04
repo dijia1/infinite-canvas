@@ -16,5 +16,5 @@ test("canvas accepts private and public material drag payloads", async () => {
     assert.match(source, /metadata: \{ \.\.\.imageMetadata\(image\), assetId: asset\.id, publicImageId: publicImageId \|\| undefined/);
     assert.match(source, /event\.dataTransfer\.getData\(PRIVATE_IMAGE_DRAG_TYPE\)/);
     assert.match(source, /event\.dataTransfer\.getData\(PUBLIC_IMAGE_DRAG_TYPE\)/);
-    assert.match(source, /uploadUserImage\(file, "library"\)/);
+    assert.match(source, /startLocalImageUpload\(id, file, image, "library"\)/);
 });

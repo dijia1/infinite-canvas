@@ -1,5 +1,5 @@
 # 依照现有 bun.lock 安装前端依赖。
-FROM oven/bun:1.3.13 AS web-deps
+FROM oven/bun:1.4.0 AS web-deps
 
 WORKDIR /app/web
 COPY web/package.json web/bun.lock ./
