@@ -67,7 +67,7 @@ func ListPortalMembers(q model.PortalMemberQuery) ([]model.PortalMember, int64, 
 		return nil, 0, err
 	}
 	q.Normalize()
-	tx := db.Model(&model.PortalMember{})
+	tx := db.Model(&model.PortalMember{}).Where("enabled = ?", true)
 	if query := strings.TrimSpace(q.Query); query != "" {
 		like := "%" + query + "%"
 		tx = tx.Where("user_uid LIKE ? OR display_name LIKE ?", like, like)
@@ -77,7 +77,7 @@ func ListPortalMembers(q model.PortalMemberQuery) ([]model.PortalMember, int64, 
 		return nil, 0, err
 	}
 	items := make([]model.PortalMember, 0)
-	err = tx.Order("enabled desc, display_name asc, user_uid asc").Offset(q.Offset()).Limit(q.PageSize).Find(&items).Error
+	err = tx.Order("display_name asc, user_uid asc").Offset(q.Offset()).Limit(q.PageSize).Find(&items).Error
 	return items, total, err
 }
 

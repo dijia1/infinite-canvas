@@ -382,15 +382,15 @@ func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 	}
 }
 
-func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithDepartments(t *testing.T) {
+func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithRoles(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
 	owner := "canvas-share-members-owner-" + stamp
 	enabled := "6315d7db-5f11-45f7-8728-f2c5825ee573"
 	disabled := "d6d09b8e-f737-42d4-96a4-d99e5d722848"
 	if err := repository.UpsertPortalMembers([]model.PortalMember{
-		{UserUID: owner, DisplayName: "分享者", Enabled: true, Departments: []string{"产品"}},
-		{UserUID: enabled, DisplayName: "可选成员", Enabled: true, Departments: []string{"设计", "增长"}},
-		{UserUID: disabled, DisplayName: "停用成员", Enabled: false, Departments: []string{"研发"}},
+		{UserUID: owner, DisplayName: "分享者", Enabled: true, Roles: []string{"产品"}},
+		{UserUID: enabled, DisplayName: "可选成员", Enabled: true, Roles: []string{"设计"}},
+		{UserUID: disabled, DisplayName: "停用成员", Enabled: false, Roles: []string{"研发"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -402,11 +402,11 @@ func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithDepartments(t *tes
 		Items []struct {
 			UserUID     string   `json:"userUid"`
 			DisplayName string   `json:"displayName"`
-			Departments []string `json:"departments"`
+			Roles       []string `json:"roles"`
 		} `json:"items"`
 		Total int `json:"total"`
 	}
-	if err := json.Unmarshal(decodeCanvasResponse(t, response).Data, &list); err != nil || list.Total != 1 || len(list.Items) != 1 || list.Items[0].UserUID != enabled || list.Items[0].DisplayName != "可选成员" || strings.Join(list.Items[0].Departments, ",") != "设计,增长" {
+	if err := json.Unmarshal(decodeCanvasResponse(t, response).Data, &list); err != nil || list.Total != 1 || len(list.Items) != 1 || list.Items[0].UserUID != enabled || list.Items[0].DisplayName != "可选成员" || strings.Join(list.Items[0].Roles, ",") != "设计" {
 		t.Fatalf("share recipients response = %#v, err=%v", list, err)
 	}
 }

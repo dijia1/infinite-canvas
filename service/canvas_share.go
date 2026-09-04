@@ -38,7 +38,7 @@ type CanvasShareResult struct {
 type CanvasShareRecipient struct {
 	UserUID     string   `json:"userUid"`
 	DisplayName string   `json:"displayName"`
-	Departments []string `json:"departments"`
+	Roles       []string `json:"roles"`
 }
 
 type CanvasShareRecipientList struct {
@@ -53,11 +53,11 @@ func ListCanvasShareRecipients(senderUID string, query model.PortalMemberQuery) 
 	}
 	result := CanvasShareRecipientList{Items: make([]CanvasShareRecipient, 0, len(items)), Total: int(total)}
 	for _, item := range items {
-		departments := item.Departments
-		if departments == nil {
-			departments = []string{}
+		roles := item.Roles
+		if roles == nil {
+			roles = []string{}
 		}
-		result.Items = append(result.Items, CanvasShareRecipient{UserUID: item.UserUID, DisplayName: item.DisplayName, Departments: departments})
+		result.Items = append(result.Items, CanvasShareRecipient{UserUID: item.UserUID, DisplayName: item.DisplayName, Roles: roles})
 	}
 	return result, nil
 }

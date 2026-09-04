@@ -8,6 +8,7 @@ import (
 
 	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -15,6 +16,44 @@ import (
 func useImageTaskTestDB(t *testing.T) {
 	t.Helper()
 	useRepositoryTestDB(t, config.Config{StorageDriver: "sqlite", DatabaseDSN: ":memory:"})
+}
+
+func TestListSucceededImageGenerationTasksFinishedBetweenReturnsOnlyCompletedTasks(t *testing.T) {
+	useImageTaskTestDB(t)
+	items := []model.ImageGenerationTask{
+		{ID: "before", OwnerUID: "user", ClientRequestID: "before", Status: model.ImageTaskSucceeded, FinishedAt: "2026-09-02T15:59:59Z"},
+		{ID: "included", OwnerUID: "user", ClientRequestID: "included", Status: model.ImageTaskSucceeded, FinishedAt: "2026-09-02T16:00:00Z", Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true},
+		{ID: "failed", OwnerUID: "user", ClientRequestID: "failed", Status: model.ImageTaskFailed, FinishedAt: "2026-09-02T20:00:00Z"},
+		{ID: "after", OwnerUID: "user", ClientRequestID: "after", Status: model.ImageTaskSucceeded, FinishedAt: "2026-09-03T16:00:00Z"},
+	}
+	for _, item := range items {
+		if _, _, err := CreateImageGenerationTask(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	result, err := ListSucceededImageGenerationTasksFinishedBetween("2026-09-02T16:00:00Z", "2026-09-03T16:00:00Z")
+	if err != nil || len(result) != 1 || result[0].ID != "included" || !result[0].Amount.Equal(decimal.RequireFromString("0.1234")) || !result[0].AmountRecorded {
+		t.Fatalf("ListSucceededImageGenerationTasksFinishedBetween() = %#v, %v", result, err)
+	}
+}
+
+func TestSucceededImageGenerationTaskCostSummariesUseRecordedAmountsOnly(t *testing.T) {
+	useImageTaskTestDB(t)
+	for _, item := range []model.ImageGenerationTask{
+		{ID: "priced-a", OwnerUID: "user", ClientRequestID: "priced-a", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true, FinishedAt: "2026-09-02T16:00:00Z"},
+		{ID: "priced-b", OwnerUID: "user", ClientRequestID: "priced-b", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("0.2000"), AmountRecorded: true, FinishedAt: "2026-09-02T16:01:00Z"},
+		{ID: "legacy", OwnerUID: "user", ClientRequestID: "legacy", Status: model.ImageTaskSucceeded, ProviderID: "provider", ProviderName: "模型", Amount: decimal.RequireFromString("9.9999"), AmountRecorded: false, FinishedAt: "2026-09-02T16:02:00Z"},
+	} {
+		if _, _, err := CreateImageGenerationTask(item); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rows, err := ListSucceededImageGenerationTaskCostSummariesFinishedBetween("2026-09-02T16:00:00Z", "2026-09-03T16:00:00Z")
+	if err != nil || len(rows) != 1 || rows[0].ProviderID != "provider" || rows[0].SuccessfulCalls != 3 || !rows[0].Amount.Equal(decimal.RequireFromString("0.3234")) {
+		t.Fatalf("ListSucceededImageGenerationTaskCostSummariesFinishedBetween() = %#v, %v", rows, err)
+	}
 }
 
 func TestCreateImageGenerationTaskIsIdempotentPerOwnerAndClientRequest(t *testing.T) {

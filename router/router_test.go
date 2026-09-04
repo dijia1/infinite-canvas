@@ -20,6 +20,7 @@ import (
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 	"github.com/basketikun/infinite-canvas/service"
+	"github.com/shopspring/decimal"
 )
 
 var mediaTestDirectory string
@@ -125,7 +126,7 @@ func TestPromoteLegacyCanvasTemporaryMediaKeepsObjectKey(t *testing.T) {
 
 func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T) {
 	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
-		Providers:       []model.AIProvider{{ID: "async-maizi", Name: "Maizi", Type: "maizi-image", Enabled: true, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
+		Providers:       []model.AIProvider{{ID: "async-maizi", Name: "Maizi", Type: "maizi-image", Enabled: true, ImageCallAmount: decimal.RequireFromString("0.1234"), Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
 		ImageProviderID: "async-maizi",
 	}}); err != nil {
 		t.Fatal(err)
@@ -147,6 +148,10 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	}
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &created) != nil || created.Code != 0 || created.Data.ID == "" || created.Data.ClientRequestID != clientRequestID || created.Data.Status != "queued" {
 		t.Fatalf("create image task = %d/%s", response.Code, response.Body.String())
+	}
+	stored, found, err := repository.GetImageGenerationTask(created.Data.ID)
+	if err != nil || !found || stored.ProviderName != "Maizi" || !stored.AmountRecorded || !stored.Amount.Equal(decimal.RequireFromString("0.1234")) {
+		t.Fatalf("image task price snapshot = %#v, found=%t, err=%v", stored, found, err)
 	}
 
 	lookup := httptest.NewRequest(http.MethodGet, "/api/v1/images/tasks/by-client-request/"+clientRequestID, nil)
@@ -334,6 +339,50 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 	}
 }
 
+func TestTodayStatisticsRouteIsAdminOnlyAndReturnsDecimalAmounts(t *testing.T) {
+	stamp := time.Now().UTC().Format("20060102150405.000000000")
+	if _, _, err := repository.CreateImageGenerationTask(model.ImageGenerationTask{
+		ID: "statistics-" + stamp, OwnerUID: "statistics-user", ClientRequestID: "statistics-" + stamp,
+		Status: model.ImageTaskSucceeded, ProviderID: "statistics-provider", ProviderName: "统计模型",
+		Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true, ResultMediaIDsJSON: `["statistics-media"]`, FinishedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	denied := httptest.NewRequest(http.MethodGet, "/api/admin/statistics/today", nil)
+	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
+	deniedResponse := httptest.NewRecorder()
+	New().ServeHTTP(deniedResponse, denied)
+	if deniedResponse.Code != http.StatusForbidden {
+		t.Fatalf("non-admin statistics status = %d, want %d; body = %s", deniedResponse.Code, http.StatusForbidden, deniedResponse.Body.String())
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/api/admin/statistics/today", nil)
+	request.Header.Set("X-Portal-User-Uid", "statistics-admin")
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response := httptest.NewRecorder()
+	New().ServeHTTP(response, request)
+	var payload struct {
+		Code int `json:"code"`
+		Data struct {
+			Amount string `json:"amount"`
+			Models []struct {
+				ProviderID string `json:"providerId"`
+				Amount     string `json:"amount"`
+			} `json:"models"`
+		} `json:"data"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Code != 0 || payload.Data.Amount == "" {
+		t.Fatalf("statistics status/body = %d/%s", response.Code, response.Body.String())
+	}
+	for _, item := range payload.Data.Models {
+		if item.ProviderID == "statistics-provider" && item.Amount == "0.1234" {
+			return
+		}
+	}
+	t.Fatalf("statistics provider snapshot missing: %+v", payload.Data.Models)
+}
+
 func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testing.T) {
 	memberID := "member-list-" + time.Now().Format("20060102150405.000000000")
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{
@@ -437,8 +486,16 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 		t.Fatalf("disable callback status = %d, want %d", response.Code, http.StatusNoContent)
 	}
 	member, found, err = repository.GetPortalMember(userUID)
-	if err != nil || !found || member.Enabled {
+	if err != nil || !found || member.Enabled || strings.Join(member.Roles, ",") != "设计师" {
 		t.Fatalf("disabled member = %+v, found=%t, err=%v", member, found, err)
+	}
+	listed, total, err := repository.ListPortalMembers(model.PortalMemberQuery{Query: "李小明", Page: 1, PageSize: 20})
+	if err != nil || total != 0 || len(listed) != 0 {
+		t.Fatalf("disabled member must be hidden from member management: %#v, total=%d, err=%v", listed, total, err)
+	}
+	recipients, total, err := repository.ListCanvasShareRecipients("different-user", model.PortalMemberQuery{Query: "李小明", Page: 1, PageSize: 20})
+	if err != nil || total != 0 || len(recipients) != 0 {
+		t.Fatalf("disabled member must be hidden from share recipients: %#v, total=%d, err=%v", recipients, total, err)
 	}
 }
 

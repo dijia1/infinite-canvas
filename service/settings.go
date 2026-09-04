@@ -10,6 +10,7 @@ import (
 	"github.com/basketikun/infinite-canvas/ai"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
+	"github.com/shopspring/decimal"
 )
 
 type AIStatus struct {
@@ -192,6 +193,9 @@ func validateSettings(settings model.AISettings) error {
 		if !json.Valid(provider.Config) {
 			return errors.New("供应商参数不是有效 JSON")
 		}
+		if err := validateImageCallAmount(provider.ImageCallAmount); err != nil {
+			return err
+		}
 		if typeInfo.New != nil {
 			if _, err := typeInfo.New(provider.Config); err != nil {
 				return err
@@ -203,6 +207,15 @@ func validateSettings(settings model.AISettings) error {
 	}
 	if settings.VideoProviderID != "" && !providerAvailable(settings, settings.VideoProviderID, ai.CapabilityVideoGenerate) {
 		return errors.New("生视频供应商不可用或不支持生视频")
+	}
+	return nil
+}
+
+var maximumImageCallAmount = decimal.RequireFromString("99999999.9999")
+
+func validateImageCallAmount(amount decimal.Decimal) error {
+	if amount.IsNegative() || amount.GreaterThan(maximumImageCallAmount) || amount.Exponent() < -4 {
+		return errors.New("图片调用单价必须是 0 至 99999999.9999 之间、最多四位小数的金额")
 	}
 	return nil
 }

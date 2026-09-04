@@ -92,9 +92,9 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	}
 	item := model.ImageGenerationTask{
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Mode: request.Mode,
-		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
+		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
-		ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
+		Amount: provider.ImageCallAmount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
 	}
 	operation := model.OperationLog{
 		ID: operationLogID, ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...),

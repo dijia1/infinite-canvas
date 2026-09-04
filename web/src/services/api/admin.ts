@@ -17,6 +17,7 @@ export type AdminAIProvider = {
     name: string;
     type: string;
     enabled: boolean;
+    imageCallAmount: string;
     config: Record<string, unknown>;
 };
 

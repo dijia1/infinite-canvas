@@ -1,5 +1,7 @@
 package model
 
+import "github.com/shopspring/decimal"
+
 type ImageGenerationTaskStatus string
 
 const (
@@ -21,6 +23,7 @@ type ImageGenerationTask struct {
 	Mode                string                    `json:"mode"`
 	Status              ImageGenerationTaskStatus `json:"status" gorm:"index"`
 	ProviderID          string                    `json:"-"`
+	ProviderName        string                    `json:"-" gorm:"index"`
 	ProviderType        string                    `json:"-"`
 	ProviderConfig      string                    `json:"-"`
 	Prompt              string                    `json:"prompt"`
@@ -31,6 +34,8 @@ type ImageGenerationTask struct {
 	Background          string                    `json:"background"`
 	ProviderOptionsJSON string                    `json:"-" gorm:"type:text"`
 	Count               int                       `json:"count"`
+	Amount              decimal.Decimal           `json:"-" gorm:"type:decimal(12,4);not null;default:0"`
+	AmountRecorded      bool                      `json:"-" gorm:"not null;default:false"`
 	ReferencesJSON      string                    `json:"-"`
 	RequestSummary      string                    `json:"-" gorm:"type:text"`
 	OperationLogID      string                    `json:"-" gorm:"index"`

@@ -69,7 +69,7 @@ func runImageTaskWorker(ctx context.Context, workerID int) {
 		if ctx.Err() != nil {
 			return
 		}
-		item, claimed, err := repository.ClaimNextImageGenerationTask(time.Now().Add(-imageTaskStaleAfter).Format(time.RFC3339), now())
+		item, claimed, err := repository.ClaimNextImageGenerationTask(time.Now().UTC().Add(-imageTaskStaleAfter).Format(time.RFC3339), now())
 		if err != nil {
 			log.Printf("image task worker %d claim failed: %v", workerID, err)
 			if !waitForImageTask(ctx, time.Second) {

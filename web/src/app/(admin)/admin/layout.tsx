@@ -1,6 +1,6 @@
 "use client";
 
-import { FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, TeamOutlined } from "@ant-design/icons";
+import { BarChartOutlined, FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Typography, theme } from "antd";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -15,6 +15,7 @@ const adminMenus = [
     { key: "/admin/assets", icon: <PictureOutlined />, label: "素材库" },
     { key: "/admin/members", icon: <TeamOutlined />, label: "成员管理" },
     { key: "/admin/operations", icon: <FileTextOutlined />, label: "操作记录" },
+    { key: "/admin/statistics", icon: <BarChartOutlined />, label: "统计" },
     { key: "/admin/settings", icon: <SettingOutlined />, label: "系统设置" },
 ];
 
@@ -27,8 +28,8 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     const isReady = useAdminStore((state) => state.isReady);
     const hydrateAdmin = useAdminStore((state) => state.hydrateAdmin);
     const logout = useAdminStore((state) => state.clearSession);
-    const activeKey = pathname.startsWith("/admin/settings") ? "/admin/settings" : pathname.startsWith("/admin/operations") ? "/admin/operations" : pathname.startsWith("/admin/members") ? "/admin/members" : pathname.startsWith("/admin/assets") ? "/admin/assets" : "";
-    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/operations") ? "操作记录" : pathname.startsWith("/admin/members") ? "成员管理" : "素材库管理";
+    const activeKey = pathname.startsWith("/admin/settings") ? "/admin/settings" : pathname.startsWith("/admin/statistics") ? "/admin/statistics" : pathname.startsWith("/admin/operations") ? "/admin/operations" : pathname.startsWith("/admin/members") ? "/admin/members" : pathname.startsWith("/admin/assets") ? "/admin/assets" : "";
+    const pageTitle = pathname.startsWith("/admin/settings") ? "系统设置" : pathname.startsWith("/admin/statistics") ? "统计" : pathname.startsWith("/admin/operations") ? "操作记录" : pathname.startsWith("/admin/members") ? "成员管理" : "素材库管理";
 
     useEffect(() => {
         void hydrateAdmin();

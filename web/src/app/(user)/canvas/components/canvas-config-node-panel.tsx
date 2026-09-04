@@ -240,11 +240,13 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
 function CanvasConfigModelSelect({ value, options, onChange }: { value: string | undefined; options: Array<{ id: string; name: string }> | undefined; onChange: (value: string) => void }) {
 	if (!options?.length) return null;
 	return (
-		<div data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
+		<div className="w-full" data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
 			<Select
+				className="!w-full"
 				size="small"
 				value={value}
 				options={options.map((item) => ({ value: item.id, label: item.name }))}
+				popupMatchSelectWidth
 				popupRender={(menu) => (
 					<div data-canvas-no-zoom onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
 						{menu}

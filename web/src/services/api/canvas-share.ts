@@ -3,7 +3,7 @@ import { apiGet, apiPost } from "./request";
 export type CanvasShareRecipient = {
     userUid: string;
     displayName: string;
-    departments: string[];
+    roles: string[];
 };
 
 export type CanvasShareRecipientList = {

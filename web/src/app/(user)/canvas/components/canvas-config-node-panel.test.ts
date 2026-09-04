@@ -14,6 +14,14 @@ test("config-node model menus isolate pointer events from the canvas and their p
 	assert.match(source, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
 });
 
+test("config-node model selector fills the generation action width", async () => {
+	const source = await readFile(sourceURL, "utf8");
+
+	assert.match(source, /<div className="w-full" data-canvas-no-zoom/);
+	assert.match(source, /className="!w-full"/);
+	assert.match(source, /popupMatchSelectWidth/);
+});
+
 test("generation panels share the canvas generation config resolver", async () => {
     const [configPanelSource, promptPanelSource] = await Promise.all([readFile(sourceURL, "utf8"), readFile(promptPanelSourceURL, "utf8")]);
 

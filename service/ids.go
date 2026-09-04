@@ -11,5 +11,5 @@ func newID(prefix string) string {
 }
 
 func now() string {
-	return time.Now().Format(time.RFC3339)
+	return time.Now().UTC().Format(time.RFC3339)
 }

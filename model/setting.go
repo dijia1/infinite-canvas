@@ -1,6 +1,10 @@
 package model
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/shopspring/decimal"
+)
 
 type SettingKey string
 
@@ -9,11 +13,12 @@ const (
 )
 
 type AIProvider struct {
-	ID      string          `json:"id"`
-	Name    string          `json:"name"`
-	Type    string          `json:"type"`
-	Enabled bool            `json:"enabled"`
-	Config  json.RawMessage `json:"config"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Type            string          `json:"type"`
+	Enabled         bool            `json:"enabled"`
+	ImageCallAmount decimal.Decimal `json:"imageCallAmount"`
+	Config          json.RawMessage `json:"config"`
 }
 
 type AISettings struct {

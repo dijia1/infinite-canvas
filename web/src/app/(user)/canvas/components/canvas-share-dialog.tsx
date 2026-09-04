@@ -10,7 +10,7 @@ const PAGE_SIZE = 20;
 const MAX_RECIPIENTS = 50;
 
 export function describeCanvasShareRecipient(recipient: CanvasShareRecipient) {
-    return `${recipient.displayName}－${recipient.departments.length ? recipient.departments.join("、") : "未设置部门"}`;
+    return `${recipient.displayName}－${recipient.roles.length ? recipient.roles.join("、") : "未设置部门"}`;
 }
 
 export function stopCanvasShareEvent(event: { stopPropagation: () => void }) {

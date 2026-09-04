@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { useEffect, useState } from "react";
 
 import { fetchAIProviderTypes, fetchAdminSettings, saveAdminSettings, type AdminAIProvider, type AdminAIProviderType, type AdminSettings } from "@/services/api/admin";
+import { formatCNYAmount, isCNYAmountInput } from "@/lib/money";
 import { useAdminStore } from "@/stores/use-admin-store";
 
 const emptySettings: AdminSettings = { ai: { providers: [], imageProviderId: "", videoProviderId: "" } };
@@ -40,7 +41,7 @@ export default function AdminSettingsPage() {
     const selectOptions = providers.filter((item) => item.enabled).map((item) => ({ value: item.id, label: item.name }));
     const openEditor = (provider?: AdminAIProvider) => {
         setEditingId(provider?.id || null);
-        form.setFieldsValue(provider ? { ...provider, config: JSON.stringify(provider.config, null, 2), fields: Object.fromEntries(Object.entries(provider.config).map(([key, value]) => [key, String(value ?? "")])) } : { id: nanoid(), name: "", type: types[0]?.id || "", enabled: true, config: "{}", fields: {} });
+        form.setFieldsValue(provider ? { ...provider, imageCallAmount: provider.imageCallAmount || "0", config: JSON.stringify(provider.config, null, 2), fields: Object.fromEntries(Object.entries(provider.config).map(([key, value]) => [key, String(value ?? "")])) } : { id: nanoid(), name: "", type: types[0]?.id || "", enabled: true, imageCallAmount: "0", config: "{}", fields: {} });
         setDrawerOpen(true);
     };
     const saveProvider = async () => {
@@ -54,7 +55,7 @@ export default function AdminSettingsPage() {
                 return;
             }
         }
-        const provider: AdminAIProvider = { ...values, name: values.name.trim(), config };
+        const provider: AdminAIProvider = { ...values, name: values.name.trim(), imageCallAmount: values.imageCallAmount.trim(), config };
         setSettings((current) => ({ ...current, ai: { ...current.ai, providers: editingId ? current.ai.providers.map((item) => (item.id === editingId ? provider : item)) : [...current.ai.providers, provider] } }));
         setDrawerOpen(false);
     };
@@ -85,6 +86,7 @@ export default function AdminSettingsPage() {
                     { title: "名称", dataIndex: "name" },
                     { title: "类型", dataIndex: "type", render: (value) => types.find((item) => item.id === value)?.name || value },
                     { title: "能力", dataIndex: "type", render: (value) => (types.find((item) => item.id === value)?.capabilities || []).map((item) => <Tag key={item}>{capabilityName(item)}</Tag>) },
+                    { title: "图片单价", render: (_, provider) => supportsImagePricing(types, provider.type) ? formatCNYAmount(provider.imageCallAmount) : "—" },
                     { title: "状态", dataIndex: "enabled", render: (enabled) => <Tag color={enabled ? "green" : "default"}>{enabled ? "启用" : "停用"}</Tag> },
                     { title: "操作", render: (_, provider) => <Space><Button type="link" icon={<EditOutlined />} onClick={() => openEditor(provider)}>编辑</Button><Button danger type="link" icon={<DeleteOutlined />} onClick={() => removeProvider(provider.id)}>删除</Button></Space> },
                 ]} />}
@@ -96,6 +98,7 @@ export default function AdminSettingsPage() {
                     <Form.Item label="供应商名称" name="name" rules={[{ required: true, message: "请输入供应商名称" }]}><Input placeholder="例如：豆包生产环境" /></Form.Item>
                     <Form.Item label="供应商类型" name="type" rules={[{ required: true, message: "请选择供应商类型" }]}><Select options={types.map((item) => ({ value: item.id, label: item.name }))} /></Form.Item>
                     <Form.Item label="启用" name="enabled" valuePropName="checked"><Switch /></Form.Item>
+                    {supportsImagePricing(types, selectedType) ? <Form.Item label="图片调用单价（元）" name="imageCallAmount" rules={[{ required: true, message: "请输入图片调用单价" }, { validator: (_, value: string) => isCNYAmountInput(value || "") ? Promise.resolve() : Promise.reject(new Error("请输入 0 至 99999999.9999，最多四位小数")) }]}><Input inputMode="decimal" placeholder="例如：0.1234" /></Form.Item> : null}
                     {configFields.length > 0 ? configFields.map((field) => <Form.Item key={field.key} label={field.label} name={["fields", field.key]} rules={field.required ? [{ required: true, message: `请输入${field.label}` }] : undefined}>{field.type === "password" ? <Input.Password placeholder={field.placeholder} autoComplete="off" /> : <Input placeholder={field.placeholder} autoComplete="off" />}</Form.Item>) : <Form.Item label="供应商参数（JSON）" name="config" rules={[{ required: true, message: "请输入供应商参数" }]}><Input.TextArea rows={12} spellCheck={false} placeholder={'{\n  "apiKey": "..."\n}'} /></Form.Item>}
                 </Form>
             </Drawer>
@@ -110,6 +113,11 @@ function ProviderSelect({ label, value, options, onChange }: { label: string; va
 function supports(types: AdminAIProviderType[], providers: AdminAIProvider[], providerId: string, capability: AdminAIProviderType["capabilities"][number]) {
     const provider = providers.find((item) => item.id === providerId);
     return Boolean(provider && types.find((item) => item.id === provider.type)?.capabilities.includes(capability));
+}
+
+function supportsImagePricing(types: AdminAIProviderType[], type: string) {
+    const capabilities = types.find((item) => item.id === type)?.capabilities || [];
+    return capabilities.includes("image_generate") || capabilities.includes("image_edit");
 }
 
 function capabilityName(value: AdminAIProviderType["capabilities"][number]) {
