@@ -106,7 +106,7 @@ func ListWorkflowRuns(ownerUID, workflowID string, page, pageSize int) ([]model.
 		return nil, 0, err
 	}
 	items := []model.WorkflowRun{}
-	err = query.Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error
+	err = query.Omit("snapshot").Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error
 	return items, total, err
 }
 
