@@ -49,7 +49,8 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                     getProjects: () => useCanvasStore.getState().projects,
                     persistNormalizedProject: state.applyLegacyImageNormalization,
                     adoptImportedProjects: state.adoptImportedProjects,
-                    replaceProjectsFromServer: state.replaceProjectsFromServer,
+                    mergeProjectSummaries: state.mergeProjectSummaries,
+                    isCurrent: () => !disposed && useCanvasStore.getState().syncScope === uid,
                     startSync: state.startSync,
                 }).catch((error) => {
                     useCanvasStore.getState().markBootstrapUnavailable(uid, error);

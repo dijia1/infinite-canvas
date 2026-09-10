@@ -111,13 +111,17 @@ func GetCanvasProject(ownerUID, id string) (model.CanvasProject, bool, error) {
 	return item, err == nil, err
 }
 
-func ListCanvasProjects(ownerUID string) ([]model.CanvasProject, error) {
+func ListCanvasProjects(ownerUID string) ([]model.CanvasSummary, error) {
 	database, err := DB()
 	if err != nil {
 		return nil, err
 	}
-	items := make([]model.CanvasProject, 0)
-	err = database.Where("owner_uid = ?", ownerUID).Order("updated_at desc").Find(&items).Error
+	items := make([]model.CanvasSummary, 0)
+	err = database.Model(&model.CanvasProject{}).
+		Select("id, title, revision, created_at, updated_at, CASE WHEN jsonb_typeof((document::jsonb) -> 'nodes') = 'array' THEN jsonb_array_length((document::jsonb) -> 'nodes') ELSE 0 END AS node_count, CASE WHEN jsonb_typeof((document::jsonb) -> 'connections') = 'array' THEN jsonb_array_length((document::jsonb) -> 'connections') ELSE 0 END AS connection_count").
+		Where("owner_uid = ?", ownerUID).
+		Order("updated_at desc").
+		Scan(&items).Error
 	return items, err
 }
 

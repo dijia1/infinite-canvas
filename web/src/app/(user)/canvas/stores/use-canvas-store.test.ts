@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import test, { mock } from "node:test";
 
 import { ApiRequestError } from "@/services/api/request";
-import type { CanvasProjectRecord, CanvasProjectsApi } from "@/services/api/canvas-projects";
+import type { CanvasProjectDetail, CanvasProjectsApi } from "@/services/api/canvas-projects";
 import type { PersistStorage, StateStorage, StorageValue } from "zustand/middleware";
 import { createCanvasStorage, createCanvasStore, type CanvasStore } from "./use-canvas-store.ts";
 
 const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 35));
 
-function serverProject(overrides: Partial<CanvasProjectRecord> = {}): CanvasProjectRecord {
+function serverProject(overrides: Partial<CanvasProjectDetail> = {}): CanvasProjectDetail {
     return {
         id: "project-1",
         title: "服务器画布",
@@ -27,7 +27,7 @@ function serverProject(overrides: Partial<CanvasProjectRecord> = {}): CanvasProj
 }
 
 function apiDouble(overrides: Partial<CanvasProjectsApi> = {}) {
-    const saved: CanvasProjectRecord[] = [];
+    const saved: CanvasProjectDetail[] = [];
     const api: CanvasProjectsApi = {
         list: async () => ({ items: [], total: 0 }),
         get: async () => serverProject(),
@@ -129,7 +129,7 @@ test("retries an unknown save result with its original request snapshot before s
 });
 
 test("duplicates a project as a fresh server-created project", async () => {
-    const created: CanvasProjectRecord[] = [];
+    const created: CanvasProjectDetail[] = [];
     const { api } = apiDouble({
         create: async (input) => {
             const record = serverProject({ ...input, revision: 1 });
@@ -745,8 +745,8 @@ test("adopts an imported revision cleanly only when the local snapshot has not c
 });
 
 test("waits for an in-flight save before conflict refresh and publishes one canonical generation", async () => {
-    let resolveUpdate!: (record: CanvasProjectRecord) => void;
-    const update = new Promise<CanvasProjectRecord>((resolve) => (resolveUpdate = resolve));
+    let resolveUpdate!: (record: CanvasProjectDetail) => void;
+    const update = new Promise<CanvasProjectDetail>((resolve) => (resolveUpdate = resolve));
     let getCount = 0;
     const { api } = apiDouble({
         update: async () => update,
@@ -776,7 +776,7 @@ test("waits for an in-flight save before conflict refresh and publishes one cano
 });
 
 test("normal save strips transient image URLs from the request and keeps the local preview", async () => {
-    let requestDocument: CanvasProjectRecord["document"] | undefined;
+    let requestDocument: CanvasProjectDetail["document"] | undefined;
     const { api } = apiDouble({
         update: async (id, input) => {
             requestDocument = input.document;
@@ -810,7 +810,7 @@ test("a project deleted during import adopts the revision and next sync deletes 
 });
 
 test("reconciles an accepted create after its response is lost and then saves newer local edits", async () => {
-    let remote: CanvasProjectRecord | undefined;
+    let remote: CanvasProjectDetail | undefined;
     let createCount = 0;
     const calls: string[] = [];
     const { api } = apiDouble({
@@ -843,7 +843,7 @@ test("reconciles an accepted create after its response is lost and then saves ne
 });
 
 test("deletes a remotely accepted create when the create response is lost after a local delete", async () => {
-    const createResponse = Promise.withResolvers<CanvasProjectRecord>();
+    const createResponse = Promise.withResolvers<CanvasProjectDetail>();
     const createStarted = Promise.withResolvers<void>();
     let remoteExists = false;
     const calls: string[] = [];
@@ -879,7 +879,7 @@ test("deletes a remotely accepted create when the create response is lost after 
 test("an older document acknowledgement stays pending until the latest nodes, edges and viewport are confirmed", async () => {
     const acknowledgements = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
-    const saved: CanvasProjectRecord[] = [];
+    const saved: CanvasProjectDetail[] = [];
     let request = 0;
     const { api } = apiDouble({ update: async (id, input) => {
         const index = request++;

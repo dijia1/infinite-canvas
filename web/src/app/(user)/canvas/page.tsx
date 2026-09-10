@@ -3,12 +3,13 @@
 import { useRouter } from "next/navigation";
 import { Button } from "antd";
 import { Plus } from "lucide-react";
+import { useMemo } from "react";
 
 import { appPath } from "@/lib/app-path";
 import { CanvasDeleteProjectsDialog } from "./components/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "./components/canvas-project-card";
 import { CanvasBootstrapFeedback } from "./components/canvas-sync-feedback";
-import { useCanvasStore } from "./stores/use-canvas-store";
+import { selectCanvasProjectSummaries, useCanvasStore } from "./stores/use-canvas-store";
 import { useCanvasUiStore } from "./stores/use-canvas-ui-store";
 
 export default function CanvasPage() {
@@ -16,7 +17,11 @@ export default function CanvasPage() {
     const hydrated = useCanvasStore((state) => state.hydrated);
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
     const ready = hydrated && readyForCanvasMutations;
-    const projects = useCanvasStore((state) => state.projects);
+    const summaries = useCanvasStore((state) => state.summaries);
+    const cachedProjects = useCanvasStore((state) => state.projects);
+    const projectSync = useCanvasStore((state) => state.projectSync);
+    const summariesLoaded = useCanvasStore((state) => state.summariesLoaded);
+    const projects = useMemo(() => selectCanvasProjectSummaries({ summaries, projects: cachedProjects, projectSync, summariesLoaded }), [cachedProjects, projectSync, summaries, summariesLoaded]);
     const createProject = useCanvasStore((state) => state.createProject);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
 

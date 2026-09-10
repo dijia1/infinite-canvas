@@ -4,9 +4,10 @@ import { persist, type PersistStorage, type StateStorage, type StorageValue } fr
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { canvasDocumentStorage } from "@/lib/localforage-storage";
-import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectRecord, type CanvasProjectsApi, type CanvasProjectWriteTrace } from "@/services/api/canvas-projects";
+import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectDetail, type CanvasSummary, type CanvasProjectsApi, type CanvasProjectWriteTrace } from "@/services/api/canvas-projects";
 import { ApiRequestError } from "@/services/api/request";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
+import { summarizeCanvasProject } from "@/services/canvas-project-summary";
 import { mergeNormalizedLegacyNodes } from "@/services/canvas-project-bootstrap";
 import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-mask/mask-resources";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
@@ -58,6 +59,8 @@ export type CanvasStore = {
     readyForCanvasMutations: boolean;
     canonicalGeneration: number;
     projects: CanvasProject[];
+    summaries: CanvasSummary[];
+    summariesLoaded: boolean;
     projectSync: Record<string, CanvasProjectSync>;
     blockedProjectSync: Record<string, true>;
     syncScope: string | null;
@@ -68,9 +71,11 @@ export type CanvasStore = {
     retryBootstrap: () => Promise<void>;
     startSync: (scope: string) => void;
     setProjectSyncBlocked: (id: string, blocked: boolean) => void;
-    adoptImportedProjects: (projects: CanvasProjectRecord[], snapshots: Map<string, CanvasProject>) => void;
+    adoptImportedProjects: (projects: CanvasProjectDetail[], snapshots: Map<string, CanvasProject>) => void;
     applyLegacyImageNormalization: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean;
-    replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
+    replaceProjectsFromServer: (projects: CanvasProjectDetail[], notifyEditor?: boolean) => void;
+    mergeProjectSummaries: (summaries: CanvasSummary[]) => void;
+    ensureProjectDetail: (id: string, options?: { revalidate?: boolean }) => Promise<CanvasProject>;
     refreshProjectFromServer: (id: string) => Promise<void>;
     retryPendingSaves: () => Promise<void>;
     createProject: (title?: string) => string;
@@ -145,7 +150,7 @@ function canvasDocument(project: CanvasProject): CanvasProjectDocument {
     });
 }
 
-function localProject(project: CanvasProjectRecord): CanvasProject {
+function localProject(project: CanvasProjectDetail): CanvasProject {
     return sanitizeCanvasProject({
         id: project.id,
         title: project.title,
@@ -169,11 +174,7 @@ function preserveLocalImageUploads(server: CanvasProject, local: CanvasProject):
     const allNodeIds = new Set([...serverNodeIds, ...localNodeIds]);
     const serverConnectionIds = new Set(server.connections.map((connection) => connection.id));
     const localConnections = local.connections.filter(
-        (connection) =>
-            !serverConnectionIds.has(connection.id) &&
-            (localNodeIds.has(connection.fromNodeId) || localNodeIds.has(connection.toNodeId)) &&
-            allNodeIds.has(connection.fromNodeId) &&
-            allNodeIds.has(connection.toNodeId),
+        (connection) => !serverConnectionIds.has(connection.id) && (localNodeIds.has(connection.fromNodeId) || localNodeIds.has(connection.toNodeId)) && allNodeIds.has(connection.fromNodeId) && allNodeIds.has(connection.toNodeId),
     );
     return { ...server, nodes: [...server.nodes, ...localNodes], connections: [...server.connections, ...localConnections] };
 }
@@ -185,18 +186,22 @@ function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
 }
 
 export function createCanvasStorage(storage: StateStorage = canvasDocumentStorage): PersistStorage<CanvasStore> {
+    const cachedSummaries = new Map<string, CanvasSummary[]>();
     const cachedProjects = new Map<string, CanvasStore["projects"]>();
     const projectsKey = (name: string) => `${name}:projects`;
     const syncKey = (name: string) => `${name}:sync`;
+    const summariesKey = (name: string) => `${name}:summaries`;
 
     return {
         getItem: async (name) => {
-            const [storedProjects, storedSync] = await Promise.all([storage.getItem(projectsKey(name)), storage.getItem(syncKey(name))]);
+            const [storedProjects, storedSync, storedSummaries] = await Promise.all([storage.getItem(projectsKey(name)), storage.getItem(syncKey(name)), storage.getItem(summariesKey(name))]);
             if (storedProjects) {
                 const projects = JSON.parse(storedProjects) as CanvasStore["projects"];
                 const projectSync = storedSync ? (JSON.parse(storedSync) as CanvasStore["projectSync"]) : {};
-                const parsed = sanitizeStoredCanvasValue({ state: { projects, projectSync } } as StorageValue<CanvasStore>);
+                const summaries: CanvasSummary[] = storedSummaries ? JSON.parse(storedSummaries) : [];
+                const parsed = sanitizeStoredCanvasValue({ state: { projects, projectSync, summaries } } as StorageValue<CanvasStore>);
                 cachedProjects.set(name, parsed.state.projects);
+                cachedSummaries.set(name, summaries);
                 return parsed;
             }
 
@@ -205,16 +210,21 @@ export function createCanvasStorage(storage: StateStorage = canvasDocumentStorag
             return sanitizeStoredCanvasValue(JSON.parse(legacyValue) as StorageValue<CanvasStore>);
         },
         setItem: async (name, value) => {
-            const state = value.state as Pick<CanvasStore, "projects" | "projectSync">;
+            const state = value.state as Pick<CanvasStore, "projects" | "projectSync" | "summaries">;
             if (cachedProjects.get(name) !== state.projects) {
                 await storage.setItem(projectsKey(name), JSON.stringify(state.projects));
                 cachedProjects.set(name, state.projects);
+            }
+            if (cachedSummaries.get(name) !== state.summaries) {
+                await storage.setItem(summariesKey(name), JSON.stringify(state.summaries || []));
+                cachedSummaries.set(name, state.summaries || []);
             }
             await storage.setItem(syncKey(name), JSON.stringify(state.projectSync));
         },
         removeItem: async (name) => {
             cachedProjects.delete(name);
-            await Promise.all([storage.removeItem(projectsKey(name)), storage.removeItem(syncKey(name)), storage.removeItem(name)]);
+            cachedSummaries.delete(name);
+            await Promise.all([storage.removeItem(projectsKey(name)), storage.removeItem(syncKey(name)), storage.removeItem(summariesKey(name)), storage.removeItem(name)]);
         },
     };
 }
@@ -226,9 +236,11 @@ function withPersistenceBarrier(storage: PersistStorage<CanvasStore>) {
         storage: {
             getItem: (name: string) => storage.getItem(name),
             setItem: (name: string, value: StorageValue<CanvasStore>) => {
-                const write = writeQueue.catch(() => undefined).then(async () => {
-                    await storage.setItem(name, value);
-                });
+                const write = writeQueue
+                    .catch(() => undefined)
+                    .then(async () => {
+                        await storage.setItem(name, value);
+                    });
                 writeQueue = write;
                 latestWrite = write;
                 return write;
@@ -246,7 +258,7 @@ function withPersistenceBarrier(storage: PersistStorage<CanvasStore>) {
 }
 
 function hasUnsyncedChanges(metadata?: CanvasProjectSync) {
-    return Boolean(metadata && (metadata.dirty || metadata.pending || metadata.saving || metadata.conflict));
+    return Boolean(metadata && (metadata.dirty || metadata.pending || metadata.saving || metadata.conflict || metadata.unknownRequest));
 }
 
 function canvasProjectPatchChanges(project: CanvasProject, patch: CanvasProjectPatch) {
@@ -273,8 +285,24 @@ function sameCanvasJSON(left: unknown, right: unknown): boolean {
     return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && sameCanvasJSON(leftRecord[key], rightRecord[key]));
 }
 
-function serverRecordMatchesSubmittedProject(record: CanvasProjectRecord, project: CanvasProject, document: CanvasProjectDocument) {
+function serverRecordMatchesSubmittedProject(record: CanvasProjectDetail, project: CanvasProject, document: CanvasProjectDocument) {
     return record.title === project.title && sameCanvasJSON(record.document, document);
+}
+
+export function selectCanvasProjectSummaries(state: Pick<CanvasStore, "summaries" | "projects" | "projectSync" | "summariesLoaded">): CanvasSummary[] {
+    const items = new Map(state.summaries.map((summary) => [summary.id, summary]));
+    for (const project of state.projects) {
+        const sync = state.projectSync[project.id];
+        if (!state.summariesLoaded || !sync || sync.serverRevision === null || hasUnsyncedChanges(sync)) {
+            items.set(project.id, { id: project.id, title: project.title, createdAt: project.createdAt, updatedAt: project.updatedAt, revision: sync?.serverRevision ?? 0, nodeCount: project.nodes.length, connectionCount: project.connections.length });
+        }
+    }
+    return [...items.values()]
+        .filter((item) => {
+            const sync = state.projectSync[item.id];
+            return sync?.operation !== "delete" || sync.conflict;
+        })
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 export function sanitizeCanvasProject(project: CanvasProject): CanvasProject {
@@ -302,7 +330,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
     const inFlight = new Set<string>();
     const inFlightDone = new Map<string, Promise<void>>();
     const finishInFlight = new Map<string, () => void>();
-    const refreshing = new Set<string>();
+    const refreshing = new Map<string, number>();
+    const detailLoads = new Map<string, Promise<CanvasProject>>();
+    const detailGenerations = new Map<string, number>();
+    let catalogGeneration = 0;
     const persistence = withPersistenceBarrier(options.storage || createCanvasStorage());
     let subscribedToOnline = false;
 
@@ -348,7 +379,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     if (state.syncEnabled && !conflict && !state.blockedProjectSync[id]) scheduleSave(id);
                 };
 
-                    const saveProject = async (id: string) => {
+                const saveProject = async (id: string) => {
                     let state = get();
                     let metadata = state.projectSync[id];
                     if (refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
@@ -411,6 +442,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     try {
                         if (operation === "delete") {
                             await api.delete(id, metadata.serverRevision ?? 1, trace);
+                            set((state) => ({ summaries: state.summaries.filter((item) => item.id !== id) }));
                             updateSync(id, () => undefined);
                         } else if (project && submittedDocument) {
                             const record =
@@ -422,15 +454,27 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                           createdAt: project.createdAt,
                                           updatedAt: project.updatedAt,
                                       })
-                                    : await api.update(id, {
-                                      revision: submittedRevision ?? 1,
-                                      title: submittedTitle || project.title,
-                                      document: submittedDocument,
-                                  }, trace);
+                                    : await api.update(
+                                          id,
+                                          {
+                                              revision: submittedRevision ?? 1,
+                                              title: submittedTitle || project.title,
+                                              document: submittedDocument,
+                                          },
+                                          trace,
+                                      );
+                            set((state) => ({ summaries: [...state.summaries.filter((item) => item.id !== id), summarizeCanvasProject(record)] }));
                             updateSync(id, (current) => {
                                 if (!current) return cleanSyncState(record.revision);
                                 const latestProject = get().projects.find((item) => item.id === id);
-                                const changedWhileSaving = current.dirty || current.pending || current.operation !== operation || !latestProject || latestProject.title !== submittedTitle || !sameCanvasJSON(canvasDocument(latestProject), submittedDocument) || (metadata.serverRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument));
+                                const changedWhileSaving =
+                                    current.dirty ||
+                                    current.pending ||
+                                    current.operation !== operation ||
+                                    !latestProject ||
+                                    latestProject.title !== submittedTitle ||
+                                    !sameCanvasJSON(canvasDocument(latestProject), submittedDocument) ||
+                                    (metadata.serverRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument));
                                 const { unknownRequest: _unknownRequest, ...synced } = current;
                                 return {
                                     ...synced,
@@ -460,7 +504,8 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                     offline: resultUnknown || !isOnline(),
                                     error: error instanceof Error ? error.message : "画布保存失败",
                                     conflict,
-                                    unknownRequest: resultUnknown && submittedDocument && submittedTitle && submittedRevision !== null ? { trace, baseRevision: submittedRevision, title: submittedTitle, document: submittedDocument } : current.unknownRequest,
+                                    unknownRequest:
+                                        resultUnknown && submittedDocument && submittedTitle && submittedRevision !== null ? { trace, baseRevision: submittedRevision, title: submittedTitle, document: submittedDocument } : current.unknownRequest,
                                 },
                             };
                             const shouldRestoreDelete = conflict && operation === "delete" && current.deletedProject && !state.projects.some((item) => item.id === id);
@@ -487,6 +532,8 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     readyForCanvasMutations: false,
                     canonicalGeneration: 0,
                     projects: [],
+                    summaries: [],
+                    summariesLoaded: false,
                     projectSync: {},
                     blockedProjectSync: {},
                     syncScope: null,
@@ -515,11 +562,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         try {
                             await retry();
                         } finally {
-                            set((state) =>
-                                state.bootstrapStatus === "loading" && state.syncScope === previous.scope
-                                    ? { bootstrapStatus: previous.status, bootstrapError: previous.error }
-                                    : state,
-                            );
+                            set((state) => (state.bootstrapStatus === "loading" && state.syncScope === previous.scope ? { bootstrapStatus: previous.status, bootstrapError: previous.error } : state));
                         }
                     },
                     startSync: (scope) => {
@@ -562,6 +605,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             }
                             return { projectSync };
                         });
+                        if (records.length) get().replaceProjectsFromServer(records);
                     },
                     applyLegacyImageNormalization: (id, capturedNodes, normalizedNodes) => {
                         if (isProjectSyncBlocked(id)) return false;
@@ -579,52 +623,87 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         if (changed) queueChange(id);
                         return complete;
                     },
-                    replaceProjectsFromServer: (records) => {
+                    mergeProjectSummaries: (records) => {
+                        catalogGeneration++;
                         set((state) => {
-                            const localById = new Map(state.projects.map((project) => [project.id, project]));
-                            const projects: CanvasProject[] = [];
-                            const included = new Set<string>();
-                            const projectSync: Record<string, CanvasProjectSync> = {};
-
+                            const projectSync = { ...state.projectSync };
+                            const summaries = records.map(({ id, title, revision, createdAt, updatedAt, nodeCount, connectionCount }) => {
+                                // A catalog revision is never the base of an existing local document.
+                                if (!hasUnsyncedChanges(projectSync[id]) && !state.projects.some((project) => project.id === id)) projectSync[id] = cleanSyncState(revision);
+                                return { id, title, revision, createdAt, updatedAt, nodeCount, connectionCount };
+                            });
+                            return { summaries, summariesLoaded: true, projectSync };
+                        });
+                    },
+                    replaceProjectsFromServer: (records, notifyEditor = true) => {
+                        set((state) => {
+                            const projects = new Map(state.projects.map((project) => [project.id, project]));
+                            const summaries = new Map(state.summaries.map((summary) => [summary.id, summary]));
+                            const projectSync = { ...state.projectSync };
                             for (const record of records) {
-                                const metadata = state.projectSync[record.id];
-                                const local = localById.get(record.id);
+                                const metadata = projectSync[record.id];
+                                const local = projects.get(record.id);
+                                summaries.set(record.id, summarizeCanvasProject(record));
                                 if (hasUnsyncedChanges(metadata)) {
-                                    if (local) {
-                                        projects.push(local);
-                                        included.add(record.id);
-                                    }
-                                    projectSync[record.id] = metadata?.serverRevision === null && !metadata.conflict ? { ...metadata, serverRevision: record.revision } : (metadata as CanvasProjectSync);
+                                    if (metadata?.serverRevision === null && !metadata.conflict) projectSync[record.id] = { ...metadata, serverRevision: record.revision };
                                     continue;
                                 }
-                                projects.push(local ? preserveLocalImageUploads(localProject(record), local) : localProject(record));
-                                included.add(record.id);
+                                projects.set(record.id, local ? preserveLocalImageUploads(localProject(record), local) : localProject(record));
                                 projectSync[record.id] = cleanSyncState(record.revision);
                             }
-
-                            for (const project of state.projects) {
-                                const metadata = state.projectSync[project.id];
-                                if (!included.has(project.id) && hasUnsyncedChanges(metadata)) {
-                                    projects.push(project);
-                                    projectSync[project.id] = metadata as CanvasProjectSync;
-                                }
-                            }
-                            for (const [id, metadata] of Object.entries(state.projectSync)) {
-                                if (!(id in projectSync) && hasUnsyncedChanges(metadata)) projectSync[id] = metadata;
-                            }
-
-                            return { projects, projectSync, canonicalGeneration: state.canonicalGeneration + 1 };
+                            return { projects: [...projects.values()], summaries: [...summaries.values()], projectSync, canonicalGeneration: state.canonicalGeneration + (notifyEditor ? 1 : 0) };
                         });
+                    },
+                    ensureProjectDetail: async (id, options = {}) => {
+                        const initial = get();
+                        const scope = initial.syncScope;
+                        const local = initial.projects.find((project) => project.id === id);
+                        const sync = initial.projectSync[id];
+                        const summary = initial.summaries.find((item) => item.id === id);
+                        if (sync?.operation === "delete") throw new Error("画布已删除或正在删除");
+                        if (local && (hasUnsyncedChanges(sync) || sync?.serverRevision === null || !scope || scope === CANVAS_GUEST_SCOPE || !initial.syncEnabled)) return local;
+                        if (local && !options.revalidate && sync?.serverRevision != null && (!summary || summary.revision <= sync.serverRevision)) return local;
+                        const key = JSON.stringify([scope, id]);
+                        const existing = detailLoads.get(key);
+                        if (existing) return existing;
+                        const generation = detailGenerations.get(id) || 0;
+                        const catalog = catalogGeneration;
+                        const load = (async () => {
+                            const record = await api.get(id);
+                            const state = get();
+                            const latest = state.projects.find((project) => project.id === id);
+                            const current = state.projectSync[id];
+                            if (state.syncScope !== scope || (detailGenerations.get(id) || 0) !== generation || current?.operation === "delete") throw new Error("画布加载已失效，请重试");
+                            if (catalogGeneration !== catalog && state.summariesLoaded && !state.summaries.some((item) => item.id === id)) throw new Error("画布加载已失效，请重试");
+                            if (latest && (latest !== local || hasUnsyncedChanges(current))) return latest;
+                            if (record.id !== id || !Array.isArray(record.document?.nodes) || !Array.isArray(record.document?.connections)) throw new Error("画布详情数据无效");
+                            const knownRevision = state.summaries.find((item) => item.id === id)?.revision ?? 0;
+                            if (record.revision < knownRevision || record.revision < (current?.serverRevision ?? 0)) throw new Error("画布版本已更新，请重新加载");
+                            get().replaceProjectsFromServer([record], false);
+                            return get().projects.find((project) => project.id === id)!;
+                        })();
+                        detailLoads.set(key, load);
+                        try {
+                            return await load;
+                        } finally {
+                            if (detailLoads.get(key) === load) detailLoads.delete(key);
+                        }
                     },
                     refreshProjectFromServer: async (id) => {
                         if (!get().syncEnabled) return;
+                        const scope = get().syncScope;
+                        const generation = (detailGenerations.get(id) || 0) + 1;
+                        detailGenerations.set(id, generation);
+                        const isCurrent = () => get().syncScope === scope && detailGenerations.get(id) === generation;
                         const currentTimer = saveTimers.get(id);
                         if (currentTimer) clearTimeout(currentTimer);
                         saveTimers.delete(id);
-                        refreshing.add(id);
+                        refreshing.set(id, generation);
                         try {
                             await inFlightDone.get(id);
+                            if (!isCurrent()) throw new Error("画布刷新已失效，请重试");
                             const record = await api.get(id);
+                            if (!isCurrent()) throw new Error("画布刷新已失效，请重试");
                             const serverProject = localProject(record);
                             set((state) => {
                                 const index = state.projects.findIndex((item) => item.id === id);
@@ -632,13 +711,22 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                 const projects = [...state.projects];
                                 if (index >= 0) projects[index] = project;
                                 else projects.unshift(project);
-                                return { projects, projectSync: { ...state.projectSync, [id]: cleanSyncState(record.revision) }, canonicalGeneration: state.canonicalGeneration + 1 };
+                                return {
+                                    projects,
+                                    summaries: [...state.summaries.filter((item) => item.id !== id), summarizeCanvasProject(record)],
+                                    projectSync: { ...state.projectSync, [id]: cleanSyncState(record.revision) },
+                                    canonicalGeneration: state.canonicalGeneration + 1,
+                                };
                             });
                         } catch (error) {
-                            updateSync(id, (current) => (current ? { ...current, saving: false, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
+                            if (isCurrent()) updateSync(id, (current) => (current ? { ...current, saving: false, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
                             throw error;
                         } finally {
-                            refreshing.delete(id);
+                            if (refreshing.get(id) === generation) {
+                                refreshing.delete(id);
+                                const current = get().projectSync[id];
+                                if (get().syncScope === scope && current?.operation === "delete" && current.pending && !current.conflict) scheduleSave(id);
+                            }
                         }
                     },
                     retryPendingSaves: async () => {
@@ -697,7 +785,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         const id = nanoid();
                         const project = createCanvasProjectCopy(source, {
                             id,
-                            title: nextCanvasProjectCopyTitle(source.title, get().projects.map((item) => item.title)),
+                            title: nextCanvasProjectCopyTitle(
+                                source.title,
+                                selectCanvasProjectSummaries(get()).map((item) => item.title),
+                            ),
                             now,
                         });
                         set((state) => ({ projects: [project, ...state.projects] }));
@@ -730,7 +821,10 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             saveTimers.delete(id);
                             const syncScope = get().syncScope;
                             if (!syncScope || syncScope === CANVAS_GUEST_SCOPE) continue;
+                            detailGenerations.set(id, (detailGenerations.get(id) || 0) + 1);
                             const deletedProject = current.projects.find((project) => project.id === id);
+                            const summary = current.summaries.find((item) => item.id === id);
+                            if (!get().projectSync[id] && summary) updateSync(id, () => cleanSyncState(summary.revision));
                             queueChange(id, "delete", deletedProject);
                         }
                     },
@@ -757,6 +851,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                 partialize: (state) =>
                     ({
                         projects: state.projects,
+                        summaries: state.summaries,
                         projectSync: state.projectSync,
                     }) as StorageValue<CanvasStore>["state"],
             },

@@ -1,8 +1,9 @@
 import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
 import { uploadUserImage } from "@/services/api/image";
-import { canvasProjectsApi, type CanvasProjectRecord, type CanvasProjectsApi, type CreateCanvasProjectInput } from "@/services/api/canvas-projects";
+import { canvasProjectsApi, type CanvasProjectDetail, type CanvasSummary, type CanvasProjectsApi, type CreateCanvasProjectInput } from "@/services/api/canvas-projects";
 import { getImageBlob, imageStorageKeyForMedia, uploadImage } from "@/services/image-storage";
+import { summarizeCanvasProject } from "./canvas-project-summary";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
 
 type StableImage = {
@@ -24,8 +25,9 @@ type CanvasBootstrapOptions = {
     getProjects: () => CanvasProject[];
     api?: Pick<CanvasProjectsApi, "list" | "importProjects">;
     persistNormalizedProject?: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean | void;
-    adoptImportedProjects?: (projects: CanvasProjectRecord[], snapshots: Map<string, CanvasProject>) => void;
-    replaceProjectsFromServer: (projects: CanvasProjectRecord[]) => void;
+    adoptImportedProjects?: (projects: CanvasProjectDetail[], snapshots: Map<string, CanvasProject>) => void;
+    mergeProjectSummaries: (projects: CanvasSummary[]) => void;
+    isCurrent?: () => boolean;
     startSync: (uid: string) => void;
     imageDependencies?: LegacyCanvasImageDependencies;
 };
@@ -185,11 +187,13 @@ export async function bootstrapCanvasProjects(options: CanvasBootstrapOptions) {
 
     const api = options.api || canvasProjectsApi;
     const server = await api.list();
+    if (options.isCurrent?.() === false) return false;
     const serverIds = new Set(server.items.map((project) => project.id));
     const missingLocalProjects = options.getProjects().filter((project) => !serverIds.has(project.id));
     const normalizedProjects: CanvasProject[] = [];
     for (const project of missingLocalProjects) {
         const normalized = await normalizeLegacyCanvasProject(project, options.imageDependencies || defaultImageDependencies);
+        if (options.isCurrent?.() === false) return false;
         if (normalized.nodes.some((node, index) => node !== project.nodes[index])) {
             const applied = options.persistNormalizedProject?.(project.id, project.nodes, normalized.nodes);
             if (applied === false) throw new Error("画布图片已在迁移期间发生变化，请稍后重试");
@@ -200,15 +204,16 @@ export async function bootstrapCanvasProjects(options: CanvasBootstrapOptions) {
     const normalizedIds = new Set(normalizedProjects.map((project) => project.id));
     const importSnapshots = new Map(options.getProjects().filter((project) => normalizedIds.has(project.id)).map((project) => [project.id, project]));
     const importInputs = Array.from(importSnapshots.values()).map(projectImportInput);
-    const importedItems: CanvasProjectRecord[] = [];
+    const importedItems: CanvasProjectDetail[] = [];
     for (let index = 0; index < importInputs.length; index += CANVAS_IMPORT_BATCH_SIZE) {
         const imported = await api.importProjects(importInputs.slice(index, index + CANVAS_IMPORT_BATCH_SIZE));
+        if (options.isCurrent?.() === false) return false;
         importedItems.push(...imported.items);
     }
     options.adoptImportedProjects?.(importedItems, importSnapshots);
     const combined = new Map(server.items.map((project) => [project.id, project]));
-    importedItems.forEach((project) => combined.set(project.id, project));
-    options.replaceProjectsFromServer(Array.from(combined.values()));
+    importedItems.forEach((project) => combined.set(project.id, summarizeCanvasProject(project)));
+    options.mergeProjectSummaries(Array.from(combined.values()));
     options.startSync(options.uid);
     return true;
 }

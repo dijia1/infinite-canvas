@@ -96,22 +96,22 @@ func CreateCanvasProject(_ context.Context, user PortalUser, input CanvasProject
 	return created, nil
 }
 
-func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasProjectInput) (model.CanvasProjectList, error) {
+func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasProjectInput) (model.CanvasProjectImportResult, error) {
 	if strings.TrimSpace(user.UID) == "" {
-		return model.CanvasProjectList{}, canvasProjectValidationError{message: "未经过 Portal Gateway 身份验证"}
+		return model.CanvasProjectImportResult{}, canvasProjectValidationError{message: "未经过 Portal Gateway 身份验证"}
 	}
 	if len(inputs) == 0 || len(inputs) > 200 {
-		return model.CanvasProjectList{}, canvasProjectValidationError{message: "导入画布数量应为 1-200 个"}
+		return model.CanvasProjectImportResult{}, canvasProjectValidationError{message: "导入画布数量应为 1-200 个"}
 	}
 	seen := make(map[string]struct{}, len(inputs))
 	items := make([]model.CanvasProject, 0, len(inputs))
 	for _, input := range inputs {
 		id, title, document, err := normalizeCanvasProjectInput(input)
 		if err != nil {
-			return model.CanvasProjectList{}, err
+			return model.CanvasProjectImportResult{}, err
 		}
 		if _, exists := seen[id]; exists {
-			return model.CanvasProjectList{}, canvasProjectValidationError{message: "导入画布 ID 重复"}
+			return model.CanvasProjectImportResult{}, canvasProjectValidationError{message: "导入画布 ID 重复"}
 		}
 		seen[id] = struct{}{}
 		createdAt := strings.TrimSpace(input.CreatedAt)
@@ -122,9 +122,9 @@ func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasP
 	}
 	imported, err := repository.ImportCanvasProjects(items)
 	if err != nil {
-		return model.CanvasProjectList{}, canvasMediaSaveError(err)
+		return model.CanvasProjectImportResult{}, canvasMediaSaveError(err)
 	}
-	return model.CanvasProjectList{Items: imported, Total: len(imported)}, nil
+	return model.CanvasProjectImportResult{Items: imported, Total: len(imported)}, nil
 }
 
 func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput, requestID string) (model.CanvasProject, bool, error) {

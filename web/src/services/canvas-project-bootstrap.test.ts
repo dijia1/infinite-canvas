@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { CanvasNodeType } from "@/app/(user)/canvas/types";
 import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
-import type { CanvasProjectRecord, CanvasProjectsApi, CreateCanvasProjectInput } from "./api/canvas-projects";
+import type { CanvasProjectDetail, CanvasProjectsApi, CreateCanvasProjectInput } from "./api/canvas-projects";
 import { bootstrapCanvasProjects, mergeNormalizedLegacyNodes, normalizeLegacyCanvasProject, retryCanvasBootstrapOnOnline } from "./canvas-project-bootstrap.ts";
 
 function localProject(overrides: Partial<CanvasProject> = {}): CanvasProject {
@@ -22,7 +22,7 @@ function localProject(overrides: Partial<CanvasProject> = {}): CanvasProject {
     };
 }
 
-function serverProject(id: string): CanvasProjectRecord {
+function serverProject(id: string): CanvasProjectDetail {
     const project = localProject({ id, title: `服务器 ${id}` });
     return {
         id: project.id,
@@ -47,14 +47,14 @@ test("lists first, imports every missing local ID once, then replaces and enable
     const api = {
         list: async () => {
             events.push("list");
-            return { items: [remote], total: 1 };
+            return { items: [{ id: remote.id, title: remote.title, revision: remote.revision, createdAt: remote.createdAt, updatedAt: remote.updatedAt, nodeCount: 0, connectionCount: 0 }], total: 1 };
         },
         importProjects: async (projects) => {
             events.push(`import:${projects.map((project) => project.id).join(",")}`);
             return { items: [imported], total: 1 };
         },
     } as Pick<CanvasProjectsApi, "list" | "importProjects">;
-    let replacement: CanvasProjectRecord[] = [];
+    let replacement: import("./api/canvas-projects").CanvasSummary[] = [];
 
     await bootstrapCanvasProjects({
         uid: "portal-user",
@@ -63,7 +63,7 @@ test("lists first, imports every missing local ID once, then replaces and enable
             return [localProject(), localProject({ id: "remote-project" })];
         },
         api,
-        replaceProjectsFromServer: (projects) => {
+        mergeProjectSummaries: (projects) => {
             events.push("replace");
             replacement = projects;
         },
@@ -92,8 +92,8 @@ test("lists first, imports every missing local ID once, then replaces and enable
 test("chunks more than two hundred legacy projects to the backend import limit", async () => {
     const local = Array.from({ length: 205 }, (_, index) => localProject({ id: `legacy-${String(index).padStart(3, "0")}` }));
     const chunkSizes: number[] = [];
-    let adopted: CanvasProjectRecord[] = [];
-    let replacement: CanvasProjectRecord[] = [];
+    let adopted: CanvasProjectDetail[] = [];
+    let replacement: import("./api/canvas-projects").CanvasSummary[] = [];
 
     await bootstrapCanvasProjects({
         uid: "portal-user",
@@ -110,7 +110,7 @@ test("chunks more than two hundred legacy projects to the backend import limit",
             adopted = projects;
             assert.equal(snapshots.size, 205);
         },
-        replaceProjectsFromServer: (projects) => {
+        mergeProjectSummaries: (projects) => {
             replacement = projects;
         },
         startSync: () => undefined,
@@ -124,10 +124,10 @@ test("chunks more than two hundred legacy projects to the backend import limit",
 
 test("imports a project created while listing and snapshots later rename/delete races for revision adoption", async () => {
     let projects = [localProject({ id: "existing" })];
-    let resolveList!: (value: { items: CanvasProjectRecord[]; total: number }) => void;
-    const list = new Promise<{ items: CanvasProjectRecord[]; total: number }>((resolve) => (resolveList = resolve));
-    let resolveImport!: (value: { items: CanvasProjectRecord[]; total: number }) => void;
-    const importing = new Promise<{ items: CanvasProjectRecord[]; total: number }>((resolve) => (resolveImport = resolve));
+    let resolveList!: (value: { items: import("./api/canvas-projects").CanvasSummary[]; total: number }) => void;
+    const list = new Promise<{ items: import("./api/canvas-projects").CanvasSummary[]; total: number }>((resolve) => (resolveList = resolve));
+    let resolveImport!: (value: { items: CanvasProjectDetail[]; total: number }) => void;
+    const importing = new Promise<{ items: CanvasProjectDetail[]; total: number }>((resolve) => (resolveImport = resolve));
     let importedIds: string[] = [];
     let adoptedSnapshot: CanvasProject | undefined;
 
@@ -144,12 +144,12 @@ test("imports a project created while listing and snapshots later rename/delete 
         adoptImportedProjects: (_records, snapshots) => {
             adoptedSnapshot = snapshots.get("created-during-list");
         },
-        replaceProjectsFromServer: () => undefined,
+        mergeProjectSummaries: () => undefined,
         startSync: () => undefined,
     });
 
     projects = [...projects, localProject({ id: "created-during-list", title: "导入快照" })];
-    resolveList({ items: [serverProject("existing")], total: 1 });
+    resolveList({ items: [{ id: "existing", title: "服务器 existing", revision: 1, createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-01T01:00:00.000Z", nodeCount: 0, connectionCount: 0 }], total: 1 });
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(importedIds, ["created-during-list"]);
     projects = projects.map((project) => (project.id === "created-during-list" ? { ...project, title: "导入中重命名" } : project));
@@ -176,7 +176,7 @@ test("does not replace local data or enable sync when the initial server list fa
                         return { items: [], total: 0 };
                     },
                 },
-                replaceProjectsFromServer: () => events.push("replace"),
+                mergeProjectSummaries: () => events.push("replace"),
                 startSync: () => events.push("start"),
                 imageDependencies: {
                     getImageBlob: async () => null,
@@ -271,7 +271,7 @@ test("bypasses stable media nodes with local blob previews while importing a san
             persisted = true;
             return false;
         },
-        replaceProjectsFromServer: () => undefined,
+        mergeProjectSummaries: () => undefined,
         startSync: () => undefined,
         imageDependencies: {
             getImageBlob: async () => {
@@ -410,7 +410,7 @@ test("persists normalized legacy media locally so a failed import retry does not
             persistNormalizedProject: (id, capturedNodes, normalizedNodes) => {
                 projects = projects.map((project) => (project.id === id ? { ...project, nodes: mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes).nodes } : project));
             },
-            replaceProjectsFromServer: () => undefined,
+            mergeProjectSummaries: () => undefined,
             startSync: () => undefined,
             imageDependencies: {
                 getImageBlob: async () => null,
@@ -462,7 +462,7 @@ test("merges delayed legacy media normalization into the current project without
             projects = projects.map((item) => (item.id === id ? { ...item, nodes: merged.nodes } : item));
             return merged.complete;
         },
-        replaceProjectsFromServer: () => undefined,
+        mergeProjectSummaries: () => undefined,
         startSync: () => undefined,
         imageDependencies: {
             getImageBlob: async () => null,

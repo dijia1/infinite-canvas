@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createCanvasStore } from "../stores/use-canvas-store.ts";
-import type { CanvasProjectRecord, CanvasProjectsApi } from "@/services/api/canvas-projects";
+import type { CanvasProjectDetail, CanvasProjectsApi } from "@/services/api/canvas-projects";
 import { createCanvasCanonicalRestore } from "./canvas-canonical-restore.ts";
 
-function record(title: string, revision: number): CanvasProjectRecord {
+function record(title: string, revision: number): CanvasProjectDetail {
     return { id: "project-1", title, revision, createdAt: "2026-09-02T00:00:00Z", updatedAt: "2026-09-02T00:00:00Z", document: { nodes: [], connections: [], backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } } };
 }
 

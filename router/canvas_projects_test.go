@@ -400,6 +400,10 @@ func TestCanvasProjectShareCopiesImageIntoRecipientLibrary(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("recipient projects = %#v, %v", projects, err)
 	}
+	project, found, err := repository.GetCanvasProject(recipient, projects[0].ID)
+	if err != nil || !found {
+		t.Fatalf("recipient project = %#v, found=%t, %v", project, found, err)
+	}
 	secondProjects, err := repository.ListCanvasProjects(secondRecipient)
 	if err != nil || len(secondProjects) != 1 {
 		t.Fatalf("second recipient projects = %#v, %v", secondProjects, err)
@@ -411,8 +415,8 @@ func TestCanvasProjectShareCopiesImageIntoRecipientLibrary(t *testing.T) {
 			} `json:"metadata"`
 		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(projects[0].Document, &copied); err != nil || len(copied.Nodes) != 2 || copied.Nodes[0].Metadata.MediaID == mediaID || copied.Nodes[0].Metadata.MediaID == "" || copied.Nodes[0].Metadata.MediaID != copied.Nodes[1].Metadata.MediaID {
-		t.Fatalf("recipient document = %s, %v", projects[0].Document, err)
+	if err := json.Unmarshal(project.Document, &copied); err != nil || len(copied.Nodes) != 2 || copied.Nodes[0].Metadata.MediaID == mediaID || copied.Nodes[0].Metadata.MediaID == "" || copied.Nodes[0].Metadata.MediaID != copied.Nodes[1].Metadata.MediaID {
+		t.Fatalf("recipient document = %s, %v", project.Document, err)
 	}
 	media, found, err := repository.GetMedia(copied.Nodes[0].Metadata.MediaID)
 	if err != nil || !found || media.OwnerUID != recipient || media.ObjectKey == objectKey {
@@ -533,6 +537,10 @@ func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("public recipient projects = %#v, %v", projects, err)
 	}
+	project, found, err := repository.GetCanvasProject(recipient, projects[0].ID)
+	if err != nil || !found {
+		t.Fatalf("public recipient project = %#v, found=%t, %v", project, found, err)
+	}
 	var copied struct {
 		Nodes []struct {
 			Metadata struct {
@@ -540,8 +548,8 @@ func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 			} `json:"metadata"`
 		} `json:"nodes"`
 	}
-	if err := json.Unmarshal(projects[0].Document, &copied); err != nil || len(copied.Nodes) != 1 || copied.Nodes[0].Metadata.MediaID == mediaID {
-		t.Fatalf("public recipient document = %s, %v", projects[0].Document, err)
+	if err := json.Unmarshal(project.Document, &copied); err != nil || len(copied.Nodes) != 1 || copied.Nodes[0].Metadata.MediaID == mediaID {
+		t.Fatalf("public recipient document = %s, %v", project.Document, err)
 	}
 	media, found, err := repository.GetMedia(copied.Nodes[0].Metadata.MediaID)
 	if err != nil || !found || media.OwnerUID != recipient || media.Source != model.MediaSourceUpload {

@@ -29,10 +29,13 @@ function browserLocks(): WebLockManager | null {
     return locks && typeof locks.request === "function" ? locks : null;
 }
 
-export function useCanvasProjectEditorLease(projectId: string, readPendingDocument?: () => CanvasEditorDocument | null) {
+export function useCanvasProjectEditorLease(projectId: string, readPendingDocument?: () => CanvasEditorDocument | null, loadAttempt = 0) {
     const readPendingDocumentRef = useRef(readPendingDocument);
-    useLayoutEffect(() => { readPendingDocumentRef.current = readPendingDocument; }, [readPendingDocument]);
+    useLayoutEffect(() => {
+        readPendingDocumentRef.current = readPendingDocument;
+    }, [readPendingDocument]);
     const setProjectSyncBlocked = useCanvasStore((state) => state.setProjectSyncBlocked);
+    const ensureProjectDetail = useCanvasStore((state) => state.ensureProjectDetail);
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
     const tabId = useMemo(() => createCanvasProjectWriteTracer().tabId, []);
@@ -82,7 +85,7 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
             if (disposed || !ownsEditor) return;
             setProjectSyncBlocked(projectId, true);
             try {
-                await refreshProjectFromServer(projectId);
+                await ensureProjectDetail(projectId, { revalidate: true });
                 if (!disposed && ownsEditor) setProjectSyncBlocked(projectId, false);
             } catch {
                 if (!disposed) setProjectSyncBlocked(projectId, true);
@@ -125,10 +128,12 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
                     }
                     ownsEditor = true;
                     publish("owner");
-                    await activateOwner();
-                    await new Promise<void>((resolve) => {
+                    // Install release before loading: navigation can happen while GET is pending.
+                    const released = new Promise<void>((resolve) => {
                         releaseWebLock = resolve;
                     });
+                    await activateOwner();
+                    await released;
                     ownsEditor = false;
                 })
                 .finally(() => {
@@ -214,5 +219,5 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
             window.removeEventListener("pagehide", releaseOwnership);
             setProjectSyncBlocked(projectId, false);
         };
-    }, [projectId, readyForCanvasMutations, refreshProjectFromServer, setProjectSyncBlocked, tabId]);
+    }, [projectId, readyForCanvasMutations, ensureProjectDetail, refreshProjectFromServer, setProjectSyncBlocked, tabId, loadAttempt]);
 }

@@ -71,7 +71,8 @@ import { createCanvasCanonicalRestore } from "./canvas-canonical-restore";
 import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
-import { useCanvasStore } from "../stores/use-canvas-store";
+import { useCanvasStore, selectCanvasProjectSummaries } from "../stores/use-canvas-store";
+import { useCanvasProjectDetail } from "../hooks/use-canvas-project-detail";
 import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
 import { useCanvasDocumentSync, type CanvasEditorDocument } from "../hooks/use-canvas-document-sync";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
@@ -287,7 +288,7 @@ function InfiniteCanvasPage() {
     const canonicalGeneration = useCanvasStore((state) => state.canonicalGeneration);
     const syncScope = useCanvasStore((state) => state.syncScope);
     const createProject = useCanvasStore((state) => state.createProject);
-    const openProject = useCanvasStore((state) => state.openProject);
+    const projectDetail = useCanvasProjectDetail(projectId, hydrated && readyForCanvasMutations, syncScope, canonicalGeneration);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -532,7 +533,7 @@ function InfiniteCanvasPage() {
         projectId, syncScope, canonicalGeneration, isReady: documentReady && !isProjectReadonly,
         document: editorDocument, baseline: documentBaseline, getViewport: getLiveViewport,
     });
-    useCanvasProjectEditorLease(projectId, readPendingDocument);
+    useCanvasProjectEditorLease(projectId, readPendingDocument, projectDetail.loadAttempt);
 
     const restoreProject = useCallback(
         (project: NonNullable<typeof currentProject>) =>
@@ -576,17 +577,11 @@ function InfiniteCanvasPage() {
     );
 
     useEffect(() => {
-        if (!hydrated || !readyForCanvasMutations) return;
         setProjectLoaded(false);
-        const project = openProject(projectId);
-        if (!project) {
-            router.replace(appPath("/canvas"));
-            return;
-        }
-
-        void restoreProject(project);
+        if (!projectDetail.project) return;
+        void restoreProject(projectDetail.project);
         return () => canonicalRestore.invalidate();
-    }, [canonicalGeneration, canonicalRestore, hydrated, openProject, projectId, readyForCanvasMutations, restoreProject, router]);
+    }, [canonicalRestore, projectDetail.project, restoreProject]);
 
     useEffect(() => {
         if (!documentReady || isProjectReadonly) return;
@@ -1335,7 +1330,7 @@ function InfiniteCanvasPage() {
     );
 
     const createAndOpenProject = useCallback(() => {
-        const id = createProject(`无限画布 ${useCanvasStore.getState().projects.length + 1}`);
+        const id = createProject(`无限画布 ${selectCanvasProjectSummaries(useCanvasStore.getState()).length + 1}`);
         router.push(appPath(`/canvas/${id}`));
     }, [createProject, router]);
 
@@ -2111,7 +2106,16 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, []);
 
-    if (!projectLoaded || loadedCanonicalGeneration !== canonicalGeneration) return <CanvasRefreshShell />;
+    if (projectDetail.error) return (
+        <main className="flex h-full flex-col items-center justify-center gap-3 bg-background text-foreground">
+            <p role="alert" className="text-sm text-muted-foreground">{projectDetail.error}</p>
+            <div className="flex gap-2">
+                <Button onClick={projectDetail.retry}>重新加载</Button>
+                <Button onClick={() => router.push(appPath("/canvas"))}>返回主页</Button>
+            </div>
+        </main>
+    );
+    if (projectDetail.loading || !projectLoaded || loadedProjectId !== projectId || loadedSyncScope !== syncScope || loadedCanonicalGeneration !== canonicalGeneration) return <CanvasRefreshShell />;
 
     return (
         <VideoResourceProvider projectId={projectId} nodeIds={nodes.map(node => node.id)}>

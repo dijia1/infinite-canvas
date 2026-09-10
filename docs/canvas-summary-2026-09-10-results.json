@@ -1,0 +1,932 @@
+{
+  "before": {
+    "stage": {
+      "down_seconds": 30,
+      "hold_seconds": 180,
+      "ramp_seconds": 30,
+      "scenario_ratio": "50/30/20",
+      "seed": 1000,
+      "start": "2026-09-10T18:55:46.016769+08:00",
+      "users": 50
+    },
+    "steady": {
+      "requests": 13680,
+      "rps": 76.0,
+      "successes": 13680,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 13680
+      },
+      "mean_ms": 3.839587468055556,
+      "p50_ms": 2.381959,
+      "p95_ms": 12.354209,
+      "p99_ms": 18.981334,
+      "max_ms": 51.291167,
+      "response_bytes": 407227095
+    },
+    "api_steady": {
+      "Asset list": {
+        "requests": 1438,
+        "rps": 7.988888888888889,
+        "successes": 1438,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1438
+        },
+        "mean_ms": 2.938284820584145,
+        "p50_ms": 2.67825,
+        "p95_ms": 4.727083,
+        "p99_ms": 6.01175,
+        "max_ms": 13.559917,
+        "response_bytes": 76865414
+      },
+      "Canvas GET": {
+        "requests": 1282,
+        "rps": 7.122222222222222,
+        "successes": 1282,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1282
+        },
+        "mean_ms": 2.719407728549145,
+        "p50_ms": 2.558833,
+        "p95_ms": 5.103708,
+        "p99_ms": 7.300167,
+        "max_ms": 16.212833,
+        "response_bytes": 61775453
+      },
+      "Canvas PUT": {
+        "requests": 1201,
+        "rps": 6.6722222222222225,
+        "successes": 1201,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1201
+        },
+        "mean_ms": 12.285192778517919,
+        "p50_ms": 11.559208,
+        "p95_ms": 21.459875,
+        "p99_ms": 28.24025,
+        "max_ms": 51.291167,
+        "response_bytes": 57671189
+      },
+      "Canvas list": {
+        "requests": 1282,
+        "rps": 7.122222222222222,
+        "successes": 1282,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1282
+        },
+        "mean_ms": 7.310492688767538,
+        "p50_ms": 7.009375,
+        "p95_ms": 12.815541,
+        "p99_ms": 17.31525,
+        "max_ms": 25.053958,
+        "response_bytes": 185984205
+      },
+      "Folder list": {
+        "requests": 1282,
+        "rps": 7.122222222222222,
+        "successes": 1282,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1282
+        },
+        "mean_ms": 0.9680728276131042,
+        "p50_ms": 0.843791,
+        "p95_ms": 1.665042,
+        "p99_ms": 2.832041,
+        "max_ms": 7.806209,
+        "response_bytes": 712792
+      },
+      "Session": {
+        "requests": 284,
+        "rps": 1.5777777777777777,
+        "successes": 284,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 284
+        },
+        "mean_ms": 3.276678721830985,
+        "p50_ms": 2.803542,
+        "p95_ms": 6.9185,
+        "p99_ms": 9.377167,
+        "max_ms": 10.192166,
+        "response_bytes": 54528
+      },
+      "Workflow GET": {
+        "requests": 1794,
+        "rps": 9.966666666666667,
+        "successes": 1794,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1794
+        },
+        "mean_ms": 1.332772161092531,
+        "p50_ms": 1.019709,
+        "p95_ms": 3.199209,
+        "p99_ms": 5.942917,
+        "max_ms": 9.630375,
+        "response_bytes": 5291881
+      },
+      "Workflow PUT": {
+        "requests": 727,
+        "rps": 4.038888888888889,
+        "successes": 727,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 727
+        },
+        "mean_ms": 7.884886561210457,
+        "p50_ms": 7.058667,
+        "p95_ms": 13.790625,
+        "p99_ms": 18.462041,
+        "max_ms": 23.572417,
+        "response_bytes": 2144662
+      },
+      "Workflow Run create": {
+        "requests": 27,
+        "rps": 0.15,
+        "successes": 27,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 27
+        },
+        "mean_ms": 14.088067777777777,
+        "p50_ms": 14.108,
+        "p95_ms": 19.620625,
+        "p99_ms": 20.796541,
+        "max_ms": 20.796541,
+        "response_bytes": 126546
+      },
+      "Workflow Run list": {
+        "requests": 512,
+        "rps": 2.8444444444444446,
+        "successes": 512,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 512
+        },
+        "mean_ms": 1.942666333984373,
+        "p50_ms": 1.779042,
+        "p95_ms": 3.285125,
+        "p99_ms": 4.325292,
+        "max_ms": 7.120542,
+        "response_bytes": 2261397
+      },
+      "Workflow Run poll": {
+        "requests": 2569,
+        "rps": 14.272222222222222,
+        "successes": 2569,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 2569
+        },
+        "mean_ms": 2.7323044367458067,
+        "p50_ms": 2.441833,
+        "p95_ms": 4.621916,
+        "p99_ms": 6.328875,
+        "max_ms": 19.465291,
+        "response_bytes": 13984547
+      },
+      "Workflow list": {
+        "requests": 1282,
+        "rps": 7.122222222222222,
+        "successes": 1282,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1282
+        },
+        "mean_ms": 1.5586498666146653,
+        "p50_ms": 1.378042,
+        "p95_ms": 2.623166,
+        "p99_ms": 4.054583,
+        "max_ms": 10.623875,
+        "response_bytes": 354481
+      }
+    },
+    "workload_all_phases": {
+      "requests": 16175,
+      "rps": 67.39583333333333,
+      "successes": 16175,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 16175
+      },
+      "mean_ms": 3.8888618785780547,
+      "p50_ms": 2.405834,
+      "p95_ms": 12.589667,
+      "p99_ms": 19.296625,
+      "max_ms": 51.291167,
+      "response_bytes": 480461661
+    },
+    "server": {
+      "samples": 125,
+      "api_cpu_one_core_percent_mean": 15.481980430940428,
+      "goroutines_start": 17,
+      "goroutines_end": 25,
+      "goroutines_peak": 36,
+      "heap_alloc_start": 2326912,
+      "heap_alloc_end": 5271264,
+      "heap_alloc_peak": 7754296,
+      "heap_inuse_peak": 9977856,
+      "go_sys_start": 18630920,
+      "go_sys_end": 23349512,
+      "rss_kib_start": 31024,
+      "rss_kib_end": 35776,
+      "rss_kib_peak": 37104,
+      "pg_container_cpu_percent_mean": 6.337000000000002,
+      "pg_container_cpu_percent_peak": 17.4,
+      "pg_container_memory_mib_peak": 82.59,
+      "pool_open_peak": 6,
+      "pool_in_use_peak": 3,
+      "pool_wait_count": 0,
+      "pool_wait_ms": 0.0,
+      "pg_active_peak": 1,
+      "pg_connections_peak": 6,
+      "pg_lock_waiters_peak": 0,
+      "pg_blocked_peak": 0,
+      "pg_query_calls": 92693,
+      "pg_exec_mean_ms": 0.07240771662369323,
+      "gorm_query_count": 76165,
+      "gorm_query_mean_ms": 0.8188380482898967,
+      "gorm_over_200ms": 0,
+      "gorm_errors": 0,
+      "fake_submissions": 280,
+      "blocked_http": 0,
+      "runs_end": [
+        {
+          "count": 540,
+          "status": "completed"
+        }
+      ],
+      "attempts_end": [
+        {
+          "count": 280,
+          "status": "succeeded"
+        }
+      ],
+      "observer_errors": []
+    },
+    "business_and_conflict": {
+      "requests": 36,
+      "rps": 0.15,
+      "successes": 21,
+      "expected_business": 15,
+      "unexpected_errors": 0,
+      "http_4xx": 12,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 3,
+      "statuses": {
+        "401": 1,
+        "403": 1,
+        "200": 24,
+        "409": 10
+      },
+      "mean_ms": 6.907798638888888,
+      "p50_ms": 6.457541,
+      "p95_ms": 15.634542,
+      "p99_ms": 18.408375,
+      "max_ms": 18.408375,
+      "response_bytes": 219866
+    },
+    "checks": {
+      "assertion_failures": null,
+      "end": "2026-09-10T10:59:56.035121Z",
+      "peak_users": 50,
+      "requests": 16311,
+      "users": 50
+    },
+    "consistency": {
+      "canvas_revision_mismatches": 0,
+      "completed_run_wrong_outputs": 0,
+      "completed_output_missing_media": 0,
+      "output_owner_mismatches": 0,
+      "duplicate_attempt_tasks": 0,
+      "run_statuses": {
+        "completed": 540
+      },
+      "attempt_statuses": {
+        "succeeded": 280
+      },
+      "canvas_count": 151,
+      "save_request_count": 1425,
+      "workflow_count": 50,
+      "media_count": 10280,
+      "media_lifecycle_audit": {
+        "media_created": 280,
+        "media_reference_added": 6225
+      },
+      "media_expiry_states": {
+        "retained": 10280
+      },
+      "pg_settings": {
+        "deadlock_timeout": "100",
+        "effective_cache_size": "524288",
+        "fsync": "on",
+        "log_lock_waits": "on",
+        "log_min_duration_statement": "200",
+        "max_connections": "100",
+        "max_wal_size": "1024",
+        "server_version": "17.11",
+        "shared_buffers": "16384",
+        "synchronous_commit": "on",
+        "track_io_timing": "on",
+        "work_mem": "4096"
+      }
+    },
+    "list_sql": {
+      "queryid": "5462816787840285033",
+      "calls": "1505",
+      "total_exec_time": "935.3707779999984",
+      "mean_exec_time": "0.6215088225913613",
+      "max_exec_time": "3.7855",
+      "rows": "4541",
+      "shared_blks_hit": "15179",
+      "shared_blks_read": "0",
+      "shared_blk_read_time": "0",
+      "shared_blk_write_time": "0",
+      "query": "SELECT * FROM \"canvas_projects\" WHERE owner_uid = $1 ORDER BY updated_at desc"
+    },
+    "list_mean_response_bytes": 145073.48283931357,
+    "list_byte_share_percent": 45.67088174719808,
+    "binary_sha256": "2045f687890b195bac72cccf55c38657d4f9ab54866f0578083c099b53ecd3c6",
+    "database_before": {
+      "time": "2026-09-10T10:55:44.986876+00:00",
+      "expiry_updates": {
+        "calls": 0,
+        "rows": 0,
+        "exec_ms": 0,
+        "wal_bytes": 0
+      },
+      "database_wal_position_bytes": 47210584,
+      "media_tables": [
+        {
+          "schema": "loadtest_31919_1789037739327647000_e6ed55afaa1d",
+          "updates": 0,
+          "hot_updates": 0,
+          "dead_tuples_estimate": 0,
+          "autovacuum_count": 0,
+          "last_autovacuum": null
+        }
+      ]
+    },
+    "database_after": {
+      "time": "2026-09-10T10:59:56.157633+00:00",
+      "expiry_updates": {
+        "calls": 0,
+        "rows": 0,
+        "exec_ms": 0,
+        "wal_bytes": 0
+      },
+      "database_wal_position_bytes": 71346336,
+      "media_tables": [
+        {
+          "schema": "loadtest_31919_1789037739327647000_e6ed55afaa1d",
+          "updates": 0,
+          "hot_updates": 0,
+          "dead_tuples_estimate": 0,
+          "autovacuum_count": 1,
+          "last_autovacuum": "2026-09-10T10:56:08.079429+00:00"
+        }
+      ]
+    }
+  },
+  "after": {
+    "stage": {
+      "down_seconds": 30,
+      "hold_seconds": 180,
+      "ramp_seconds": 30,
+      "scenario_ratio": "50/30/20",
+      "seed": 1000,
+      "start": "2026-09-10T19:03:29.139892+08:00",
+      "users": 50
+    },
+    "steady": {
+      "requests": 13652,
+      "rps": 75.84444444444445,
+      "successes": 13652,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 13652
+      },
+      "mean_ms": 4.214932150966899,
+      "p50_ms": 2.316041,
+      "p95_ms": 13.584584,
+      "p99_ms": 19.585,
+      "max_ms": 34.388833,
+      "response_bytes": 221458702
+    },
+    "api_steady": {
+      "Asset list": {
+        "requests": 1434,
+        "rps": 7.966666666666667,
+        "successes": 1434,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1434
+        },
+        "mean_ms": 3.216034161087861,
+        "p50_ms": 2.865958,
+        "p95_ms": 5.673875,
+        "p99_ms": 6.931542,
+        "max_ms": 9.161625,
+        "response_bytes": 76651602
+      },
+      "Canvas GET": {
+        "requests": 1278,
+        "rps": 7.1,
+        "successes": 1278,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1278
+        },
+        "mean_ms": 3.4860369131455347,
+        "p50_ms": 3.09525,
+        "p95_ms": 6.684958,
+        "p99_ms": 8.076834,
+        "max_ms": 11.712166,
+        "response_bytes": 61506279
+      },
+      "Canvas PUT": {
+        "requests": 1201,
+        "rps": 6.6722222222222225,
+        "successes": 1201,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1201
+        },
+        "mean_ms": 11.762617352206517,
+        "p50_ms": 11.233666,
+        "p95_ms": 20.71525,
+        "p99_ms": 25.362292,
+        "max_ms": 34.388833,
+        "response_bytes": 57671189
+      },
+      "Canvas list": {
+        "requests": 1278,
+        "rps": 7.1,
+        "successes": 1278,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1278
+        },
+        "mean_ms": 11.81466679812205,
+        "p50_ms": 10.827583,
+        "p95_ms": 18.73425,
+        "p99_ms": 24.229791,
+        "max_ms": 31.646916,
+        "response_bytes": 749332
+      },
+      "Folder list": {
+        "requests": 1278,
+        "rps": 7.1,
+        "successes": 1278,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1278
+        },
+        "mean_ms": 0.8586362832550865,
+        "p50_ms": 0.763417,
+        "p95_ms": 1.377584,
+        "p99_ms": 1.96375,
+        "max_ms": 6.328167,
+        "response_bytes": 710568
+      },
+      "Session": {
+        "requests": 283,
+        "rps": 1.5722222222222222,
+        "successes": 283,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 283
+        },
+        "mean_ms": 2.9183764876325102,
+        "p50_ms": 2.718792,
+        "p95_ms": 5.039792,
+        "p99_ms": 9.134584,
+        "max_ms": 9.704708,
+        "response_bytes": 54336
+      },
+      "Workflow GET": {
+        "requests": 1790,
+        "rps": 9.944444444444445,
+        "successes": 1790,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1790
+        },
+        "mean_ms": 1.2349504776536304,
+        "p50_ms": 0.909625,
+        "p95_ms": 2.94775,
+        "p99_ms": 5.553292,
+        "max_ms": 8.8885,
+        "response_bytes": 5280078
+      },
+      "Workflow PUT": {
+        "requests": 727,
+        "rps": 4.038888888888889,
+        "successes": 727,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 727
+        },
+        "mean_ms": 7.463809482806055,
+        "p50_ms": 6.681916,
+        "p95_ms": 13.316334,
+        "p99_ms": 15.745417,
+        "max_ms": 20.225583,
+        "response_bytes": 2144662
+      },
+      "Workflow Run create": {
+        "requests": 28,
+        "rps": 0.15555555555555556,
+        "successes": 28,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 28
+        },
+        "mean_ms": 13.787162107142859,
+        "p50_ms": 12.473667,
+        "p95_ms": 23.793875,
+        "p99_ms": 26.688583,
+        "max_ms": 26.688583,
+        "response_bytes": 131253
+      },
+      "Workflow Run list": {
+        "requests": 512,
+        "rps": 2.8444444444444446,
+        "successes": 512,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 512
+        },
+        "mean_ms": 1.865991623046874,
+        "p50_ms": 1.69025,
+        "p95_ms": 3.1365,
+        "p99_ms": 4.5795,
+        "max_ms": 12.9675,
+        "response_bytes": 2261471
+      },
+      "Workflow Run poll": {
+        "requests": 2565,
+        "rps": 14.25,
+        "successes": 2565,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 2565
+        },
+        "mean_ms": 2.5958253356725174,
+        "p50_ms": 2.322875,
+        "p95_ms": 4.414125,
+        "p99_ms": 5.810666,
+        "max_ms": 9.566291,
+        "response_bytes": 13944562
+      },
+      "Workflow list": {
+        "requests": 1278,
+        "rps": 7.1,
+        "successes": 1278,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1278
+        },
+        "mean_ms": 1.322025942097026,
+        "p50_ms": 1.198291,
+        "p95_ms": 2.052042,
+        "p99_ms": 2.867542,
+        "max_ms": 5.763542,
+        "response_bytes": 353370
+      }
+    },
+    "workload_all_phases": {
+      "requests": 16166,
+      "rps": 67.35833333333333,
+      "successes": 16166,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 16166
+      },
+      "mean_ms": 4.291489019176061,
+      "p50_ms": 2.350542,
+      "p95_ms": 13.976209,
+      "p99_ms": 20.658125,
+      "max_ms": 34.388833,
+      "response_bytes": 262862735
+    },
+    "server": {
+      "samples": 125,
+      "api_cpu_one_core_percent_mean": 14.05319158555016,
+      "goroutines_start": 17,
+      "goroutines_end": 25,
+      "goroutines_peak": 34,
+      "heap_alloc_start": 2719704,
+      "heap_alloc_end": 4349344,
+      "heap_alloc_peak": 7311320,
+      "heap_inuse_peak": 9519104,
+      "go_sys_start": 18565384,
+      "go_sys_end": 23283976,
+      "rss_kib_start": 31472,
+      "rss_kib_end": 34816,
+      "rss_kib_peak": 36944,
+      "pg_container_cpu_percent_mean": 11.656499999999998,
+      "pg_container_cpu_percent_peak": 16.92,
+      "pg_container_memory_mib_peak": 85.4,
+      "pool_open_peak": 6,
+      "pool_in_use_peak": 3,
+      "pool_wait_count": 0,
+      "pool_wait_ms": 0.0,
+      "pg_active_peak": 1,
+      "pg_connections_peak": 6,
+      "pg_lock_waiters_peak": 0,
+      "pg_blocked_peak": 0,
+      "pg_query_calls": 92823,
+      "pg_exec_mean_ms": 0.2196983355849303,
+      "gorm_query_count": 76305,
+      "gorm_query_mean_ms": 0.9380051128890637,
+      "gorm_over_200ms": 0,
+      "gorm_errors": 0,
+      "fake_submissions": 280,
+      "blocked_http": 0,
+      "runs_end": [
+        {
+          "count": 540,
+          "status": "completed"
+        }
+      ],
+      "attempts_end": [
+        {
+          "count": 280,
+          "status": "succeeded"
+        }
+      ],
+      "observer_errors": []
+    },
+    "business_and_conflict": {
+      "requests": 36,
+      "rps": 0.15,
+      "successes": 21,
+      "expected_business": 15,
+      "unexpected_errors": 0,
+      "http_4xx": 12,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 3,
+      "statuses": {
+        "401": 1,
+        "403": 1,
+        "200": 24,
+        "409": 10
+      },
+      "mean_ms": 6.721130888888887,
+      "p50_ms": 6.561541,
+      "p95_ms": 16.057209,
+      "p99_ms": 18.649458,
+      "max_ms": 18.649458,
+      "response_bytes": 219870
+    },
+    "checks": {
+      "assertion_failures": null,
+      "end": "2026-09-10T11:07:39.203347Z",
+      "peak_users": 50,
+      "requests": 16302,
+      "users": 50
+    },
+    "consistency": {
+      "canvas_revision_mismatches": 0,
+      "completed_run_wrong_outputs": 0,
+      "completed_output_missing_media": 0,
+      "output_owner_mismatches": 0,
+      "duplicate_attempt_tasks": 0,
+      "run_statuses": {
+        "completed": 540
+      },
+      "attempt_statuses": {
+        "succeeded": 280
+      },
+      "canvas_count": 151,
+      "save_request_count": 1424,
+      "workflow_count": 50,
+      "media_count": 10280,
+      "media_lifecycle_audit": {
+        "media_created": 280,
+        "media_reference_added": 6225
+      },
+      "media_expiry_states": {
+        "retained": 10280
+      },
+      "pg_settings": {
+        "deadlock_timeout": "100",
+        "effective_cache_size": "524288",
+        "fsync": "on",
+        "log_lock_waits": "on",
+        "log_min_duration_statement": "200",
+        "max_connections": "100",
+        "max_wal_size": "1024",
+        "server_version": "17.11",
+        "shared_buffers": "16384",
+        "synchronous_commit": "on",
+        "track_io_timing": "on",
+        "work_mem": "4096"
+      }
+    },
+    "list_sql": {
+      "queryid": "1332790010145568499",
+      "calls": "1504",
+      "total_exec_time": "15096.185142999995",
+      "mean_exec_time": "10.037357142952139",
+      "max_exec_time": "22.040125",
+      "rows": "4538",
+      "shared_blks_hit": "48690",
+      "shared_blks_read": "0",
+      "shared_blk_read_time": "0",
+      "shared_blk_write_time": "0",
+      "query": "SELECT id, title, revision, created_at, updated_at, CASE WHEN jsonb_typeof((document::jsonb) -> $2) = $3 THEN jsonb_array_length((document::jsonb) -> $4) ELSE $5 END AS node_count, CASE WHEN jsonb_typeof((document::jsonb) -> $6) = $7 THEN jsonb_array_length((document::jsonb) -> $8) ELSE $9 END AS connection_count FROM \"canvas_projects\" WHERE owner_uid = $1 ORDER BY updated_at desc"
+    },
+    "list_mean_response_bytes": 586.3317683881064,
+    "list_byte_share_percent": 0.33836195788775103,
+    "binary_sha256": "199050c26f055ba4c1eb575de903fe289eee62e3d96a0076a157cd5eecd6c2e6",
+    "database_before": {
+      "time": "2026-09-10T11:03:28.106653+00:00",
+      "expiry_updates": {
+        "calls": 0,
+        "rows": 0,
+        "exec_ms": 0,
+        "wal_bytes": 0
+      },
+      "database_wal_position_bytes": 47214640,
+      "media_tables": [
+        {
+          "schema": "loadtest_35710_1789038202466850000_96f6a459bc3d",
+          "updates": 0,
+          "hot_updates": 0,
+          "dead_tuples_estimate": 0,
+          "autovacuum_count": 0,
+          "last_autovacuum": null
+        }
+      ]
+    },
+    "database_after": {
+      "time": "2026-09-10T11:07:39.333948+00:00",
+      "expiry_updates": {
+        "calls": 0,
+        "rows": 0,
+        "exec_ms": 0,
+        "wal_bytes": 0
+      },
+      "database_wal_position_bytes": 71411328,
+      "media_tables": [
+        {
+          "schema": "loadtest_35710_1789038202466850000_96f6a459bc3d",
+          "updates": 0,
+          "hot_updates": 0,
+          "dead_tuples_estimate": 0,
+          "autovacuum_count": 1,
+          "last_autovacuum": "2026-09-10T11:03:51.230173+00:00"
+        }
+      ]
+    }
+  }
+}

@@ -13,7 +13,7 @@ export type CanvasProjectDocument = {
     viewport: ViewportTransform;
 };
 
-export type CanvasProjectRecord = {
+export type CanvasProjectDetail = {
     id: string;
     title: string;
     document: CanvasProjectDocument;
@@ -22,8 +22,23 @@ export type CanvasProjectRecord = {
     updatedAt: string;
 };
 
+export type CanvasSummary = {
+    id: string;
+    title: string;
+    revision: number;
+    createdAt: string;
+    updatedAt: string;
+    nodeCount: number;
+    connectionCount: number;
+};
+
 export type CanvasProjectList = {
-    items: CanvasProjectRecord[];
+    items: CanvasSummary[];
+    total: number;
+};
+
+export type CanvasProjectImportResult = {
+    items: CanvasProjectDetail[];
     total: number;
 };
 
@@ -50,10 +65,10 @@ export type CanvasProjectWriteTrace = {
 
 export type CanvasProjectsApi = {
     list: () => Promise<CanvasProjectList>;
-    get: (id: string) => Promise<CanvasProjectRecord>;
-    create: (input: CreateCanvasProjectInput) => Promise<CanvasProjectRecord>;
-    importProjects: (projects: CreateCanvasProjectInput[]) => Promise<CanvasProjectList>;
-    update: (id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) => Promise<CanvasProjectRecord>;
+    get: (id: string) => Promise<CanvasProjectDetail>;
+    create: (input: CreateCanvasProjectInput) => Promise<CanvasProjectDetail>;
+    importProjects: (projects: CreateCanvasProjectInput[]) => Promise<CanvasProjectImportResult>;
+    update: (id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) => Promise<CanvasProjectDetail>;
     delete: (id: string, revision: number, trace?: CanvasProjectWriteTrace) => Promise<void>;
 };
 
@@ -62,15 +77,15 @@ export function fetchCanvasProjects() {
 }
 
 export function fetchCanvasProject(id: string) {
-    return apiGet<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`);
+    return apiGet<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`);
 }
 
 export function createCanvasProject(input: CreateCanvasProjectInput) {
-    return apiPost<CanvasProjectRecord>("/api/v1/canvas/projects", { ...input, document: sanitizeCanvasProjectDocument(input.document) });
+    return apiPost<CanvasProjectDetail>("/api/v1/canvas/projects", { ...input, document: sanitizeCanvasProjectDocument(input.document) });
 }
 
 export function importCanvasProjects(projects: CreateCanvasProjectInput[]) {
-    return apiPost<CanvasProjectList>("/api/v1/canvas/projects/import", { projects: projects.map((project) => ({ ...project, document: sanitizeCanvasProjectDocument(project.document) })) });
+    return apiPost<CanvasProjectImportResult>("/api/v1/canvas/projects/import", { projects: projects.map((project) => ({ ...project, document: sanitizeCanvasProjectDocument(project.document) })) });
 }
 
 function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {
@@ -84,7 +99,7 @@ function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {
 }
 
 export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) {
-    return apiPut<CanvasProjectRecord>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, canvasProjectWriteHeaders(trace));
+    return apiPut<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, canvasProjectWriteHeaders(trace));
 }
 
 export async function deleteCanvasProject(id: string, revision: number, trace?: CanvasProjectWriteTrace) {

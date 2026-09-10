@@ -88,9 +88,9 @@ func TestCanvasWritesRollbackAfterMediaExpiryUpdateFailure(t *testing.T) {
 			if !errors.Is(err, injected) || updates != 2 {
 				t.Fatalf("failure = %v, media updates = %d; want injected error after second update", err, updates)
 			}
-			projects, err := ListCanvasProjects("owner")
-			if err != nil || len(projects) != 1 || !reflect.DeepEqual(projects[0], existing) {
-				t.Fatalf("canvas transaction did not roll back: %#v, %v", projects, err)
+			project, found, err := GetCanvasProject("owner", existing.ID)
+			if err != nil || !found || !reflect.DeepEqual(project, existing) {
+				t.Fatalf("canvas transaction did not roll back: %#v, found=%t, %v", project, found, err)
 			}
 			for _, id := range []string{"media-a", "media-b"} {
 				item, found, err := GetMedia(id)
