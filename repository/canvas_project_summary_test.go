@@ -3,6 +3,7 @@ package repository
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"log"
 	"reflect"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/model"
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
@@ -152,4 +154,96 @@ func canvasProjectListQuery(t *testing.T, statements string) string {
 	}
 	t.Fatalf("canvas list SELECT was not logged:\n%s", statements)
 	return ""
+}
+
+func TestListCanvasProjectsKeepsJSONConversionOncePerRowInExecutionPlan(t *testing.T) {
+	useRepositoryTestDB(t, newRepositoryTestConfig(t, "canvas_summary_parse_once"))
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "b", "c"} {
+		if err := database.Create(&model.CanvasProject{
+			ID: id, OwnerUID: "parse-owner", Title: id, Revision: 1,
+			Document:  model.CanvasProjectDocument(`{"nodes":[{"id":"` + id + `"}],"connections":[]}`),
+			CreatedAt: "2026-09-11T00:00:00Z", UpdatedAt: "2026-09-11T00:00:00Z",
+		}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	var statements bytes.Buffer
+	db = database.Session(&gorm.Session{Logger: logger.New(log.New(&statements, "", 0), logger.Config{LogLevel: logger.Info})})
+	items, err := ListCanvasProjects("parse-owner")
+	if err != nil || len(items) != 3 {
+		t.Fatalf("list = %v, %v", items, err)
+	}
+	query := canvasProjectListQuery(t, statements.String())
+	query = query[strings.Index(strings.ToLower(query), "select "):]
+	var raw []byte
+	if err := database.Raw("EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) " + query).Row().Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	type planNode struct {
+		Output      []string   `json:"Output"`
+		ActualRows  int        `json:"Actual Rows"`
+		ActualLoops int        `json:"Actual Loops"`
+		Plans       []planNode `json:"Plans"`
+	}
+	var plans []struct{ Plan planNode }
+	if err := json.Unmarshal(raw, &plans); err != nil || len(plans) != 1 {
+		t.Fatalf("decode plan: %s, %v", raw, err)
+	}
+	// Removing OFFSET 0 lets PostgreSQL inline the cast into each CASE branch.
+	// Check the executed plan rather than just checking the SQL contains OFFSET.
+	isolatedConversions := 0
+	var visit func(planNode)
+	visit = func(node planNode) {
+		if len(node.Output) == 1 && strings.Contains(node.Output[0], "::jsonb") && node.ActualRows == 1 {
+			isolatedConversions += node.ActualLoops
+		}
+		for _, child := range node.Plans {
+			visit(child)
+		}
+	}
+	visit(plans[0].Plan)
+	if isolatedConversions != 3 {
+		t.Fatalf("want one separately evaluated JSON conversion per returned row, got %d; plan: %s", isolatedConversions, raw)
+	}
+}
+
+func TestListCanvasProjectsPreservesNullAndInvalidDocumentSemantics(t *testing.T) {
+	useRepositoryTestDB(t, newRepositoryTestConfig(t, "canvas_summary_document_boundaries"))
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fixture := range []struct {
+		id    string
+		owner string
+		doc   any
+	}{
+		{"sql-null", "valid-owner", nil},
+		{"json-null", "valid-owner", "null"},
+		{"root-array", "valid-owner", "[]"},
+		{"root-string", "valid-owner", `"text"`},
+		{"invalid", "invalid-owner", "not json"},
+	} {
+		if err := database.Exec("INSERT INTO canvas_projects (id, owner_uid, title, revision, document, created_at, updated_at) VALUES (?, ?, ?, 1, ?, '2026-09-11', '2026-09-11')", fixture.id, fixture.owner, fixture.id, fixture.doc).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := ListCanvasProjects("valid-owner")
+	if err != nil || len(items) != 4 {
+		t.Fatalf("foreign invalid JSON must not break owner-scoped list: %v, %v", items, err)
+	}
+	for _, item := range items {
+		if item.NodeCount != 0 || item.ConnectionCount != 0 {
+			t.Fatalf("non-object document must keep zero counts: %+v", item)
+		}
+	}
+	_, err = ListCanvasProjects("invalid-owner")
+	var pgError *pgconn.PgError
+	if !errors.As(err, &pgError) || pgError.Code != "22P02" {
+		t.Fatalf("invalid JSON must retain the original database error, got %v", err)
+	}
 }

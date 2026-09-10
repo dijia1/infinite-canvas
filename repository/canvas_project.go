@@ -117,10 +117,13 @@ func ListCanvasProjects(ownerUID string) ([]model.CanvasSummary, error) {
 		return nil, err
 	}
 	items := make([]model.CanvasSummary, 0)
+	// OFFSET 0 prevents PostgreSQL from inlining the JSON cast into each CASE
+	// branch, while keeping parsed documents out of a materialized result set.
 	err = database.Model(&model.CanvasProject{}).
-		Select("id, title, revision, created_at, updated_at, CASE WHEN jsonb_typeof((document::jsonb) -> 'nodes') = 'array' THEN jsonb_array_length((document::jsonb) -> 'nodes') ELSE 0 END AS node_count, CASE WHEN jsonb_typeof((document::jsonb) -> 'connections') = 'array' THEN jsonb_array_length((document::jsonb) -> 'connections') ELSE 0 END AS connection_count").
-		Where("owner_uid = ?", ownerUID).
-		Order("updated_at desc").
+		Select("canvas_projects.id, canvas_projects.title, canvas_projects.revision, canvas_projects.created_at, canvas_projects.updated_at, CASE WHEN jsonb_typeof(parsed.document -> 'nodes') = 'array' THEN jsonb_array_length(parsed.document -> 'nodes') ELSE 0 END AS node_count, CASE WHEN jsonb_typeof(parsed.document -> 'connections') = 'array' THEN jsonb_array_length(parsed.document -> 'connections') ELSE 0 END AS connection_count").
+		Joins("CROSS JOIN LATERAL (SELECT canvas_projects.document::jsonb AS document OFFSET 0) AS parsed").
+		Where("canvas_projects.owner_uid = ?", ownerUID).
+		Order("canvas_projects.updated_at desc").
 		Scan(&items).Error
 	return items, err
 }
