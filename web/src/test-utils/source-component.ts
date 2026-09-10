@@ -53,6 +53,14 @@ export function hookHarness() {
             if (!(index in slots)) slots[index] = { current: initial };
             return slots[index] as { current: T };
         },
+        useMemo<T>(create: () => T, dependencies?: readonly unknown[]) {
+            const index = cursor++;
+            const previous = slots[index] as { value: T; dependencies?: readonly unknown[] } | undefined;
+            if (!previous || !dependencies || !previous.dependencies || dependencies.length !== previous.dependencies.length || dependencies.some((value, i) => !Object.is(value, previous.dependencies![i]))) {
+                slots[index] = { value: create(), dependencies };
+            }
+            return (slots[index] as { value: T }).value;
+        },
         useEffect(setup: () => void | (() => void), dependencies?: readonly unknown[]) {
             const index = cursor++;
             const previous = effects[index];

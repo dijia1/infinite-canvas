@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 import { useCanvasInteractions } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
 import type { CanvasNodeData, CanvasConnection, Position, ViewportTransform } from "@/app/(user)/canvas/types";
@@ -26,8 +26,8 @@ export function useWorkflowInteractions(options: Options) {
     optionsRef.current = options;
     const graphRef = useRef(options.graph);
     graphRef.current = options.graph;
-    const nodes = toWorkflowCanvasNodes(options.graph);
-    const connections = toWorkflowCanvasConnections(options.graph);
+    const nodes = useMemo(() => toWorkflowCanvasNodes(options.graph), [options.graph]);
+    const connections = useMemo(() => toWorkflowCanvasConnections(options.graph), [options.graph]);
     const nodesRef = useRef(nodes);
     const connectionsRef = useRef(connections);
     const viewportRef = useRef(options.viewport);

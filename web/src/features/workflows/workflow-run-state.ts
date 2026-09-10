@@ -48,6 +48,42 @@ export function findWorkflowOutput(outputs: WorkflowOutputExecution[] | undefine
     return outputs?.find((output) => output.nodeId === nodeId && output.slotId === slotId);
 }
 
+function indexWorkflowOutputs(outputs: WorkflowOutputExecution[] | undefined) {
+    const index = new Map<string, WorkflowOutputExecution>();
+    for (const output of outputs || []) {
+        const key = workflowOutputKey(output.nodeId, output.slotId);
+        if (!index.has(key)) index.set(key, output);
+    }
+    return index;
+}
+
+function indexWorkflowSlots(graph: WorkflowGraph) {
+    const index = new Map<string, { nodeType: WorkflowGraph["nodes"][number]["type"]; slotType: WorkflowOutputSlot["type"] }>();
+    const seenNodes = new Set<string>();
+    for (const node of graph.nodes) {
+        if (seenNodes.has(node.id)) continue;
+        seenNodes.add(node.id);
+        for (const slot of node.outputs || []) {
+            const key = workflowOutputKey(node.id, slot.id);
+            if (!index.has(key)) index.set(key, { nodeType: node.type, slotType: slot.type });
+        }
+    }
+    return index;
+}
+
+export function indexCompatibleWorkflowOutputs(detail: Pick<WorkflowRunDetail, "graph" | "outputs"> | undefined, graph: WorkflowGraph) {
+    const compatible = new Map<string, WorkflowOutputExecution>();
+    if (!detail) return compatible;
+    const originalSlots = indexWorkflowSlots(detail.graph);
+    const currentSlots = indexWorkflowSlots(graph);
+    for (const [key, output] of indexWorkflowOutputs(detail.outputs)) {
+        const original = originalSlots.get(key);
+        const current = currentSlots.get(key);
+        if (original && current && original.nodeType === current.nodeType && original.slotType === current.slotType) compatible.set(key, output);
+    }
+    return compatible;
+}
+
 export function latestWorkflowRun(items: WorkflowRun[] | undefined, workflowId: string | undefined) {
     return items?.find((run) => run.workflowId === workflowId);
 }
@@ -68,8 +104,9 @@ export function findCompatibleWorkflowOutput(detail: Pick<WorkflowRunDetail, "gr
 
 export function workflowDownloadImageCount(detail: Pick<WorkflowRunDetail, "graph" | "outputs"> | undefined) {
     if (!detail) return 0;
+    const outputs = indexWorkflowOutputs(detail.outputs);
     return detail.graph.nodes.reduce((total, node) => total + (node.outputs || []).filter((slot) => {
-        const output = findWorkflowOutput(detail.outputs, node.id, slot.id);
+        const output = outputs.get(workflowOutputKey(node.id, slot.id));
         return (node.type === "image_generation" || node.type === "video_generation") && slot.type === "image" && output?.status === "succeeded" && Boolean(output.mediaId);
     }).length, 0);
 }

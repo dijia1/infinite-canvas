@@ -63,9 +63,9 @@ import {
     type PendingWorkflowRetryRequest,
     type PendingWorkflowRunRequest,
 } from "./workflow-run-requests";
-import { workflowDownloadImageCount, findCompatibleWorkflowOutput, findWorkflowOutput, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
+import { workflowDownloadImageCount, indexCompatibleWorkflowOutputs, findCompatibleWorkflowOutput, findWorkflowOutput, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
-import type { WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition } from "./types";
+import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition } from "./types";
 
 type Viewport = { x: number; y: number; k: number };
 
@@ -173,6 +173,23 @@ function WorkflowEditorContent() {
         enabled: Boolean(currentRunId),
         refetchInterval: (query) => (isWorkflowRunActive(query.state.data?.run.status) ? 1500 : false),
     });
+    const compatibleOutputs = useMemo(() => indexCompatibleWorkflowOutputs(currentRun.data, graph), [currentRun.data, graph]);
+    const downloadImageCount = useMemo(() => workflowDownloadImageCount(currentRun.data), [currentRun.data]);
+    const nodesById = useMemo(() => {
+        const index = new Map<string, WorkflowNode>();
+        for (const node of graph.nodes) if (!index.has(node.id)) index.set(node.id, node);
+        return index;
+    }, [graph.nodes]);
+    const inputConnectionsByTarget = useMemo(() => {
+        const index = new Map<string, WorkflowConnection[]>();
+        for (const connection of graph.connections) {
+            const inputs = index.get(connection.targetNodeId);
+            if (inputs) inputs.push(connection);
+            else index.set(connection.targetNodeId, [connection]);
+        }
+        for (const inputs of index.values()) inputs.sort((left, right) => left.order - right.order);
+        return index;
+    }, [graph.connections]);
     useEffect(() => {
         setCurrentRunId(undefined);
         setRunDetailOpen(false);
@@ -294,18 +311,17 @@ function WorkflowEditorContent() {
     const previewImageNodeIds = useMemo(
         () =>
             new Set(
-                graph.connections
+                (previewNodeId ? inputConnectionsByTarget.get(previewNodeId) || [] : [])
                     .flatMap((connection) => {
-                        if (connection.targetNodeId !== previewNodeId) return [];
-                        const source = graph.nodes.find((node) => node.id === connection.sourceNodeId);
+                        const source = nodesById.get(connection.sourceNodeId);
                         if (!source || workflowSourceType(source, connection.sourceSlotId) !== "image") return [];
                         if (connection.sourceSlotId === "output") return [source.id];
-                        const output = currentRun.data ? findCompatibleWorkflowOutput(currentRun.data, graph, source.id, connection.sourceSlotId) : undefined;
+                        const output = compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
                         return output?.mediaId && currentRun.data ? [workflowOutputResourceNodeId(currentRun.data.run.id, source.id, connection.sourceSlotId)] : [];
                     })
                     .concat(mediaPreview ? [mediaPreview.slot && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, mediaPreview.node.id, mediaPreview.slot.id) : mediaPreview.node.id] : []),
             ),
-        [currentRun.data, graph.connections, graph.nodes, previewNodeId, mediaPreview],
+        [compatibleOutputs, currentRun.data, inputConnectionsByTarget, nodesById, previewNodeId, mediaPreview],
     );
     const imageTargets = useMemo(() => {
         const inputTargets = graph.nodes.flatMap((node) => {
@@ -320,7 +336,7 @@ function WorkflowEditorContent() {
         const outputTargets = graph.nodes.flatMap((node) =>
             (node.outputs || []).flatMap((slot) => {
                 if (slot.type !== "image" || !currentRun.data) return [];
-                const output = findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id);
+                const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
                 if (output?.status !== "succeeded" || !output.mediaId) return [];
                 const canvasNode = {
                     id: workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id),
@@ -339,7 +355,7 @@ function WorkflowEditorContent() {
             }),
         );
         return [...inputTargets, ...outputTargets];
-    }, [currentRun.data, graph.nodes, previewImageNodeIds, viewport, viewportSize]);
+    }, [compatibleOutputs, currentRun.data, graph.nodes, previewImageNodeIds, viewport, viewportSize]);
     const imageDimensions = useRef(new Map<string, { width: number; height: number }>());
     const resolveImageAccess = useCallback(async (node: CanvasNodeData) => {
         const mediaId = node.metadata!.mediaId!;
@@ -468,7 +484,7 @@ function WorkflowEditorContent() {
     };
     const startOutputRetry = (nodeId: string, slotId: string) => {
         if (!currentRun.data) return;
-        const output = findCompatibleWorkflowOutput(currentRun.data, graph, nodeId, slotId);
+        const output = compatibleOutputs.get(workflowOutputKey(nodeId, slotId));
         if (!output) return;
         const key = pendingWorkflowRetryKey({ runId: currentRun.data.run.id, nodeId, slotId });
         const request = ensureWorkflowRetryRequest(pendingRetryRequests[key], { runId: currentRun.data.run.id, nodeId, slotId, attempt: output.attempt }, nanoid);
@@ -615,15 +631,13 @@ function WorkflowEditorContent() {
 
     const previewInputs = useCallback(
         (targetId: string): WorkflowPreviewInput[] =>
-            graph.connections
-                .filter((connection) => connection.targetNodeId === targetId)
-                .sort((left, right) => left.order - right.order)
+            (inputConnectionsByTarget.get(targetId) || [])
                 .flatMap((connection) => {
-                    const source = graph.nodes.find((node) => node.id === connection.sourceNodeId);
+                    const source = nodesById.get(connection.sourceNodeId);
                     if (!source) return [];
                     const type = workflowSourceType(source, connection.sourceSlotId);
                     if (!type) return [];
-                    const execution = connection.sourceSlotId === "output" || !currentRun.data ? undefined : findCompatibleWorkflowOutput(currentRun.data, graph, source.id, connection.sourceSlotId);
+                    const execution = connection.sourceSlotId === "output" || !currentRun.data ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
                     const resourceNodeId = execution && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, source.id, connection.sourceSlotId) : source.id;
                     const mediaId = source.mediaId || execution?.mediaId;
                     const resource = imageResources.resources.get(resourceNodeId);
@@ -638,7 +652,7 @@ function WorkflowEditorContent() {
                         },
                     ];
                 }),
-        [currentRun.data, graph, imageResources.errors, imageResources.resources],
+        [compatibleOutputs, currentRun.data, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
     );
     const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
 
@@ -905,7 +919,7 @@ function WorkflowEditorContent() {
                 ...graph.nodes.filter((node) => node.type === "video_input").map((node) => node.id),
                 ...graph.nodes.flatMap((node) =>
                     (node.outputs || []).flatMap((slot) =>
-                        slot.type === "video" && currentRun.data && findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id)?.mediaId ? [workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id)] : [],
+                        slot.type === "video" && currentRun.data && compatibleOutputs.get(workflowOutputKey(node.id, slot.id))?.mediaId ? [workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id)] : [],
                     ),
                 ),
                 ...activePreviewInputs.filter((input) => input.type === "video" && input.mediaId).map((input) => `preview-${input.sourceNodeId}-${input.key}`),
@@ -944,7 +958,7 @@ function WorkflowEditorContent() {
                     />}
                     actions={
                         <>
-                            <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!workflowDownloadImageCount(currentRun.data)} onClick={() => void downloadImages()}>
+                            <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!downloadImageCount} onClick={() => void downloadImages()}>
                                 下载
                             </Button>
                             {currentRun.data ? (
@@ -1053,28 +1067,30 @@ function WorkflowEditorContent() {
                             />
                         ))}
                         {graph.nodes.flatMap((node) =>
-                            (node.outputs || []).map((slot) => (
-                                <WorkflowOutputCard
+                            (node.outputs || []).map((slot) => {
+                                const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
+                                const resourceNodeId = currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id) : undefined;
+                                const resource = resourceNodeId ? imageResources.resources.get(resourceNodeId) : undefined;
+                                return <WorkflowOutputCard
                                     key={workflowOutputKey(node.id, slot.id)}
                                     parent={node}
                                     slot={slot}
-                                    execution={currentRun.data ? findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id) : undefined}
-                                    resourceNodeId={currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id) : undefined}
+                                    execution={output}
+                                    resourceNodeId={resourceNodeId}
                                     videoVisible={isCanvasNodeNearViewport(
                                         { id: workflowOutputKey(node.id, slot.id), type: CanvasNodeType.Video, title: "", position: slot.position || node.position, width: slot.width || 420, height: slot.height || 236 } satisfies CanvasNodeData,
                                         viewport,
                                         viewportSize,
                                     )}
-                                    imageUrl={currentRun.data ? imageResources.resources.get(workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id))?.url : undefined}
-                                    imageStorageKey={currentRun.data ? imageResources.resources.get(workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id))?.storageKey : undefined}
-                                    imageError={currentRun.data ? imageResources.errors.get(workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id)) : undefined}
+                                    imageUrl={resource?.url}
+                                    imageStorageKey={resource?.storageKey}
+                                    imageError={resourceNodeId ? imageResources.errors.get(resourceNodeId) : undefined}
                                     retrying={retryOutput.isPending && retryOutput.variables?.nodeId === node.id && retryOutput.variables.slotId === slot.id}
                                     confirmingRetry={Boolean(currentRun.data && pendingRetryRequests[pendingWorkflowRetryKey({ runId: currentRun.data.run.id, nodeId: node.id, slotId: slot.id })])}
-                                    onReloadMedia={currentRun.data ? () => imageResources.retry(workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id)) : undefined}
-                                    onRetryOutput={currentRun.data && isRetryableImageOutput(slot, findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id), currentRun.data.run) ? () => startOutputRetry(node.id, slot.id) : undefined}
-                                    onImageLoaded={(storageKey) => currentRun.data && imageResources.acknowledgeRendered(workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id), storageKey)}
+                                    onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
+                                    onRetryOutput={currentRun.data && isRetryableImageOutput(slot, output, currentRun.data.run) ? () => startOutputRetry(node.id, slot.id) : undefined}
+                                    onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
                                     onImageDimensions={(dimensions) => {
-                                        const output = currentRun.data && findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id);
                                         if (output?.mediaId) fitLoadedImage(node.id, output.mediaId, dimensions, slot.id);
                                     }}
                                     selected={canvas.selectedNodeIds.has(workflowVisualOutputId(node.id, slot.id))}
@@ -1095,8 +1111,8 @@ function WorkflowEditorContent() {
                                     onStartSource={(event) => {
                                         if (event && !editBlocked) interactions.handleConnectStart(event, workflowVisualOutputId(node.id, slot.id), "source");
                                     }}
-                                />
-                            )),
+                                />;
+                            }),
                         )}
                         {interactions.selectionBox ? (
                             <div
@@ -1266,7 +1282,7 @@ function WorkflowEditorContent() {
                     {mediaPreview
                         ? (() => {
                               const { node, slot } = mediaPreview;
-                              const output = slot && currentRun.data ? findCompatibleWorkflowOutput(currentRun.data, graph, node.id, slot.id) : undefined;
+                              const output = slot && currentRun.data ? compatibleOutputs.get(workflowOutputKey(node.id, slot.id)) : undefined;
                               const mediaId = slot ? output?.mediaId : node.mediaId;
                               const resourceId = slot && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id) : node.id;
                               const resource = imageResources.resources.get(resourceId);
