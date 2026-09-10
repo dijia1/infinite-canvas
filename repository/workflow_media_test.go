@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"context"
 	"errors"
 	"testing"
 	"time"
@@ -139,36 +138,6 @@ func TestWorkflowMediaReferencesValidateAtomically(t *testing.T) {
 	}
 	if err := replace([]string{"foreign"}); err == nil {
 		t.Fatal("public deleting media accepted")
-	}
-}
-
-func TestWorkflowGeneratedMediaIsHeldAtCreation(t *testing.T) {
-	useRepositoryTestDB(t, newRepositoryTestConfig(t, "workflow_media_result"))
-	db, err := DB()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Create(&model.WorkflowRun{ID: "run", OwnerUID: "owner", RequestID: "run-request", Status: "running"}).Error; err != nil {
-		t.Fatal(err)
-	}
-	attempt := model.WorkflowOutputAttempt{ID: "attempt", RunID: "run", NodeID: "node", SlotID: "slot", Attempt: 1, OwnerUID: "owner", RequestID: "request", Status: "running"}
-	if err := db.Create(&attempt).Error; err != nil {
-		t.Fatal(err)
-	}
-	ctx := WithWorkflowGenerationRequest(context.Background(), "owner", "request")
-	media, err := SaveMedia(model.Media{ID: "created-result", OwnerUID: "owner", ObjectKey: "workflow/result", ContentType: "image/png"}, ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := PreparePrivateMediaDeletion(media.ID, "owner", time.Now()); err == nil {
-		t.Fatal("result deletable before scheduler receives it")
-	}
-	var refs []model.WorkflowMediaRef
-	if err := db.Where("media_id = ?", media.ID).Find(&refs).Error; err != nil {
-		t.Fatal(err)
-	}
-	if len(refs) != 1 || refs[0].Scope != "run" || refs[0].ScopeID != "run" {
-		t.Fatalf("missing transactional result hold: %+v", refs)
 	}
 }
 

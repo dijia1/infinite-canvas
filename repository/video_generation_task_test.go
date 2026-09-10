@@ -138,6 +138,12 @@ func TestVideoCompletionRollsBackAndCanConverge(t *testing.T) {
 		t.Fatal(err)
 	}
 	db, _ := DB()
+	if err := db.Create(&model.WorkflowRun{ID: "video-complete-run", OwnerUID: task.OwnerUID, RequestID: "video-run-request", Status: "running"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.WorkflowOutputAttempt{ID: "video-complete-attempt", RunID: "video-complete-run", NodeID: "node", SlotID: "slot", Attempt: 1, OwnerUID: task.OwnerUID, RequestID: task.ClientRequestID, Status: "running"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	if err := db.Exec(`CREATE FUNCTION fail_video_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit failure'; END $$`).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -150,6 +156,10 @@ func TestVideoCompletionRollsBackAndCanConverge(t *testing.T) {
 	}
 	if _, found, _ := GetMedia("result"); found {
 		t.Fatal("partial media committed")
+	}
+	var refs []model.WorkflowMediaRef
+	if err := db.Where("media_id = ?", "result").Find(&refs).Error; err != nil || len(refs) != 0 {
+		t.Fatalf("failed completion leaked workflow refs: %+v err=%v", refs, err)
 	}
 	state, _, _ := GetVideoGenerationTask(task.ID, "owner")
 	if state.Status != "saving" {
@@ -170,6 +180,12 @@ func TestVideoCompletionRollsBackAndCanConverge(t *testing.T) {
 	}
 	if op.Status != model.OperationStatusSuccess || len(op.MediaIDs) != 1 {
 		t.Fatalf("audit %+v", op)
+	}
+	if err := db.Where("media_id = ?", "result").Find(&refs).Error; err != nil || len(refs) != 1 || refs[0].OwnerUID != task.OwnerUID || refs[0].Scope != "run" || refs[0].ScopeID != "video-complete-run" {
+		t.Fatalf("missing transactional workflow video hold: %+v err=%v", refs, err)
+	}
+	if _, err := PreparePrivateMediaDeletion("result", task.OwnerUID, time.Now()); err == nil {
+		t.Fatal("video result deletable before scheduler receives it")
 	}
 }
 

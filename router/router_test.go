@@ -911,11 +911,15 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T) {
 	const adminUID = "statistics-admin"
 	stamp := time.Now().UTC().Format("20060102150405.000000000")
-	if _, _, err := repository.CreateImageGenerationTask(model.ImageGenerationTask{
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&model.ImageGenerationTask{
 		ID: "statistics-" + stamp, OwnerUID: "statistics-user", ClientRequestID: "statistics-" + stamp,
 		Status: model.ImageTaskSucceeded, ProviderID: "statistics-provider", ProviderName: "统计模型",
 		Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true, ResultMediaIDsJSON: `["statistics-media"]`, FinishedAt: time.Now().UTC().Format(time.RFC3339),
-	}); err != nil {
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 

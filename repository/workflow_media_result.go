@@ -1,20 +1,10 @@
 package repository
 
 import (
-	"context"
-
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
-
-type workflowGenerationRequest struct{ owner, requestID string }
-type workflowGenerationRequestKey struct{}
-
-// The request is resolved against persisted attempts, never trusted as a run ID.
-func WithWorkflowGenerationRequest(ctx context.Context, owner, requestID string) context.Context {
-	return context.WithValue(ctx, workflowGenerationRequestKey{}, workflowGenerationRequest{owner, requestID})
-}
 
 func holdWorkflowGeneratedMedia(tx *gorm.DB, owner, requestID string, media model.Media) error {
 	var attempt model.WorkflowOutputAttempt

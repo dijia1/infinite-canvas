@@ -145,8 +145,12 @@ func TestRecoveredSubmittingImageTaskWithoutProviderIDBecomesUncertainWithoutRes
 		ReferencesJSON: "[]", ClaimID: "recovered-claim", LeaseUntil: &leaseUntil,
 		CreatedAt: now(), UpdatedAt: now(),
 	}
-	if _, inserted, err := repository.CreateImageGenerationTask(item); err != nil || !inserted {
-		t.Fatalf("CreateImageGenerationTask() = inserted %t, err %v", inserted, err)
+	fixtureDB, fixtureErr := repository.DB()
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
+	}
+	if err := fixtureDB.Create(&item).Error; err != nil {
+		t.Fatalf("create image task fixture: %v", err)
 	}
 	t.Cleanup(func() { _ = repository.DeleteImageGenerationTask(item.ID) })
 
@@ -184,8 +188,12 @@ func TestImageTaskSubmissionErrorOrMissingProviderIDBecomesUncertain(t *testing.
 				ReferencesJSON: "[]", RequestSummary: "{}", ClaimID: "uncertain-claim", LeaseUntil: &leaseUntil,
 				CreatedAt: now(), UpdatedAt: now(),
 			}
-			if _, inserted, err := repository.CreateImageGenerationTask(item); err != nil || !inserted {
-				t.Fatalf("CreateImageGenerationTask() = inserted %t, err %v", inserted, err)
+			fixtureDB, fixtureErr := repository.DB()
+			if fixtureErr != nil {
+				t.Fatal(fixtureErr)
+			}
+			if err := fixtureDB.Create(&item).Error; err != nil {
+				t.Fatalf("create image task fixture: %v", err)
 			}
 			t.Cleanup(func() { _ = repository.DeleteImageGenerationTask(item.ID) })
 
@@ -214,8 +222,12 @@ func TestImageTaskPollingFailureKeepsOriginalProviderTaskForRetry(t *testing.T) 
 		Mode: ImageTaskModeGeneration, Status: model.ImageTaskRunning, ProviderType: providerType, ProviderTaskID: "original-upstream-task",
 		ReferencesJSON: "[]", ClaimID: "polling-claim", LeaseUntil: &leaseUntil, CreatedAt: now(), UpdatedAt: now(),
 	}
-	if _, inserted, err := repository.CreateImageGenerationTask(item); err != nil || !inserted {
-		t.Fatalf("CreateImageGenerationTask() = inserted %t, err %v", inserted, err)
+	fixtureDB, fixtureErr := repository.DB()
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
+	}
+	if err := fixtureDB.Create(&item).Error; err != nil {
+		t.Fatalf("create image task fixture: %v", err)
 	}
 	t.Cleanup(func() { _ = repository.DeleteImageGenerationTask(item.ID) })
 
@@ -245,8 +257,12 @@ func TestExpiredImageTaskWorkerCleansPreparedResultWithoutPublishingMedia(t *tes
 		Status: model.ImageTaskRunning, ProviderTaskID: "expired-upstream", ClaimID: "expired-result-claim", LeaseUntil: &past,
 		CreatedAt: now(), UpdatedAt: now(),
 	}
-	if _, inserted, err := repository.CreateImageGenerationTask(item); err != nil || !inserted {
-		t.Fatalf("CreateImageGenerationTask() = inserted %t, err %v", inserted, err)
+	fixtureDB, fixtureErr := repository.DB()
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
+	}
+	if err := fixtureDB.Create(&item).Error; err != nil {
+		t.Fatalf("create image task fixture: %v", err)
 	}
 	t.Cleanup(func() { _ = repository.DeleteImageGenerationTask(item.ID) })
 

@@ -24,13 +24,6 @@ func SaveMedia(item model.Media, contexts ...context.Context) (model.Media, erro
 		if err := tx.Create(&item).Error; err != nil {
 			return err
 		}
-		if len(contexts) > 0 {
-			if request, ok := contexts[0].Value(workflowGenerationRequestKey{}).(workflowGenerationRequest); ok && request.owner == item.OwnerUID {
-				if err := holdWorkflowGeneratedMedia(tx, request.owner, request.requestID, item); err != nil {
-					return err
-				}
-			}
-		}
 		return recordMediaLifecycle(tx, item, item.OwnerUID, "created", "", "resource_created")
 	})
 	return item, err

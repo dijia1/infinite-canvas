@@ -23,28 +23,6 @@ type preparedImageTaskResults struct {
 	store imageStore
 }
 
-// persistGeneratedImages makes provider results private media records. It never
-// writes a provider image to the application's public filesystem.
-func persistGeneratedImages(ctx context.Context, images []ai.ImageResult) ([]ai.ImageResult, error) {
-	user, ok := PortalUserFromContext(ctx)
-	if !ok {
-		return nil, errors.New("未经过 Portal Gateway 身份验证")
-	}
-	result := make([]ai.ImageResult, 0, len(images))
-	for _, image := range images {
-		data, filename, contentType, err := generatedImagePayload(ctx, image)
-		if err != nil {
-			return nil, err
-		}
-		access, err := saveImage(ctx, user, model.MediaSourceGenerated, filename, contentType, data, false)
-		if err != nil {
-			return nil, err
-		}
-		result = append(result, ai.ImageResult{URL: access.URL, MediaID: access.MediaID, ExpiresAt: access.ExpiresAt, ContentType: access.ContentType})
-	}
-	return result, nil
-}
-
 // prepareImageTaskResultMedia writes immutable result objects but deliberately
 // leaves database publication to CompleteImageGenerationTask, which verifies
 // the worker lease and commits every media row with the task terminal state.

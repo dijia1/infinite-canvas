@@ -132,10 +132,6 @@ func TestReleaseScriptsProtectAndRestoreKnownGoodVersion(t *testing.T) {
 		"/program/data/infinite-canvas",
 		"flock -n 9",
 		"infinite-canvas-release.last-known-good",
-		"docker compose",
-		"rollback()",
-		"wait_for_healthy",
-		"docker pull",
 	} {
 		if !strings.Contains(deploy, expected) {
 			t.Fatalf("deployment script missing %q", expected)

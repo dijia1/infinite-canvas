@@ -13,22 +13,6 @@ import (
 
 var ErrImageLeaseLost = errors.New("image task lease lost")
 
-func CreateImageGenerationTask(item model.ImageGenerationTask) (model.ImageGenerationTask, bool, error) {
-	database, err := DB()
-	if err != nil {
-		return model.ImageGenerationTask{}, false, err
-	}
-	result := database.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "client_request_id"}}, DoNothing: true}).Create(&item)
-	if result.Error != nil {
-		return model.ImageGenerationTask{}, false, result.Error
-	}
-	if result.RowsAffected > 0 {
-		return item, true, nil
-	}
-	existing, found, err := GetImageGenerationTaskByClientRequest(item.OwnerUID, item.ClientRequestID)
-	return existing, false, firstImageTaskLookupError(found, err)
-}
-
 // CreateImageGenerationTaskWithOperationLog commits the new task and its
 // submitted audit record together. A duplicate client request returns the
 // existing task without creating a second operation log.
@@ -310,14 +294,4 @@ func DeleteImageGenerationTask(id string) error {
 		return err
 	}
 	return database.Delete(&model.ImageGenerationTask{}, "id = ?", id).Error
-}
-
-func firstImageTaskLookupError(found bool, err error) error {
-	if err != nil {
-		return err
-	}
-	if !found {
-		return errors.New("图片任务创建后未找到记录")
-	}
-	return nil
 }
