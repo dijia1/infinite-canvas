@@ -35,9 +35,6 @@ type ConfigStore = {
     isStatusLoading: boolean;
     isConfigOpen: boolean;
     shouldPromptContinue: boolean;
-    updateConfig: <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => void;
-    selectImageModel: (providerId: string) => void;
-    selectVideoModel: (providerId: string) => void;
     loadPublicSettings: () => Promise<void>;
     isAiConfigReady: (capability: AICapability) => boolean;
     openConfigDialog: (shouldPromptContinue?: boolean) => void;
@@ -53,9 +50,6 @@ export const useConfigStore = create<ConfigStore>()(
             isStatusLoading: false,
             isConfigOpen: false,
             shouldPromptContinue: false,
-            updateConfig: (key, value) => set((state) => ({ config: { ...state.config, [key]: value } })),
-            selectImageModel: (providerId) => set((state) => ({ config: reconcileProviderConfig({ ...state.config, imageProviderId: providerId }, state.status) })),
-            selectVideoModel: (providerId) => set((state) => ({ config: reconcileProviderConfig({ ...state.config, videoProviderId: providerId }, state.status, true) })),
             loadPublicSettings: async () => {
                 if (get().isStatusLoading) return;
                 set({ isStatusLoading: true });

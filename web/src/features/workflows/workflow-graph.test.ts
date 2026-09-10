@@ -6,10 +6,8 @@ import {
     appendWorkflowOutput,
     createWorkflowNode,
     emptyWorkflowGraph,
-    findAvailableWorkflowNodePosition,
     fitWorkflowImage,
     workflowViewportCenter,
-    findWorkflowConnection,
     removeWorkflowConnection,
     removeWorkflowNode,
     removeWorkflowOutput,
@@ -107,7 +105,7 @@ describe("workflow graph", () => {
         assert.deepEqual(graph.nodes[0]?.inputPorts, []);
     });
 
-    test("places replacement outputs and new nodes without overlapping existing cards", () => {
+    test("places replacement outputs without overlapping existing cards", () => {
         let graph = emptyWorkflowGraph();
         const source = createWorkflowNode("image_generation", { x: 100, y: 100 }, "source");
         graph = { ...graph, nodes: [source] };
@@ -118,7 +116,6 @@ describe("workflow graph", () => {
         graph = appendWorkflowOutput(graph, source.id);
         const positions = graph.nodes[0]!.outputs!.map((slot) => `${slot.position?.x}:${slot.position?.y}`);
         assert.equal(new Set(positions).size, positions.length);
-        assert.notDeepEqual(findAvailableWorkflowNodePosition(graph, "text_input", { x: 100, y: 100 }), { x: 100, y: 100 });
     });
 
     test("identifies equal port ids independently for different target nodes", () => {
@@ -135,7 +132,6 @@ describe("workflow graph", () => {
             connections: [first, second],
         };
         assert.notEqual(workflowConnectionKey(first), workflowConnectionKey(second));
-        assert.equal(findWorkflowConnection(graph, { targetNodeId: "target-b", targetPortId: "input" }), second);
         const next = removeWorkflowConnection(graph, first);
         assert.deepEqual(next.nodes.find((node) => node.id === "target-a")?.inputPorts, []);
         assert.deepEqual(next.nodes.find((node) => node.id === "target-b")?.inputPorts, [{ id: "input", type: "text" }]);

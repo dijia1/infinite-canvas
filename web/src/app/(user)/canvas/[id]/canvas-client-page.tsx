@@ -7,7 +7,7 @@ import { useNavigationRoute } from "@/components/layout/use-navigation-route";
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ImageIcon, Images, List, Menu, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
+import { ImageIcon, Images, List, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { saveAs } from "file-saver";
 
 import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
@@ -48,7 +48,7 @@ import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canv
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
 import { getCanvasViewportSize } from "../utils/canvas-viewport-size";
-import { App, Button, Dropdown, Modal } from "antd";
+import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec, normalizeVideoConfigNodeSize } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";

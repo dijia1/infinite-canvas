@@ -824,10 +824,6 @@ export async function getImageBlob(storageKey: string) {
     return currentOperations().getImageBlob(canonicalStorageKey(storageKey));
 }
 
-export async function setImageBlob(storageKey: string, blob: Blob) {
-    return currentOperations().setImageBlob(storageKey, blob);
-}
-
 export async function imageToDataUrl(image: { url?: string; dataUrl?: string; storageKey?: string }) {
     const cachedBlob = image.storageKey ? await getImageBlob(image.storageKey) : null;
     if (cachedBlob) return blobToDataUrl(cachedBlob);

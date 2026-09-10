@@ -107,7 +107,7 @@ test("shared Canvas controller drags workflow output independently and connects 
     const controller = createCanvasInteractionController({
         nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef: { current: { x: 0, y: 0, k: 1 } }, setNodes, setConnections,
         setSelectedNodeIds: (next) => { selectedNodeIdsRef.current = typeof next === "function" ? next(selectedNodeIdsRef.current) : next; },
-        setSelectedConnectionId: () => {}, setContextMenu: () => {}, setHoveredNodeId: () => {}, setToolbarNodeId: () => {}, setDialogNodeId: () => {},
+        setSelectedConnectionId: () => {},
         pause: () => calls.push("pause"), resume: () => calls.push("resume"), screenToCanvas: (x, y) => ({ x, y }),
         normalizeConnection: (first, second, _nodes, handle) => normalizeWorkflowCanvasConnection(graph, first, second, handle),
         requestAnimationFrame: (next) => { frame = next; return 1; }, cancelAnimationFrame: () => { frame = undefined; },

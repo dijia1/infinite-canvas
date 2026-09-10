@@ -15,7 +15,6 @@ import (
 const maxMultipartImageBytes int64 = 50 << 20
 const multipartRequestOverheadBytes int64 = 1 << 20
 const maxImageEditRequestBytes int64 = maxMultipartImageBytes*2 + multipartRequestOverheadBytes
-const maxVideoRequestBytes int64 = maxMultipartImageBytes + multipartRequestOverheadBytes
 const workflowRequestIDPrefix = "workflow-"
 
 type imageRequest struct {
@@ -210,17 +209,6 @@ func AIVideoContent(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	http.Redirect(w, r, task.Videos[0].URL, http.StatusTemporaryRedirect)
-}
-
-func videoRequestFromForm(r *http.Request) (ai.VideoRequest, error) {
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		return ai.VideoRequest{}, err
-	}
-	references, err := readMultipartImageReferences(r.MultipartForm.File["input_reference[]"], maxMultipartImageBytes)
-	if err != nil {
-		return ai.VideoRequest{}, err
-	}
-	return ai.VideoRequest{ProviderID: r.FormValue("providerId"), Prompt: r.FormValue("prompt"), Seconds: r.FormValue("seconds"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution_name"), References: references}, nil
 }
 
 func readMultipartImageReferences(files []*multipart.FileHeader, maxTotalBytes int64) ([]ai.ImageReference, error) {

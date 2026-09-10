@@ -40,10 +40,10 @@ export type CanvasInteractionControllerOptions = {
     setConnections: StateSetter<CanvasConnection[]>;
     setSelectedNodeIds: StateSetter<Set<string>>;
     setSelectedConnectionId: StateSetter<string | null>;
-    setContextMenu: StateSetter<ContextMenuState | null>;
-    setHoveredNodeId: StateSetter<string | null>;
-    setToolbarNodeId: StateSetter<string | null>;
-    setDialogNodeId: StateSetter<string | null>;
+    setContextMenu?: StateSetter<ContextMenuState | null>;
+    setHoveredNodeId?: StateSetter<string | null>;
+    setToolbarNodeId?: StateSetter<string | null>;
+    setDialogNodeId?: StateSetter<string | null>;
     setConnectingParams?: StateSetter<ConnectionHandle | null>;
     setConnectionTargetNodeId?: StateSetter<string | null>;
     setPendingConnectionCreate?: StateSetter<PendingConnectionCreate | null>;
@@ -202,7 +202,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         if (!exists) {
             options.setConnections((previous) => [...previous, { id: options.createConnectionId?.() || `conn-${Date.now()}`, ...connection }]);
         }
-        options.setContextMenu(null);
+        options.setContextMenu?.(null);
     };
 
     const createConnectedNode = (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, pending: PendingConnectionCreate) => {
@@ -217,12 +217,12 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         options.setConnections((previous) => [...previous, { id: options.createConnectionId?.() || `conn-${Date.now()}`, ...connection }]);
         options.setSelectedNodeIds(new Set([newNode.id]));
         options.setSelectedConnectionId(null);
-        if (type !== CanvasNodeType.Text) options.setDialogNodeId(newNode.id);
+        if (type !== CanvasNodeType.Text) options.setDialogNodeId?.(newNode.id);
         cancelPendingConnectionCreate();
     };
 
     const handleCanvasMouseDown = (event: CanvasPointerEvent) => {
-        options.setContextMenu(null);
+        options.setContextMenu?.(null);
         if (pendingConnectionCreate) cancelPendingConnectionCreate();
         if (event.button !== 0) return;
 
@@ -238,7 +238,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
             setCut(next);
             options.setSelectedNodeIds(new Set());
             options.setSelectedConnectionId(null);
-            options.setDialogNodeId(null);
+            options.setDialogNodeId?.(null);
             return;
         }
 
@@ -253,14 +253,14 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         setSelection(next);
         if (!event.shiftKey) options.setSelectedNodeIds(new Set());
         options.setSelectedConnectionId(null);
-        options.setDialogNodeId(null);
+        options.setDialogNodeId?.(null);
     };
 
     const handleNodeMouseDown = (event: CanvasPointerEvent, nodeId: string) => {
         event.stopPropagation?.();
-        options.setContextMenu(null);
-        options.setHoveredNodeId(null);
-        options.setToolbarNodeId(null);
+        options.setContextMenu?.(null);
+        options.setHoveredNodeId?.(null);
+        options.setToolbarNodeId?.(null);
         options.setSelectedConnectionId(null);
 
         const nextSelected = new Set(options.selectedNodeIdsRef.current);
@@ -329,8 +329,8 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         }
         if (wasClick && clickedNodeId) {
             const clickedNode = options.nodesRef.current.find((node) => node.id === clickedNodeId);
-            if (clickedNode?.type === CanvasNodeType.Text) options.setDialogNodeId((current) => (current === clickedNodeId ? current : null));
-            else options.setDialogNodeId(clickedNodeId);
+            if (clickedNode?.type === CanvasNodeType.Text) options.setDialogNodeId?.((current) => (current === clickedNodeId ? current : null));
+            else options.setDialogNodeId?.(clickedNodeId);
         }
     };
 

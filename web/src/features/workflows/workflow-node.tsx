@@ -61,7 +61,6 @@ export function WorkflowNodeCard({
     onRetryImage: () => void;
     onImageLoaded: (storageKey: string) => void;
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
-    onSelect?: () => void;
     onDragStart: (event: ReactPointerEvent, node: WorkflowNode) => void;
     onResizeStart?: ResizeStart;
     onRemove: () => void;
@@ -260,7 +259,6 @@ export function WorkflowOutputCard({
     onRetryOutput?: () => void;
     onImageLoaded?: (storageKey: string) => void;
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
-    onSelect?: () => void;
     onDragStart: (event: ReactPointerEvent, parent: WorkflowNode, slot: WorkflowOutputSlot) => void;
     onResizeStart?: ResizeStart;
     onRemove: () => void;

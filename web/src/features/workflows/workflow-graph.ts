@@ -5,7 +5,6 @@ import type { WorkflowConnection, WorkflowGraph, WorkflowMediaType, WorkflowNode
 
 const MAX_INPUTS = 9;
 const MAX_OUTPUTS = 9;
-const NODE_GAP = 64;
 
 export function emptyWorkflowGraph(): WorkflowGraph {
     return { version: 1, nodes: [], connections: [] };
@@ -27,24 +26,6 @@ export function createWorkflowNode(type: WorkflowNodeType, position: WorkflowPos
         config: {},
         outputs: [{ id: `${id}-output-1`, type: outputType, position: { x: position.x + width + 96, y: position.y + 10 }, width: outputType === "image" ? 340 : 420, height: outputType === "image" ? 240 : 236 }],
     };
-}
-
-export function findAvailableWorkflowNodePosition(graph: WorkflowGraph, type: WorkflowNodeType, desired: WorkflowPosition): WorkflowPosition {
-    const probe = createWorkflowNode(type, desired, "workflow-placement-probe");
-    const occupied = graph.nodes.flatMap((node) => [
-        { position: node.position, width: node.width || 340, height: node.height || 240 },
-        ...(node.outputs || []).map((slot) => ({ position: slot.position || node.position, width: slot.width || 340, height: slot.height || 240 })),
-    ]);
-    for (let index = 0; index < 100; index++) {
-        const column = index % 5;
-        const row = Math.floor(index / 5);
-        const position = { x: desired.x + column * ((probe.width || 340) + NODE_GAP), y: desired.y + row * ((probe.height || 240) + NODE_GAP) };
-        const candidate = createWorkflowNode(type, position, "workflow-placement-probe");
-        const candidateRects = [{ position, width: candidate.width || 340, height: candidate.height || 240 }, ...(candidate.outputs || []).map((slot) => ({ position: slot.position || position, width: slot.width || 340, height: slot.height || 240 }))];
-        const overlaps = candidateRects.some((candidateRect) => occupied.some((item) => rectanglesOverlap(candidateRect.position, candidateRect.width, candidateRect.height, item.position, item.width, item.height, NODE_GAP)));
-        if (!overlaps) return position;
-    }
-    return { x: desired.x, y: desired.y + occupied.length * NODE_GAP };
 }
 
 export function workflowSourceType(node: WorkflowNode, slotId: string): WorkflowMediaType | undefined {
@@ -168,10 +149,6 @@ export type WorkflowConnectionIdentity = Pick<WorkflowConnection, "targetNodeId"
 
 export function workflowConnectionKey(connection: WorkflowConnectionIdentity) {
     return JSON.stringify([connection.targetNodeId, connection.targetPortId]);
-}
-
-export function findWorkflowConnection(graph: WorkflowGraph, identity: WorkflowConnectionIdentity) {
-    return graph.connections.find((connection) => connection.targetNodeId === identity.targetNodeId && connection.targetPortId === identity.targetPortId);
 }
 
 function rectanglesOverlap(leftPosition: WorkflowPosition, leftWidth: number, leftHeight: number, rightPosition: WorkflowPosition, rightWidth: number, rightHeight: number, padding = 0) {

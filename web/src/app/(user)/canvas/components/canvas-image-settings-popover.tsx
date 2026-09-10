@@ -18,12 +18,9 @@ type CanvasImageSettingsPopoverProps = {
     config: AiConfig;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 	onProviderOptionsChange?: (options: ImageRequestOptions) => void;
-    onMissingConfig?: () => void;
     onOpenChange?: (open: boolean) => void;
     buttonClassName?: string;
-    getPopupContainer?: (triggerNode: HTMLElement) => HTMLElement;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
-    autoAdjustOverflow?: boolean;
     maxCount?: number;
 };
 

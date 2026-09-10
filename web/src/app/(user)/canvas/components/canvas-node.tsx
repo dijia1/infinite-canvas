@@ -4,7 +4,7 @@ import { resizeCanvasNode } from "@/lib/canvas-resize";
 import { CanvasVideoContent } from "./canvas-video-content";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ChevronRight, Image as ImageIcon, RefreshCw, Star, Video } from "lucide-react";
+import { ChevronRight, Image as ImageIcon, RefreshCw, Star } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
 import { formatBytes } from "@/lib/image-utils";

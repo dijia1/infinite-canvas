@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Empty, Input, Modal, Spin } from "antd";
+import { App, Button, Drawer, Empty, Modal, Spin } from "antd";
 import { Download, Image as ImageIcon, Play, Square, Video } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
@@ -30,7 +30,6 @@ import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import { useCanvasImageResources } from "@/app/(user)/canvas/media/use-canvas-image-resources";
 import { isCanvasNodeNearViewport } from "@/app/(user)/canvas/utils/canvas-node-visibility";
 import { readImageMeta } from "@/lib/image-utils";
-import { appPath } from "@/lib/app-path";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isEditableTarget } from "@/lib/editable-target";
 import { uploadUserImage } from "@/services/api/image";
@@ -1036,7 +1035,6 @@ function WorkflowEditorContent() {
                                 onRetryImage={() => imageResources.retry(node.id)}
                                 onImageLoaded={(storageKey) => imageResources.acknowledgeRendered(node.id, storageKey)}
                                 onImageDimensions={(dimensions) => node.mediaId && fitLoadedImage(node.id, node.mediaId, dimensions)}
-                                onSelect={() => canvas.setSelectedNodeIds(new Set([workflowVisualNodeId(node.id)]))}
                                 onDragStart={startNodeDrag}
                                 onRemove={() => {
                                     if (!editBlockedRef.current) setGraph((current) => removeWorkflowNode(current, node.id));
@@ -1085,7 +1083,6 @@ function WorkflowEditorContent() {
                                     readOnly={editBlocked}
                                     onResizeStart={startResize}
                                     onPreviewMedia={() => setMediaPreview({ node, slot })}
-                                    onSelect={() => canvas.setSelectedNodeIds(new Set([workflowVisualOutputId(node.id, slot.id)]))}
                                     onDragStart={startOutputDrag}
                                     onRemove={() => {
                                         if (editBlockedRef.current) return;

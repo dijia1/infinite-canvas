@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
 import { useCanvasInteractions } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
-import type { CanvasNodeData, CanvasConnection, ContextMenuState, Position, ViewportTransform } from "@/app/(user)/canvas/types";
+import type { CanvasNodeData, CanvasConnection, Position, ViewportTransform } from "@/app/(user)/canvas/types";
 import { addWorkflowConnection, createWorkflowNode } from "./workflow-graph";
-import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowConnectionInput, workflowVisualNodeId, workflowVisualOutputId, type WorkflowConnectionValidator } from "./workflow-canvas-adapter";
+import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowConnectionInput, workflowVisualNodeId, type WorkflowConnectionValidator } from "./workflow-canvas-adapter";
 import type { WorkflowGraph, WorkflowNode, WorkflowNodeType } from "./types";
 
 type Options = {
@@ -38,10 +38,6 @@ export function useWorkflowInteractions(options: Options) {
     const selectedNodeIdsRef = useRef(selectedNodeIds);
     selectedNodeIdsRef.current = selectedNodeIds;
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
-    const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
-    const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-    const [toolbarNodeId, setToolbarNodeId] = useState<string | null>(null);
-    const [dialogNodeId, setDialogNodeId] = useState<string | null>(null);
     const clipboardRef = useRef<WorkflowGraph | null>(null);
     const pasteCountRef = useRef(0);
     const setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>> = (next) => {
@@ -66,7 +62,6 @@ export function useWorkflowInteractions(options: Options) {
     const interactions = useCanvasInteractions({
         nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef,
         setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId,
-        setContextMenu, setHoveredNodeId, setToolbarNodeId, setDialogNodeId,
         pause: options.pause, resume: options.resume, screenToCanvas: options.screenToCanvas,
         createConnectionId: nanoid,
         normalizeConnection: (first, second, _nodes, handle) => optionsRef.current.readOnly ? null : normalizeWorkflowCanvasConnection(graphRef.current, first, second, handle, optionsRef.current.validateConnection),
@@ -118,20 +113,5 @@ export function useWorkflowInteractions(options: Options) {
             interactions.cancelPendingConnectionCreate();
         } catch (error) { warn(error); }
     };
-    type PointerEvent = Parameters<typeof interactions.handleNodeMouseDown>[0];
-    const onNodePointerDown = (event: PointerEvent, visualId: string) => {
-        if ((event.button ?? 0) !== 0) return;
-        if (optionsRef.current.readOnly) { event.stopPropagation?.(); setSelectedNodeIds(new Set([visualId])); return; }
-        interactions.handleNodeMouseDown(event, visualId);
-    };
-    const onSourcePointerDown = (event: PointerEvent, nodeId: string, slotId = "output") => {
-        if (optionsRef.current.readOnly || (event.button ?? 0) !== 0) return;
-        const node = graphRef.current.nodes.find((item) => item.id === nodeId);
-        const id = node?.type.endsWith("_input") ? workflowVisualNodeId(nodeId) : workflowVisualOutputId(nodeId, slotId);
-        interactions.handleConnectStart(event, id, "source");
-    };
-    const onTargetPointerDown = (event: PointerEvent, nodeId: string) => {
-        if (!optionsRef.current.readOnly && (event.button ?? 0) === 0) interactions.handleConnectStart(event, workflowVisualNodeId(nodeId), "target");
-    };
-    return { nodes, connections, nodesRef, selectedNodeIds, setSelectedNodeIds, selectedConnectionId, setSelectedConnectionId, contextMenu, setContextMenu, hoveredNodeId, setHoveredNodeId, toolbarNodeId, setToolbarNodeId, dialogNodeId, setDialogNodeId, interactions, deleteSelection, copySelection, pasteSelection, createConnectedNode, onNodePointerDown, onSourcePointerDown, onTargetPointerDown, setVisualNodes: setNodes };
+    return { nodes, connections, nodesRef, selectedNodeIds, setSelectedNodeIds, selectedConnectionId, setSelectedConnectionId, interactions, deleteSelection, copySelection, pasteSelection, createConnectedNode, setVisualNodes: setNodes };
 }
