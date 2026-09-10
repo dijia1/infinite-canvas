@@ -111,6 +111,9 @@ func ReplaceWorkflowMediaRefs(tx *gorm.DB, ownerUID, scope, scopeID string, medi
 				expiry = &deadline
 			}
 		}
+		if mediaExpiryEqual(item.ExpiresAt, expiry) {
+			continue
+		}
 		if err := tx.Model(&model.Media{}).Where("id = ?", id).Update("expires_at", expiry).Error; err != nil {
 			return err
 		}

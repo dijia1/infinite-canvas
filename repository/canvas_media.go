@@ -180,6 +180,9 @@ func applyCanvasMediaChanges(tx *gorm.DB, changes []canvasMediaChange) error {
 			continue
 		}
 		item := media[id]
+		if mediaExpiryEqual(item.ExpiresAt, expiry) {
+			continue
+		}
 		if (item.ExpiresAt == nil && expiry != nil) || (item.ExpiresAt != nil && expiry == nil) {
 			event, reason := "cleanup_scheduled", "no_saved_canvas_reference"
 			if expiry == nil {

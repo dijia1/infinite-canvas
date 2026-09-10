@@ -103,6 +103,14 @@ func ListPrivateMedia(ownerUID string, kind PrivateMediaKind) ([]model.Media, er
 	return items, err
 }
 
+func mediaExpiryEqual(current, target *time.Time) bool {
+	if current == nil || target == nil {
+		return current == nil && target == nil
+	}
+	// pgx persists timestamps at microsecond precision, regardless of location.
+	return current.Truncate(time.Microsecond).Equal(target.Truncate(time.Microsecond))
+}
+
 func SetPrivateMediaExpiry(id, ownerUID string, expiresAt *time.Time) (bool, error) {
 	// Match PostgreSQL/pgx timestamp precision before comparing with a stored value.
 	if expiresAt != nil {
@@ -121,6 +129,10 @@ func SetPrivateMediaExpiry(id, ownerUID string, expiresAt *time.Time) (bool, err
 				return nil
 			}
 			return err
+		}
+		if mediaExpiryEqual(item.ExpiresAt, expiresAt) {
+			updated = true
+			return nil
 		}
 		if err := tx.Model(&model.Media{}).Where("id = ?", item.ID).Update("expires_at", expiresAt).Error; err != nil {
 			return err
