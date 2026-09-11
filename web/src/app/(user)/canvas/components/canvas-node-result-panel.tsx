@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, Copy, ImageIcon } from "lucide-react";
+import { Check, Copy, ImageIcon, Video } from "lucide-react";
 import type { CanvasTheme } from "@/lib/canvas-theme";
-import type { GeneratedImageDetails } from "../utils/canvas-generated-result";
+import type { GeneratedResultDetails } from "../utils/canvas-generated-result";
 
-export function CanvasNodeResultPanel({ details, theme }: { details: GeneratedImageDetails; theme: CanvasTheme }) {
+export function CanvasNodeResultPanel({ details, theme, mediaType = "image" }: { details: GeneratedResultDetails; theme: CanvasTheme; mediaType?: "image" | "video" }) {
     const [copyStatus, setCopyStatus] = useState("");
     useEffect(() => setCopyStatus(""), [details.prompt]);
     const copyPrompt = async () => {
@@ -35,7 +35,7 @@ export function CanvasNodeResultPanel({ details, theme }: { details: GeneratedIm
                 </button>
             </div>
             <div className="my-2 flex min-w-0 items-center gap-2 text-xs">
-                <span style={{ color: theme.node.muted }}>模型</span><ImageIcon className="size-3.5 shrink-0" />
+                <span style={{ color: theme.node.muted }}>模型</span>{mediaType === "video" ? <Video className="size-3.5 shrink-0" /> : <ImageIcon className="size-3.5 shrink-0" />}
                 <span className="truncate" title={details.model}>{details.model}</span>
             </div>
             <div aria-label="生成参数" className="thin-scrollbar flex items-center justify-between gap-3 overflow-x-auto border-t pt-2 text-[11px]" style={{ borderColor: theme.node.stroke }}>

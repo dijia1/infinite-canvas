@@ -1007,3 +1007,33 @@ for (const reason of ["scope", "replacement", "deleted-child"] as const) {
         assert.equal(nodesRef.current[0].metadata?.mediaId, undefined);
     });
 }
+
+
+test("video submission snapshots the model and parameters before async completion", async () => {
+    const pending = deferred<VideoGenerationTask>();
+    const source = node("source", CanvasNodeType.Config, { generationMode: "video", seconds: "8", videoSize: "16:9" });
+    let submitted: AiConfig | undefined;
+    const { controller, nodesRef } = setup([source], [], { requestVideoGeneration: async (config: AiConfig) => { submitted = config; return pending.promise; } });
+    const generation = controller.generateNode("source", "video", "运动镜头");
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const before = nodesRef.current.find(n => n.type === CanvasNodeType.Video)!;
+    assert.equal(before.metadata?.generationMode, "video");
+    assert.equal(before.metadata?.videoProviderName, "Video");
+    assert.equal(before.metadata?.vquality, submitted?.vquality);
+    assert.equal(before.metadata?.seconds, submitted?.videoSeconds);
+    assert.equal(before.metadata?.videoSize, submitted?.videoSize);
+    source.metadata!.seconds = "15";
+    pending.resolve({ id: "video-task", status: "succeeded", progress: 100, resultMediaIds: ["m"], videos: [{ mediaId: "m", url: "unused", duration: 7.8 }] });
+    await generation;
+    const after = nodesRef.current.find(n => n.id === before.id)!;
+    assert.equal(after.metadata?.seconds, "8");
+    assert.equal(after.metadata?.videoProviderName, "Video");
+    assert.equal(after.metadata?.status, "success");
+    const restored = node("restored", CanvasNodeType.Video, { ...after.metadata, status: "loading", mediaId: undefined });
+    const recovery = setup([restored], [], { getVideoTask: async () => ({ id: "video-task", status: "succeeded", progress: 100, resultMediaIds: ["m"], videos: [{ mediaId: "m", url: "unused" }] }) });
+    recovery.controller.resumePendingImageTasks();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    assert.equal(recovery.nodesRef.current[0].metadata?.videoProviderName, "Video");
+    assert.equal(recovery.nodesRef.current[0].metadata?.seconds, "8");
+    assert.equal(recovery.nodesRef.current[0].metadata?.status, "success");
+});

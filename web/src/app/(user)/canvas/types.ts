@@ -37,6 +37,7 @@ export type CanvasNodeMetadata = {
 	imageProviderId?: string;
 	imageProviderName?: string;
 	videoProviderId?: string;
+	videoProviderName?: string;
 	imageProviderType?: string;
 	imageRequestSchemaVersion?: string;
 	providerOptions?: Record<string, unknown>;

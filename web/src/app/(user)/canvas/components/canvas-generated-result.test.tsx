@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
-import { isGeneratedImageResult, generatedImageDetails, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
+import { isGeneratedImageResult, generatedImageDetails, clearGeneratedImageIdentity, generatedVideoDetails, isGeneratedVideoResult } from "../utils/canvas-generated-result";
 import { CanvasNodeResultPanel } from "./canvas-node-result-panel";
 import { canvasThemes } from "@/lib/canvas-theme";
 
@@ -50,5 +50,30 @@ test("result markup contains readonly prompt and four parameters without generat
         assert.ok(!markup.includes("背景"));
         assert.ok(!markup.includes('aria-label="生成"'));
         assert.ok(markup.includes('aria-label="生成参数"'));
+    }
+});
+
+
+test("video results require a recorded video generation marker, not stale task IDs", () => {
+    const video = { ...result, type: CanvasNodeType.Video, metadata: { mediaId: "v", generationMode: "video" as const, videoTaskId: "task", status: "success" as const } };
+    assert.equal(isGeneratedVideoResult(video), true);
+    for (const patch of [{ generationMode: undefined }, { status: "loading" as const }, { status: "error" as const }, { mediaId: undefined }]) {
+        assert.equal(isGeneratedVideoResult({ ...video, metadata: { ...video.metadata, ...patch } }), false);
+    }
+    assert.equal(isGeneratedVideoResult(result), false);
+});
+
+test("video details use the submitted video fields, retain missing values and ignore image settings", () => {
+    const details = generatedVideoDetails({ videoProviderId: "v", videoProviderName: "原视频模型", vquality: "1080p", videoSize: "16:9", seconds: "6", duration: 5.8, size: "1:1", resolution: "4k", quality: "high" }, [{ id: "v", name: "新名称" }]);
+    assert.equal(details.model, "原视频模型");
+    assert.deepEqual(details.parameters, [{ label: "分辨率", value: "1080p" }, { label: "比例", value: "16:9" }, { label: "时长", value: "6 秒" }]);
+    assert.equal(generatedVideoDetails({ videoProviderId: "v" }, [{ id: "v", name: "精确匹配" }]).model, "精确匹配");
+    assert.equal(generatedVideoDetails({ videoProviderId: "deleted" }).model, "deleted");
+    assert.deepEqual(generatedVideoDetails({ size: "1:1", duration: 9 }).parameters.map(p => p.value), ["未记录", "未记录", "未记录"]);
+    assert.deepEqual(generatedVideoDetails({ vquality: "auto", videoSize: "auto", seconds: "auto" }).parameters.map(p => p.value), ["自动", "自动", "自动"]);
+    for (const theme of [canvasThemes.dark, canvasThemes.light]) {
+        const html = renderToStaticMarkup(<CanvasNodeResultPanel details={details} theme={theme} mediaType="video" />);
+        for (const label of ["模型", "分辨率", "比例", "时长"]) assert.ok(html.includes(label));
+        for (const absent of ["textarea", "格式", "质量", 'aria-label="生成"']) assert.ok(!html.includes(absent));
     }
 });

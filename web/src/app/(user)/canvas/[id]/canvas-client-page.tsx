@@ -1,5 +1,6 @@
 "use client";
 
+import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
 import { CanvasEditorTopBar } from "@/components/canvas-editor-top-bar";
 import { useEditorNavigation } from "@/components/layout/editor-navigation";
 import { useNavigationRoute } from "@/components/layout/use-navigation-route";
@@ -65,7 +66,7 @@ import { CanvasNode } from "../components/canvas-node";
 import { VideoResourceProvider, useExternalVideoNodes } from "../components/canvas-video-content";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasNodeResultPanel } from "../components/canvas-node-result-panel";
-import { isGeneratedImageResult, generatedImageDetails, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
+import { isGeneratedImageResult, generatedImageDetails, generatedVideoDetails, isGeneratedVideoResult, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasBootstrapFeedback, CanvasSyncFeedback } from "../components/canvas-sync-feedback";
@@ -78,7 +79,7 @@ import { useCanvasProjectDetail } from "../hooks/use-canvas-project-detail";
 import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
 import { useCanvasDocumentSync, type CanvasEditorDocument } from "../hooks/use-canvas-document-sync";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
-import { useCanvasInteractions, type PendingConnectionCreate } from "../hooks/use-canvas-interactions";
+import { useCanvasInteractions } from "../hooks/use-canvas-interactions";
 import { useCanvasGeneration } from "../hooks/use-canvas-generation";
 import { getCanvasRenderDetail } from "../media/canvas-media-policy";
 import { buildCanvasMediaTargets, useCanvasImageResources } from "../media/use-canvas-image-resources";
@@ -188,59 +189,6 @@ function CanvasRefreshShell() {
                 <div className="size-8 rounded-md bg-current opacity-10" />
             </div>
         </main>
-    );
-}
-
-function ConnectionCreateMenu({ pending, onCreate, onClose }: { pending: PendingConnectionCreate; onCreate: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video) => void; onClose: () => void }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    return (
-        <div
-            className="absolute z-[120] w-[300px] rounded-[18px] border p-3 shadow-2xl backdrop-blur"
-            data-connection-create-menu
-            style={{ left: pending.position.x, top: pending.position.y, background: theme.node.panel, borderColor: theme.node.stroke, color: theme.node.text }}
-            onMouseDown={(event) => event.stopPropagation()}
-            onPointerDown={(event) => event.stopPropagation()}
-        >
-            <div className="mb-2 flex items-center justify-between px-1">
-                <span className="text-sm font-medium" style={{ color: theme.node.muted }}>
-                    引用该节点生成
-                </span>
-                <button type="button" className="grid size-7 place-items-center rounded-lg text-base opacity-55 transition hover:bg-white/10 hover:opacity-100" onClick={onClose} aria-label="关闭">
-                    ×
-                </button>
-            </div>
-            <div className="grid gap-1">
-                <ConnectionCreateOption theme={theme} icon={<List className="size-5" />} title="文本节点" description="脚本、广告词、品牌文案" onClick={() => onCreate(CanvasNodeType.Text)} />
-                <ConnectionCreateOption theme={theme} icon={<ImageIcon className="size-5" />} title="图片生成" onClick={() => onCreate(CanvasNodeType.Image)} />
-                <ConnectionCreateOption theme={theme} icon={<Video className="size-5" />} title="视频生成" onClick={() => onCreate(CanvasNodeType.Video)} />
-                <ConnectionCreateOption theme={theme} icon={<Settings2 className="size-5" />} title="配置节点" description="模型、尺寸、数量和输入顺序" onClick={() => onCreate(CanvasNodeType.Config)} />
-            </div>
-        </div>
-    );
-}
-
-function ConnectionCreateOption({ theme, icon, title, description, onClick }: { theme: (typeof canvasThemes)[keyof typeof canvasThemes]; icon: React.ReactNode; title: string; description?: string; onClick?: () => void }) {
-    return (
-        <button
-            type="button"
-            className="flex h-16 w-full cursor-pointer items-center gap-3 rounded-2xl px-3 text-left transition"
-            style={{ color: theme.node.text }}
-            onClick={onClick}
-            onMouseEnter={(event) => (event.currentTarget.style.background = theme.node.fill)}
-            onMouseLeave={(event) => (event.currentTarget.style.background = "transparent")}
-        >
-            <span className="grid size-11 shrink-0 place-items-center rounded-xl" style={{ background: theme.node.fill, color: theme.node.muted }}>
-                {icon}
-            </span>
-            <span className="min-w-0 flex-1">
-                <span className="flex items-center gap-2 text-base font-semibold leading-5">{title}</span>
-                {description ? (
-                    <span className="mt-1 block truncate text-sm" style={{ color: theme.node.muted }}>
-                        {description}
-                    </span>
-                ) : null}
-            </span>
-        </button>
     );
 }
 
@@ -1891,6 +1839,8 @@ function InfiniteCanvasPage() {
     const renderNodePromptPanel = useCallback(
         (panelNode: CanvasNodeData) => isGeneratedImageResult(panelNode) ? (
             <CanvasNodeResultPanel key={panelNode.id} details={generatedImageDetails(panelNode.metadata, aiStatus?.imageModels)} theme={theme} />
+        ) : isGeneratedVideoResult(panelNode) ? (
+            <CanvasNodeResultPanel key={panelNode.id} details={generatedVideoDetails(panelNode.metadata, aiStatus?.videoModels)} theme={theme} mediaType="video" />
         ) : (
             <CanvasNodePromptPanel
                 node={panelNode}
@@ -1904,7 +1854,7 @@ function InfiniteCanvasPage() {
                 }}
             />
         ),
-        [aiStatus?.imageModels, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId, theme],
+        [aiStatus?.imageModels, aiStatus?.videoModels, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId, theme],
     );
 
     const handleConfigNodeLayoutHeightChange = useCallback((nodeId: string, height: number) => {
@@ -2207,7 +2157,7 @@ function InfiniteCanvasPage() {
                                 imageSourceManaged={Boolean(node.metadata?.mediaId)}
                                 renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id ? "overview" : "full"}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
-                                panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name || ""}` : undefined}
+                                panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([
                                     configInputPanelMetaById.get(node.id)?.version || "",
                                     (configInputsById.get(node.id) || []).filter((input) => input.image).map((input) => [input.nodeId, canvasImageResources.get(input.nodeId)?.url, canvasImageErrors.get(input.nodeId)]),
@@ -2259,7 +2209,20 @@ function InfiniteCanvasPage() {
                             }}
                         />
                     ) : null}
-                    {pendingConnectionCreate ? <ConnectionCreateMenu pending={pendingConnectionCreate} onCreate={(type) => createConnectedNode(type, pendingConnectionCreate)} onClose={cancelPendingConnectionCreate} /> : null}
+                    {pendingConnectionCreate ? (
+                        <CanvasConnectionCreateMenu
+                            title="引用该节点生成"
+                            position={pendingConnectionCreate.position}
+                            theme={theme}
+                            onClose={cancelPendingConnectionCreate}
+                            options={[
+                                { id: CanvasNodeType.Text, icon: <List className="size-5" />, title: "文本节点", description: "脚本、广告词、品牌文案", onClick: () => createConnectedNode(CanvasNodeType.Text, pendingConnectionCreate) },
+                                { id: CanvasNodeType.Image, icon: <ImageIcon className="size-5" />, title: "图片生成", onClick: () => createConnectedNode(CanvasNodeType.Image, pendingConnectionCreate) },
+                                { id: CanvasNodeType.Video, icon: <Video className="size-5" />, title: "视频生成", onClick: () => createConnectedNode(CanvasNodeType.Video, pendingConnectionCreate) },
+                                { id: CanvasNodeType.Config, icon: <Settings2 className="size-5" />, title: "配置节点", description: "模型、尺寸、数量和输入顺序", onClick: () => createConnectedNode(CanvasNodeType.Config, pendingConnectionCreate) },
+                            ]}
+                        />
+                    ) : null}
                     {isProjectReadonly ? <div className="absolute inset-0 z-[200] cursor-not-allowed" aria-label="当前画布由另一标签页编辑" onContextMenu={(event) => event.preventDefault()} /> : null}
                 </InfiniteCanvas>
 

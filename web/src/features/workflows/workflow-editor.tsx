@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Empty, Modal, Spin } from "antd";
-import { Download, Image as ImageIcon, Play, Square, Video } from "lucide-react";
+import { Download, Image as ImageIcon, List, Play, Square, Video } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -11,6 +11,7 @@ import { EditorSyncStatus } from "@/components/editor-sync-status";
 import { useEditorNavigation } from "@/components/layout/editor-navigation";
 import { useNavigationRoute } from "@/components/layout/use-navigation-route";
 import { downloadWorkflowImages } from "@/services/workflow-download";
+import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
 import { CanvasEditorTopBar } from "@/components/canvas-editor-top-bar";
 import { CanvasToolbar } from "@/app/(user)/canvas/components/canvas-toolbar";
 import { CanvasZoomControls } from "@/app/(user)/canvas/components/canvas-zoom-controls";
@@ -1128,23 +1129,18 @@ function WorkflowEditorContent() {
                             />
                         ) : null}
                         {interactions.pendingConnectionCreate ? (
-                            <div
-                                data-connection-create-menu
-                                className="absolute z-[120] w-56 rounded-2xl border p-3 shadow-xl"
-                                style={{ left: interactions.pendingConnectionCreate.position.x, top: interactions.pendingConnectionCreate.position.y, background: theme.node.panel, borderColor: theme.node.stroke }}
-                            >
-                                <div className="mb-2 flex justify-between text-sm">
-                                    <span>连接并创建</span>
-                                    <button onClick={interactions.cancelPendingConnectionCreate} aria-label="关闭连接菜单">
-                                        ×
-                                    </button>
-                                </div>
-                                {connectionCreateOptions.map(([type, label]) => (
-                                    <Button key={type} type="text" block onClick={() => canvas.createConnectedNode(type as WorkflowNodeType)}>
-                                        {label}
-                                    </Button>
-                                ))}
-                            </div>
+                            <CanvasConnectionCreateMenu
+                                title="连接并创建"
+                                position={interactions.pendingConnectionCreate.position}
+                                theme={theme}
+                                onClose={interactions.cancelPendingConnectionCreate}
+                                options={connectionCreateOptions.map(([type, label]) => ({
+                                    id: type,
+                                    title: label,
+                                    icon: type === "text_input" ? <List className="size-5" /> : type === "video_input" || type === "video_generation" ? <Video className="size-5" /> : <ImageIcon className="size-5" />,
+                                    onClick: () => canvas.createConnectedNode(type),
+                                }))}
+                            />
                         ) : null}
                     </InfiniteCanvas>
                     {readOnly ? <div className="pointer-events-none absolute inset-x-0 bottom-24 z-40 text-center text-xs opacity-60">{lease.status === "readonly" ? "当前流程由另一标签页编辑" : "正在确认编辑权限"}</div> : null}

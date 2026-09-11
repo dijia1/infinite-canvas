@@ -390,3 +390,13 @@ test("loaded video model options initialize old nodes once and preserve valid se
     assert.equal(next[1].metadata?.vquality,"720p");
     assert.equal(snapshotConfigNodeProviderSelection(next,config,status),next);
 });
+
+
+test("uploaded video replacement clears image and video generation identity", () => {
+    const source = { id: "v", type: CanvasNodeType.Video, title: "v", position: { x: 0, y: 0 }, width: 320, height: 200, metadata: { generationMode: "video" as const, generationType: "edit" as const, videoProviderName: "old", videoTaskId: "task", videoTaskClientRequestId: "request", videoTaskStatus: "succeeded", imageTaskId: "old-image", imageProviderName: "old image", seconds: "8" } };
+    const replacement = replaceNodeWithUploadedVideo(source, "upload", { mediaId: "upload", status: "success" }, { width: 320, height: 200 });
+    for (const key of ["generationMode", "generationType", "videoProviderName", "videoTaskId", "videoTaskClientRequestId", "videoTaskStatus", "imageTaskId", "imageProviderName"]) assert.equal((replacement.metadata as Record<string, unknown>)[key], undefined);
+    assert.equal(replacement.metadata?.mediaId, "upload");
+    assert.equal(replacement.metadata?.seconds, "8");
+    assert.equal(source.metadata.videoTaskId, "task");
+});

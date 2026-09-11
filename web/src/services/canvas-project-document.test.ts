@@ -130,3 +130,12 @@ test("omits local image uploads from documents sent to the server", () => {
     assert.deepEqual(sanitized.nodes.map((node) => node.id), ["saved", "note"]);
     assert.deepEqual(sanitized.connections.map((connection) => connection.id), ["saved-note"]);
 });
+
+
+test("video generation display snapshots survive document sanitization and JSON roundtrip", () => {
+    const metadata = { mediaId: "video", generationMode: "video", videoProviderId: "v", videoProviderName: "提交时模型", vquality: "1080p", videoSize: "16:9", seconds: "8", prompt: "运动镜头", videoTaskId: "task", content: "blob:temporary" };
+    const document = { nodes: [{ id: "v", type: "video", title: "v", position: { x: 0, y: 0 }, width: 320, height: 200, metadata }], connections: [], backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } } as unknown as CanvasProjectDocument;
+    const restored = JSON.parse(JSON.stringify(sanitizeCanvasProjectDocument(document)));
+    const { content, ...snapshot } = metadata;
+    assert.deepEqual(restored.nodes[0].metadata, snapshot);
+});

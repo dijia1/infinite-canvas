@@ -27,13 +27,16 @@ export function withoutLegacyModel(metadata: CanvasNodeMetadata | undefined): Ca
 }
 
 export function replaceNodeWithUploadedVideo(node: CanvasNodeData, title: string, metadata: CanvasNodeMetadata, size: { width: number; height: number }): CanvasNodeData {
+    const inputMetadata = withoutLegacyModel(node.metadata);
+    // Uploaded replacements are inputs and must detach from both task observers.
+    for (const key of ["generationMode", "generationType", "imageProviderName", "imageTaskId", "imageTaskClientRequestId", "videoProviderName", "videoTaskId", "videoTaskClientRequestId", "videoTaskStatus", "videoTaskProgress"] as const) delete inputMetadata[key];
     return {
         ...node,
         type: CanvasNodeType.Video,
         title,
         position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 },
         ...size,
-        metadata: { ...withoutLegacyModel(node.metadata), ...metadata, errorDetails: undefined },
+        metadata: { ...inputMetadata, ...metadata, errorDetails: undefined },
     };
 }
 

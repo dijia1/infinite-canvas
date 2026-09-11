@@ -361,8 +361,18 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
     };
     const startVideoTask = async (nodeId: string, config: AiConfig, prompt: string, references: ReferenceImage[], videos: string[]) => {
         const clientRequestId = options.createId();
+        // Capture the submitted config once; polling/recovery only merge task results.
+        const snapshot: CanvasNodeMetadata = {
+            generationMode: "video",
+            prompt,
+            videoProviderId: config.videoProviderId,
+            videoProviderName: options.getVideoModelStatus?.()?.videoModels?.find(model => model.id === config.videoProviderId)?.name,
+            vquality: config.vquality,
+            videoSize: config.videoSize,
+            seconds: config.videoSeconds,
+        };
         const identity: TaskIdentity = { scope: sessionScope(), nodeId, kind: "video", clientRequestId };
-        options.setNodes((previous) => sessionScope() !== identity.scope ? previous : previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, videoTaskClientRequestId: clientRequestId, videoTaskId: undefined } } : node)));
+        options.setNodes((previous) => sessionScope() !== identity.scope ? previous : previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, ...snapshot, videoTaskClientRequestId: clientRequestId, videoTaskId: undefined } } : node)));
         let task: VideoGenerationTask;
         try {
             task = await options.requestVideoGeneration(config, prompt, references, clientRequestId, videos);

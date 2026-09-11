@@ -2,7 +2,7 @@ import type { CanvasNodeData, CanvasNodeMetadata } from "../types";
 import { imageQualityLabel, imageSizeLabel } from "@/components/image-settings-panel";
 
 type ModelName = { id: string; name: string };
-export type GeneratedImageDetails = { prompt: string; model: string; parameters: { label: string; value: string }[] };
+export type GeneratedResultDetails = { prompt: string; model: string; parameters: { label: string; value: string }[] };
 
 export function isGeneratedImageResult(node: CanvasNodeData): boolean {
     const meta = node.metadata;
@@ -20,7 +20,7 @@ export function clearGeneratedImageIdentity(metadata: CanvasNodeMetadata | undef
     return next;
 }
 
-export function generatedImageDetails(metadata: CanvasNodeMetadata | undefined, models: readonly ModelName[] = []): GeneratedImageDetails {
+export function generatedImageDetails(metadata: CanvasNodeMetadata | undefined, models: readonly ModelName[] = []): GeneratedResultDetails {
     const meta = metadata || {};
     const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
     // Read only recorded values. Schema defaults and current generation settings
@@ -35,6 +35,30 @@ export function generatedImageDetails(metadata: CanvasNodeMetadata | undefined, 
             { label: "分辨率", value: display(option("resolution", meta.resolution), value => value.replace(/k$/i, "K")) },
             { label: "格式", value: display(option("outputFormat", meta.outputFormat), value => value.toUpperCase()) },
             { label: "质量", value: display(option("quality", meta.quality), imageQualityLabel) },
+        ],
+    };
+}
+
+export function isGeneratedVideoResult(node: CanvasNodeData): boolean {
+    const meta = node.metadata;
+    // A task ID alone is ambiguous: historical upload replacements retained it.
+    return node.type === "video" && meta?.generationMode === "video" && Boolean(meta.mediaId || meta.content) && meta.status !== "loading" && meta.status !== "error";
+}
+
+export function generatedVideoDetails(metadata: CanvasNodeMetadata | undefined, models: readonly ModelName[] = []): GeneratedResultDetails {
+    const meta = metadata || {};
+    const text = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : undefined;
+    const display = (value: string | null | undefined, format: (value: string) => string = value => value) => {
+        const recorded = text(value);
+        return recorded ? recorded === "auto" ? "自动" : format(recorded) : "未记录";
+    };
+    return {
+        prompt: meta.prompt || "",
+        model: text(meta.videoProviderName) || models.find(model => model.id === meta.videoProviderId)?.name || text(meta.videoProviderId) || "未记录",
+        parameters: [
+            { label: "分辨率", value: display(meta.vquality, value => value.replace(/k$/i, "K")) },
+            { label: "比例", value: display(meta.videoSize) },
+            { label: "时长", value: display(meta.seconds, value => /^\d+(\.\d+)?$/.test(value) ? `${value} 秒` : value) },
         ],
     };
 }

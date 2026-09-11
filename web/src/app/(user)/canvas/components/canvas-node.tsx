@@ -270,7 +270,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onContextMenu={(event) => onContextMenu(event, data.id)}
             >
                 <div
-                    className="relative h-full w-full overflow-hidden rounded-md border"
+                    className="relative h-full w-full overflow-hidden rounded-3xl border"
                     style={{
                         background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                         borderColor: isSelected ? selectionBlue : theme.node.stroke,
