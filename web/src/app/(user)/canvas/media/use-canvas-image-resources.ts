@@ -6,7 +6,7 @@ import { loadMediaImage, loadMediaThumbnail, releaseImageObjectURL } from "@/ser
 
 import type { CanvasNodeData } from "../types";
 import { getCanvasImageVariant } from "./canvas-media-policy";
-import { createCanvasImageResourceController } from "./canvas-image-resource-controller";
+import { createCanvasImageResourceController, type CanvasImageResourceController, type CanvasImageResourceRequest } from "./canvas-image-resource-controller";
 import { createCanvasMediaLoadQueue } from "./canvas-media-load-queue";
 
 export type CanvasMediaAccessResolver = (node: CanvasNodeData) => Promise<{ url: string; previewUrl?: string }>;
@@ -64,6 +64,41 @@ function deferObjectURLRelease(release: () => void) {
     setTimeout(release, 0);
 }
 
+export function buildCanvasImageResourceRequests({
+    targets,
+    scale,
+    controller,
+    resolveAccess,
+}: {
+    targets: CanvasMediaTarget[];
+    scale: number;
+    controller: Pick<CanvasImageResourceController, "get">;
+    resolveAccess: CanvasMediaAccessResolver;
+}): CanvasImageResourceRequest[] {
+    return targets.flatMap(({ node, visible, pinned, prefetch, preview }) => {
+        const mediaId = node.type === "image" ? node.metadata?.mediaId : undefined;
+        if (!mediaId) return [];
+        const current = controller.get(node.id);
+        const variant = getCanvasImageVariant({ visible, width: node.width, height: node.height, scale, pinned, preview, prefetch, currentVariant: current?.mediaId === mediaId ? current.variant : undefined });
+        if (variant === "none") return [];
+        const remoteURL = async (kind: "thumbnail" | "original") => {
+            const access = await resolveAccess(node);
+            return kind === "thumbnail" ? access.previewUrl || access.url : access.url;
+        };
+        return [
+            {
+                nodeId: node.id,
+                mediaId,
+                variant,
+                priority: pinned || preview ? ("interactive" as const) : prefetch && !visible ? ("prefetch" as const) : variant === "original" ? ("visible-original" as const) : ("visible-thumbnail" as const),
+                releaseOriginalAfterThumbnail: Boolean(node.metadata?.content?.startsWith("blob:")),
+                loadThumbnail: (signal: AbortSignal) => loadMediaThumbnail(mediaId, () => remoteURL("thumbnail"), { signal, preferRemoteThumbnail: !preview, maxThumbnailEdge: 512 }),
+                loadOriginal: (signal: AbortSignal) => loadMediaImage(mediaId, () => remoteURL("original"), { signal }),
+            },
+        ];
+    });
+}
+
 export function useCanvasImageResources({ targets, scale, resolveAccess }: { targets: CanvasMediaTarget[]; scale: number; resolveAccess: CanvasMediaAccessResolver }) {
     const [version, notify] = useReducer((value) => value + 1, 0);
     const controllerRef = useRef<ReturnType<typeof createCanvasImageResourceController> | null>(null);
@@ -78,29 +113,7 @@ export function useCanvasImageResources({ targets, scale, resolveAccess }: { tar
     const controller = controllerRef.current;
 
     const requests = useMemo(
-        () =>
-            targets.flatMap(({ node, visible, pinned, prefetch, preview }) => {
-                const mediaId = node.type === "image" ? node.metadata?.mediaId : undefined;
-                if (!mediaId) return [];
-                const current = controller.get(node.id);
-                const variant = preview ? (current?.mediaId === mediaId ? current.variant : "thumbnail") : prefetch && !visible && !pinned ? "thumbnail" : getCanvasImageVariant({ visible, width: node.width, height: node.height, scale, pinned, currentVariant: current?.variant });
-                if (variant === "none") return [];
-                const remoteURL = async (kind: "thumbnail" | "original") => {
-                    const access = await resolveAccess(node);
-                    return kind === "thumbnail" ? access.previewUrl || access.url : access.url;
-                };
-                return [
-                    {
-                        nodeId: node.id,
-                        mediaId,
-                        variant,
-                        priority: pinned || preview ? ("interactive" as const) : prefetch && !visible ? ("prefetch" as const) : variant === "original" ? ("visible-original" as const) : ("visible-thumbnail" as const),
-                        releaseOriginalAfterThumbnail: Boolean(node.metadata?.content?.startsWith("blob:")),
-                        loadThumbnail: (signal: AbortSignal) => loadMediaThumbnail(mediaId, () => remoteURL("thumbnail"), { signal, preferRemoteThumbnail: !preview, maxThumbnailEdge: 512 }),
-                        loadOriginal: (signal: AbortSignal) => loadMediaImage(mediaId, () => remoteURL("original"), { signal }),
-                    },
-                ];
-            }),
+        () => buildCanvasImageResourceRequests({ targets, scale, controller, resolveAccess }),
         [controller, resolveAccess, scale, targets, version],
     );
 

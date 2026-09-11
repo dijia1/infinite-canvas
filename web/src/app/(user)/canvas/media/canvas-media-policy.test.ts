@@ -50,3 +50,19 @@ test("uses overview rendering through 30 percent zoom", () => {
     assert.equal(getCanvasRenderDetail(0.3), "overview");
     assert.equal(getCanvasRenderDetail(0.31), "full");
 });
+
+
+test("preview cannot override pinned or visible zoom demand", () => {
+    const options = { visible: true, width: 576, height: 576, scale: 0.2, preview: true, currentVariant: "thumbnail" as const };
+    assert.equal(getCanvasImageVariant({ ...options, pinned: true }), "original");
+    assert.equal(getCanvasImageVariant({ ...options, scale: 1 }), "original");
+    assert.equal(getCanvasImageVariant(options), "thumbnail");
+});
+
+test("preview-only and prefetch-only requests remain lightweight offscreen", () => {
+    const options = { visible: false, width: 4096, height: 4096, scale: 1 };
+    assert.equal(getCanvasImageVariant({ ...options, preview: true }), "thumbnail");
+    assert.equal(getCanvasImageVariant({ ...options, preview: true, currentVariant: "original" }), "original");
+    assert.equal(getCanvasImageVariant({ ...options, prefetch: true }), "thumbnail");
+    assert.equal(getCanvasImageVariant(options), "none");
+});

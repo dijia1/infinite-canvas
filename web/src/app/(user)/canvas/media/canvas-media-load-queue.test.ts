@@ -119,3 +119,79 @@ test("starts a fresh same-key load when an aborted producer is immediately reque
     assert.equal(await replacement.promise, "fresh-original");
     assert.equal(loadCalls, 2);
 });
+
+test("keeps the real loader peak at four while 40 originals replace canceled thumbnails", async () => {
+    const queue = createCanvasMediaLoadQueue({ concurrency: 4 });
+    const thumbnailGates = Array.from({ length: 4 }, () => deferred<string>());
+    const thumbnailStarted = Array.from({ length: 4 }, () => deferred<void>());
+    const originalGates = Array.from({ length: 40 }, () => deferred<string>());
+    const originalStarted = Array.from({ length: 40 }, () => deferred<void>());
+    const abortedThumbnails = new Set<number>();
+    const startedOriginals: number[] = [];
+    let active = 0;
+    let peak = 0;
+
+    const thumbnails = thumbnailGates.map((gate, index) =>
+        queue.request({
+            key: `canvas:media-${index}:thumbnail`,
+            priority: "visible-thumbnail",
+            load: async (signal) => {
+                active += 1;
+                peak = Math.max(peak, active);
+                thumbnailStarted[index].resolve();
+                signal.addEventListener("abort", () => abortedThumbnails.add(index), { once: true });
+                try {
+                    return await gate.promise;
+                } finally {
+                    active -= 1;
+                }
+            },
+        }),
+    );
+    await Promise.all(thumbnailStarted.map((started) => started.promise));
+
+    const originals = originalGates.map((gate, index) =>
+        queue.request({
+            key: `canvas:media-${index}:original`,
+            priority: "interactive",
+            load: async () => {
+                active += 1;
+                peak = Math.max(peak, active);
+                startedOriginals.push(index);
+                originalStarted[index].resolve();
+                try {
+                    return await gate.promise;
+                } finally {
+                    active -= 1;
+                }
+            },
+        }),
+    );
+
+    const canceled = thumbnails.map((thumbnail) => assert.rejects(thumbnail.promise, { name: "AbortError" }));
+    thumbnails.forEach((thumbnail) => thumbnail.release());
+    await Promise.all(canceled);
+    assert.deepEqual([...abortedThumbnails].sort((left, right) => left - right), [0, 1, 2, 3]);
+    assert.equal(active, 4);
+    assert.equal(peak, 4);
+    assert.deepEqual(startedOriginals, []);
+
+    thumbnailGates[0].resolve("stale-thumbnail-0");
+    await originalStarted[0].promise;
+    assert.equal(active, 4);
+    assert.deepEqual(startedOriginals, [0]);
+
+    thumbnailGates.slice(1).forEach((gate, index) => gate.resolve(`stale-thumbnail-${index + 1}`));
+    await Promise.all(originalStarted.slice(1, 4).map((started) => started.promise));
+    assert.equal(active, 4);
+    assert.deepEqual(startedOriginals, [0, 1, 2, 3]);
+
+    originalGates.forEach((gate, index) => gate.resolve(`original-${index}`));
+    assert.deepEqual(
+        await Promise.all(originals.map((original) => original.promise)),
+        Array.from({ length: 40 }, (_, index) => `original-${index}`),
+    );
+    assert.equal(startedOriginals.length, 40);
+    assert.equal(active, 0);
+    assert.equal(peak, 4);
+});

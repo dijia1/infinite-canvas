@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildCanvasMediaTargets } from "./use-canvas-image-resources.ts";
+import { buildCanvasImageResourceRequests, buildCanvasMediaTargets } from "./use-canvas-image-resources.ts";
 import { CanvasNodeType, type CanvasNodeData } from "../types.ts";
 
 function imageNode(id: string): CanvasNodeData {
@@ -45,4 +45,32 @@ test("preview keeps offscreen images targeted without forcing original quality a
     assert.equal(shared.length, 1);
     assert.equal(shared[0].visible, true);
     assert.deepEqual(buildCanvasMediaTargets({ onScreenNodes: [], prefetchNodes: [], pinnedNodes: [] }), []);
+});
+
+test("pinned preview requests the original at low zoom", () => {
+    const node = imageNode("pinned-preview");
+    const targets = buildCanvasMediaTargets({ onScreenNodes: [], prefetchNodes: [], pinnedNodes: [node], previewNodes: [node] });
+    const requests = buildCanvasImageResourceRequests({
+        targets,
+        scale: 0.1,
+        controller: { get: () => undefined },
+        resolveAccess: async () => ({ url: "https://example.test/original", previewUrl: "https://example.test/thumbnail" }),
+    });
+
+    assert.equal(requests[0]?.variant, "original");
+    assert.equal(requests[0]?.priority, "interactive");
+});
+
+test("visible preview follows zoom demand", () => {
+    const node = imageNode("visible-preview");
+    const targets = buildCanvasMediaTargets({ onScreenNodes: [node], prefetchNodes: [], pinnedNodes: [], previewNodes: [node] });
+    const requests = buildCanvasImageResourceRequests({
+        targets,
+        scale: 1,
+        controller: { get: () => undefined },
+        resolveAccess: async () => ({ url: "https://example.test/original", previewUrl: "https://example.test/thumbnail" }),
+    });
+
+    assert.equal(requests[0]?.variant, "original");
+    assert.equal(requests[0]?.priority, "interactive");
 });

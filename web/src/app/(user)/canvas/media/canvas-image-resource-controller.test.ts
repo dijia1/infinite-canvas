@@ -115,6 +115,123 @@ test("drops a stale completion after a node is no longer needed", async () => {
     assert.deepEqual(released, ["media:one:v1:original"]);
 });
 
+test("keeps a completed original when an aborted thumbnail ignores cancellation and finishes late", async () => {
+    const released: string[] = [];
+    const thumbnail = deferred<UploadedImage>();
+    const original = deferred<UploadedImage>();
+    const thumbnailStarted = deferred<void>();
+    const originalStarted = deferred<void>();
+    const originalRendered = deferred<void>();
+    const thumbnailReleased = deferred<void>();
+    let thumbnailSignal: AbortSignal | undefined;
+    let originalLoads = 0;
+    const queue = createCanvasMediaLoadQueue({ concurrency: 2 });
+    const controller = createCanvasImageResourceController({
+        queue,
+        releaseObjectURL: (storageKey) => {
+            released.push(storageKey);
+            if (storageKey === image("thumbnail").storageKey) thumbnailReleased.resolve();
+        },
+        deferRelease: (release) => release(),
+        onChange: () => originalRendered.resolve(),
+    });
+    const loaders = {
+        thumbnail: async (signal: AbortSignal) => {
+            thumbnailSignal = signal;
+            thumbnailStarted.resolve();
+            return thumbnail.promise;
+        },
+        original: async () => {
+            originalLoads += 1;
+            originalStarted.resolve();
+            return original.promise;
+        },
+    };
+
+    controller.reconcile([request("thumbnail", loaders)]);
+    await thumbnailStarted.promise;
+    controller.reconcile([request("original", loaders)]);
+    await originalStarted.promise;
+    assert.equal(thumbnailSignal?.aborted, true);
+
+    original.resolve(image("original"));
+    await originalRendered.promise;
+    assert.equal(controller.get("node-1")?.variant, "original");
+    assert.equal(controller.get("node-1")?.url, "blob:original");
+
+    thumbnail.resolve(image("thumbnail"));
+    await thumbnailReleased.promise;
+    assert.equal(controller.get("node-1")?.variant, "original");
+    assert.equal(controller.get("node-1")?.url, "blob:original");
+    assert.equal(controller.errors().size, 0);
+    assert.equal(originalLoads, 1);
+    assert.deepEqual(released, ["media:one:v1:thumbnail"]);
+
+    const probes = [0, 1].map((index) =>
+        queue.request({ key: `probe:${index}`, priority: "interactive", load: async () => index }),
+    );
+    assert.deepEqual(await Promise.all(probes.map((probe) => probe.promise)), [0, 1]);
+    assert.equal(controller.get("node-1")?.url, "blob:original");
+    controller.dispose();
+});
+
+test("does not release a late thumbnail while another node still owns the shared resource", async () => {
+    const released: string[] = [];
+    const deferredReleases: Array<() => void> = [];
+    const thumbnail = deferred<UploadedImage>();
+    const original = deferred<UploadedImage>();
+    const thumbnailStarted = deferred<void>();
+    const originalStarted = deferred<void>();
+    let changed = deferred<void>();
+    let thumbnailSignal: AbortSignal | undefined;
+    const controller = createCanvasImageResourceController({
+        queue: createCanvasMediaLoadQueue({ concurrency: 2 }),
+        releaseObjectURL: (storageKey) => released.push(storageKey),
+        deferRelease: (release) => deferredReleases.push(release),
+        onChange: () => changed.resolve(),
+    });
+    const loaders = {
+        thumbnail: async (signal: AbortSignal) => {
+            thumbnailSignal = signal;
+            thumbnailStarted.resolve();
+            return thumbnail.promise;
+        },
+        original: async () => {
+            originalStarted.resolve();
+            return original.promise;
+        },
+    };
+    const first = request("thumbnail", loaders);
+    const second = { ...request("thumbnail", loaders), nodeId: "node-2" };
+
+    controller.reconcile([first, second]);
+    await thumbnailStarted.promise;
+    controller.reconcile([request("original", loaders), second]);
+    await originalStarted.promise;
+    assert.equal(thumbnailSignal?.aborted, false);
+
+    original.resolve(image("original"));
+    await changed.promise;
+    assert.equal(controller.get("node-1")?.variant, "original");
+
+    changed = deferred<void>();
+    thumbnail.resolve({ ...image("thumbnail"), url: "blob:shared-thumbnail" });
+    await changed.promise;
+    assert.equal(controller.get("node-1")?.variant, "original");
+    assert.equal(controller.get("node-2")?.url, "blob:shared-thumbnail");
+    deferredReleases.splice(0).forEach((release) => release());
+    assert.deepEqual(released, []);
+
+    controller.reconcile([second]);
+    deferredReleases.splice(0).forEach((release) => release());
+    assert.deepEqual(released, ["media:one:v1:original"]);
+    assert.equal(controller.get("node-2")?.url, "blob:shared-thumbnail");
+
+    controller.reconcile([]);
+    deferredReleases.splice(0).forEach((release) => release());
+    assert.deepEqual(released, ["media:one:v1:original", "media:one:v1:thumbnail"]);
+});
+
 test("does not release a shared Object URL until every canvas node stops using it", async () => {
     const released: string[] = [];
     const controller = createCanvasImageResourceController({

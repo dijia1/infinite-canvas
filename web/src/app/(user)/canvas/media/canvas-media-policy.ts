@@ -7,6 +7,8 @@ type CanvasImageVariantOptions = {
     height: number;
     scale: number;
     pinned?: boolean;
+    preview?: boolean;
+    prefetch?: boolean;
     currentVariant?: Exclude<CanvasImageVariant, "none">;
 };
 
@@ -20,9 +22,9 @@ export function getCanvasRenderDetail(scale: number): CanvasRenderDetail {
     return scale <= OVERVIEW_MAX_SCALE ? "overview" : "full";
 }
 
-export function getCanvasImageVariant({ visible, width, height, scale, pinned = false, currentVariant }: CanvasImageVariantOptions): CanvasImageVariant {
+export function getCanvasImageVariant({ visible, width, height, scale, pinned = false, preview = false, prefetch = false, currentVariant }: CanvasImageVariantOptions): CanvasImageVariant {
     if (pinned) return "original";
-    if (!visible) return "none";
+    if (!visible) return preview ? currentVariant || "thumbnail" : prefetch ? "thumbnail" : "none";
 
     const screenEdge = Math.max(0, width * scale, height * scale);
     if (screenEdge >= ORIGINAL_MIN_SCREEN_EDGE) return "original";
