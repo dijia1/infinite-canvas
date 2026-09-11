@@ -106,6 +106,7 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
         frameRef.current = null;
         nextViewportRef.current = null;
         isViewportManipulatingRef.current = false;
+        if (sceneRef.current && !wheelEndTimerRef.current) sceneRef.current.style.willChange = "";
         applyViewport(finalViewport);
         scheduleViewportCommit(finalViewport, true);
         document.body.style.cursor = "default";
@@ -166,10 +167,12 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
             k: newScale,
         };
         isViewportManipulatingRef.current = true;
+        if (sceneRef.current) sceneRef.current.style.willChange = "transform";
         if (wheelEndTimerRef.current) clearTimeout(wheelEndTimerRef.current);
         wheelEndTimerRef.current = setTimeout(() => {
             wheelEndTimerRef.current = null;
             isViewportManipulatingRef.current = false;
+            if (sceneRef.current && !panState.current.isPanning) sceneRef.current.style.willChange = "";
             scheduleViewportCommit(viewportRef.current, true);
         }, 120);
         if (wheelFrameRef.current) return;
@@ -206,6 +209,7 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
                 hasMoved: false,
             };
             isViewportManipulatingRef.current = true;
+            if (sceneRef.current) sceneRef.current.style.willChange = "transform";
             document.body.style.cursor = "grabbing";
             return;
         }
@@ -278,13 +282,8 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
             onDrop={onDrop}
         >
             <CanvasGrid viewport={viewport} mode={backgroundMode} gridRef={gridRef} />
-            <div
-                ref={sceneRef}
-                className="absolute origin-top-left"
-                style={{
-                    willChange: "transform",
-                }}
-            >
+            {/* Keep will-change only during gestures so the final scale can rasterize sharply. */}
+            <div ref={sceneRef} className="absolute origin-top-left">
                 {children}
             </div>
             <CanvasViewportDebugOverlay containerRef={containerRef} sceneRef={sceneRef} sceneViewportRef={viewportRef} cullingViewport={viewport} selectedNode={debugSelectedNode} />
