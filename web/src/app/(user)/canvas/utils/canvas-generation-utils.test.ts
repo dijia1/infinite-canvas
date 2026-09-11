@@ -79,6 +79,13 @@ test("builds edit metadata with persisted or remote references only", () => {
     assert.equal("model" in buildImageGenerationMetadata("edit", config, 1, []), false);
 });
 
+test("snapshots the effective PNG format used for transparent JPEG requests", () => {
+    const metadata = buildImageGenerationMetadata("generation", { ...config, outputFormat: "jpeg", background: "transparent" }, 1, []);
+
+    assert.equal(metadata.outputFormat, "png");
+    assert.equal(metadata.background, "transparent");
+});
+
 test("does not persist inline mask strokes when no stable mask resource ID exists", () => {
     const inlineReference: ReferenceImage = { id: "inline", name: "inline.png", type: "image/png", dataUrl: "data:image/png;base64,inline" };
     const maskedReference: ReferenceImage = {
@@ -257,6 +264,28 @@ test("preserves provider-specific resolutions and request options", () => {
     assert.equal(seedream.resolution, "1.5k");
     assert.deepEqual(seedream.providerOptions, { resolution: "1.5k", watermark: false });
     assert.deepEqual(buildImageGenerationMetadata("generation", seedream, 1, []).providerOptions, { resolution: "1.5k", watermark: false });
+});
+
+test("snapshots the selected image model name and nested provider options", () => {
+    const providerOptions = { style: { preset: "photo", strength: 0.8 }, samples: [{ seed: 42 }] };
+    const metadata = buildImageGenerationMetadata(
+        "generation",
+        {
+            ...config,
+            imageProviderId: "image-model-v1",
+            imageProviderType: "image-provider",
+            providerOptions,
+        },
+        1,
+        [],
+        "Image Model V1",
+    );
+
+    providerOptions.style.preset = "illustration";
+    providerOptions.samples[0]!.seed = 7;
+
+    assert.equal(metadata.imageProviderName, "Image Model V1");
+    assert.deepEqual(metadata.providerOptions, { style: { preset: "photo", strength: 0.8 }, samples: [{ seed: 42 }] });
 });
 
 test("falls back to supplied defaults when generation config is empty", () => {

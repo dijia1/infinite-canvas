@@ -140,6 +140,44 @@ test("creates a batch root and three children with three parallel single-image r
     );
 });
 
+test("snapshots one exact image model name and isolated provider options across a batch", async () => {
+    const source = node("source", CanvasNodeType.Config, { count: 2 });
+    const providerOptions = { style: { preset: "photo" }, steps: [20, 28] };
+    const pending = [deferred<ImageGenerationTask>(), deferred<ImageGenerationTask>()];
+    const requestedProviderIds: Array<string | undefined> = [];
+    let requestIndex = 0;
+    const { controller, nodesRef } = setup([source], [], {
+        effectiveConfig: {
+            ...config,
+            imageProviderId: "image-model-v1",
+            imageProviderType: "image-provider",
+            providerOptions,
+        },
+        getImageModelName: (providerId: string | undefined) => {
+            requestedProviderIds.push(providerId);
+            return providerId === "image-model-v1" ? "Image Model V1" : undefined;
+        },
+        requestGeneration: () => pending[requestIndex++]!.promise,
+    });
+
+    const generation = controller.generateNode(source.id, "image", "a forest");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const generated = nodesRef.current.filter((item) => item.type === CanvasNodeType.Image);
+    assert.deepEqual(requestedProviderIds, ["image-model-v1"]);
+    assert.equal(generated.length, 3);
+    assert.equal(generated.every((item) => item.metadata?.imageProviderName === "Image Model V1"), true);
+
+    providerOptions.style.preset = "illustration";
+    providerOptions.steps[0] = 4;
+    assert.equal(generated.every((item) => item.metadata?.providerOptions && (item.metadata.providerOptions.style as { preset: string }).preset === "photo"), true);
+    assert.equal(generated.every((item) => item.metadata?.providerOptions && (item.metadata.providerOptions.steps as number[])[0] === 20), true);
+
+    pending.forEach((task, index) => task.resolve(completedTask(`batch-${index}`, `batch-media-${index}`)));
+    await generation;
+});
+
 test("reusing a historical empty image removes its obsolete model metadata", async () => {
     const source = JSON.parse('{"id":"source","type":"image","title":"source","position":{"x":0,"y":0},"width":340,"height":240,"metadata":{"model":"historical-model","freeResize":true}}') as CanvasNodeData;
     const { controller, nodesRef } = setup([source]);
@@ -298,7 +336,14 @@ test("blocks invalid provider configuration before adding generation nodes", asy
 
 test("angle generation always uses edit and creates a connected child", async () => {
     const source = node("source", CanvasNodeType.Image, { content: "data:image/png;base64,source" });
-    const { controller, nodesRef, connectionsRef, calls } = setup([source]);
+    const { controller, nodesRef, connectionsRef, calls } = setup([source], [], {
+        effectiveConfig: {
+            ...config,
+            imageProviderId: "image-model-v1",
+            imageProviderType: "image-provider",
+        },
+        getImageModelName: (providerId: string) => (providerId === "image-model-v1" ? "Image Model V1" : undefined),
+    });
 
     await controller.generateAngleNode(source, { horizontalAngle: 30, pitchAngle: 0, cameraDistance: 1.5, wideAngle: false });
 
@@ -306,6 +351,7 @@ test("angle generation always uses edit and creates a connected child", async ()
     assert.equal(calls.generation, 0);
     assert.equal(nodesRef.current.length, 2);
     assert.equal(connectionsRef.current.length, 1);
+    assert.equal(nodesRef.current[1]?.metadata?.imageProviderName, "Image Model V1");
 });
 
 test("retries persisted image metadata and marks a missing reference as an error", async () => {
@@ -421,8 +467,47 @@ test("retries historical batch metadata without copying its obsolete model", asy
     assert.equal("model" in (retriedChild?.metadata || {}), false);
 });
 
+test("retry preserves the original image model name instead of resolving the current catalog", async () => {
+    const retryable = node("retry", CanvasNodeType.Image, {
+        prompt: "retry this image",
+        generationType: "generation",
+        imageProviderId: "image-model-v1",
+        imageProviderName: "Image Model Before Rename",
+        imageProviderType: "image-provider",
+        outputFormat: "jpeg",
+        background: "transparent",
+        providerOptions: { style: { preset: "photo" } },
+        status: "error",
+    });
+    let nameLookups = 0;
+    const { controller, nodesRef } = setup([retryable], [], {
+        getImageModelName: () => {
+            nameLookups++;
+            return "Image Model After Rename";
+        },
+        requestGeneration: async (requestConfig: AiConfig) => {
+            ((requestConfig.providerOptions?.style as { preset: string })).preset = "illustration";
+            return completedTask("retried", "retried-media");
+        },
+    });
+
+    await controller.retryNode(retryable);
+
+    assert.equal(nameLookups, 0);
+    assert.equal(nodesRef.current[0]?.metadata?.imageProviderName, "Image Model Before Rename");
+    assert.equal(nodesRef.current[0]?.metadata?.outputFormat, "png");
+    assert.equal(nodesRef.current[0]?.metadata?.background, "transparent");
+    assert.deepEqual(nodesRef.current[0]?.metadata?.providerOptions, { style: { preset: "photo" } });
+});
+
 test("restores an in-flight image task from its persisted client request ID", async () => {
-    const pending = node("pending", CanvasNodeType.Image, { status: "loading", imageTaskClientRequestId: "client-refresh" });
+    const pending = node("pending", CanvasNodeType.Image, {
+        status: "loading",
+        imageTaskClientRequestId: "client-refresh",
+        imageProviderId: "image-model-v1",
+        imageProviderName: "Image Model V1",
+        providerOptions: { style: { preset: "photo" } },
+    });
     let taskLookups = 0;
     const { controller, nodesRef } = setup([pending], [], {
         getImageTask: async () => {
@@ -442,6 +527,8 @@ test("restores an in-flight image task from its persisted client request ID", as
     assert.equal(nodesRef.current[0].metadata?.status, "success");
     assert.equal(nodesRef.current[0].metadata?.mediaId, "media-restored");
     assert.equal(nodesRef.current[0].metadata?.imageTaskId, "task-restored");
+    assert.equal(nodesRef.current[0].metadata?.imageProviderName, "Image Model V1");
+    assert.deepEqual(nodesRef.current[0].metadata?.providerOptions, { style: { preset: "photo" } });
 });
 
 test("recovers a task by client request ID when the create response is lost", async () => {

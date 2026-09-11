@@ -44,6 +44,7 @@ export type CanvasGenerationControllerOptions = {
     nodesRef: MutableRef<CanvasNodeData[]>;
     connectionsRef: MutableRef<CanvasConnection[]>;
     effectiveConfig: AiConfig;
+    getImageModelName?: (providerId: string) => string | undefined;
     getVideoModelStatus?: () => VideoModelStatus | null;
     defaultConfig: AiConfig;
     isAiConfigReady: (capability: AICapability) => boolean;
@@ -93,6 +94,7 @@ export type CanvasGenerationController = {
 export function createCanvasGenerationController(initialOptions: CanvasGenerationControllerOptions): CanvasGenerationController {
     let options = initialOptions;
     let runningNodeId: string | null = null;
+    const imageModelName = (config: AiConfig) => (config.imageProviderId ? options.getImageModelName?.(config.imageProviderId) : undefined);
     const sessionScope = () => options.getSessionScope?.() ?? options.sessionScope;
     const taskIdentity = (nodeId: string, kind: TaskIdentity["kind"]): TaskIdentity => {
         const metadata = options.nodesRef.current.find((node) => node.id === nodeId)?.metadata;
@@ -409,7 +411,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const title = buildAngleLabel(params);
         const prompt = buildAnglePrompt(params);
         const references = [{ id: node.id, name: `${node.title || node.id}.png`, type: node.metadata?.mimeType || "image/png", dataUrl, storageKey: node.metadata?.storageKey, mediaId: node.metadata?.mediaId }];
-        const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, references);
+        const generationMetadata = buildImageGenerationMetadata("edit", generationConfig, 1, references, imageModelName(generationConfig));
         options.setAngleNodeId(null);
         setRunningNodeId(childId);
         options.setNodes((prev) => [
@@ -490,7 +492,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 const isConfigNode = sourceNode?.type === CanvasNodeType.Config;
                 const isImageNode = sourceNode?.type === CanvasNodeType.Image;
                 const isEmptyImageNode = isImageNode && !hasCanvasImage(sourceNode);
-                const generationMetadata = buildImageGenerationMetadata(referenceImages.length ? "edit" : "generation", generationConfig, count, referenceImages);
+                const generationMetadata = buildImageGenerationMetadata(referenceImages.length ? "edit" : "generation", generationConfig, count, referenceImages, imageModelName(generationConfig));
                 const parentConfig = NODE_DEFAULT_SIZE[isConfigNode ? CanvasNodeType.Config : isImageNode ? CanvasNodeType.Image : CanvasNodeType.Text];
                 const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
                 const parentPosition = sourceNode?.position || { x: 0, y: 0 };
@@ -723,22 +725,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             }
             const generationMetadata = savedImageMetadata?.generationType
                 ? {
-                      generationType: savedImageMetadata.generationType,
-                      size: generationConfig.size,
-                      resolution: generationConfig.resolution,
-                      outputFormat: generationConfig.outputFormat,
-                      background: generationConfig.background,
-                      imageProviderId: generationConfig.imageProviderId,
-                      videoProviderId: generationConfig.videoProviderId,
-                      imageProviderType: generationConfig.imageProviderType,
-                      imageRequestSchemaVersion: generationConfig.imageRequestSchemaVersion,
-                      providerOptions: generationConfig.providerOptions,
-                      quality: generationConfig.quality,
-                      count: savedImageMetadata.count || 1,
+                      ...buildImageGenerationMetadata(savedImageMetadata.generationType, generationConfig, savedImageMetadata.count || 1, [], savedImageMetadata.imageProviderName),
                       references: savedImageMetadata.references,
                       ...(savedImageMetadata.maskId ? { maskId: savedImageMetadata.maskId, sourceNodeId: savedImageMetadata.sourceNodeId } : {}),
                   }
-                : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || []);
+                : buildImageGenerationMetadata(useReferenceImages ? "edit" : "generation", generationConfig, 1, retryReferenceImages || [], imageModelName(generationConfig));
             options.setNodes((prev) => !current(prev) ? prev : prev.map((item) => (item.id === node.id ? { ...item, type: CanvasNodeType.Image, metadata: { ...withoutLegacyModel(item.metadata), prompt, ...generationMetadata } } : item)));
             submissionStarted = true;
             await startImageTask(node.id, node.metadata?.batchRootId || node.id, (clientRequestId) =>

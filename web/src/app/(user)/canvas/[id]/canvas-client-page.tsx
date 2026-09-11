@@ -64,6 +64,8 @@ import { Minimap } from "../components/canvas-mini-map";
 import { CanvasNode } from "../components/canvas-node";
 import { VideoResourceProvider, useExternalVideoNodes } from "../components/canvas-video-content";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
+import { CanvasNodeResultPanel } from "../components/canvas-node-result-panel";
+import { isGeneratedImageResult, generatedImageDetails, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasBootstrapFeedback, CanvasSyncFeedback } from "../components/canvas-sync-feedback";
@@ -743,6 +745,7 @@ function InfiniteCanvasPage() {
         defaultConfig,
         isAiConfigReady,
         getVideoModelStatus: () => useConfigStore.getState().status,
+        getImageModelName: (providerId) => useConfigStore.getState().status?.imageModels?.find((model) => model.id === providerId)?.name,
         openConfigDialog,
         message,
         setNodes,
@@ -1828,7 +1831,7 @@ function InfiniteCanvasPage() {
                                   width: size.width,
                                   height: size.height,
                                   metadata: {
-                                      ...withoutLegacyModel(node.metadata),
+                                      ...clearGeneratedImageIdentity(withoutLegacyModel(node.metadata)),
                                       ...imageMetadata(image),
                                       publicImageId: undefined,
                                       localUploadState: "uploading",
@@ -1886,7 +1889,9 @@ function InfiniteCanvasPage() {
     }, []);
 
     const renderNodePromptPanel = useCallback(
-        (panelNode: CanvasNodeData) => (
+        (panelNode: CanvasNodeData) => isGeneratedImageResult(panelNode) ? (
+            <CanvasNodeResultPanel key={panelNode.id} details={generatedImageDetails(panelNode.metadata, aiStatus?.imageModels)} theme={theme} />
+        ) : (
             <CanvasNodePromptPanel
                 node={panelNode}
                 isRunning={runningNodeId === panelNode.id}
@@ -1899,7 +1904,7 @@ function InfiniteCanvasPage() {
                 }}
             />
         ),
-        [handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId],
+        [aiStatus?.imageModels, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId, theme],
     );
 
     const handleConfigNodeLayoutHeightChange = useCallback((nodeId: string, height: number) => {
@@ -2202,7 +2207,7 @@ function InfiniteCanvasPage() {
                                 imageSourceManaged={Boolean(node.metadata?.mediaId)}
                                 renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id ? "overview" : "full"}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
-                                panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}` : undefined}
+                                panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([
                                     configInputPanelMetaById.get(node.id)?.version || "",
                                     (configInputsById.get(node.id) || []).filter((input) => input.image).map((input) => [input.nodeId, canvasImageResources.get(input.nodeId)?.url, canvasImageErrors.get(input.nodeId)]),

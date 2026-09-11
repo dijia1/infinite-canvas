@@ -35,6 +35,7 @@ export type CanvasNodeMetadata = {
     outputFormat?: string;
 	background?: string;
 	imageProviderId?: string;
+	imageProviderName?: string;
 	videoProviderId?: string;
 	imageProviderType?: string;
 	imageRequestSchemaVersion?: string;

@@ -1,5 +1,5 @@
 import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config";
-import { normalizeImageBackground, normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
+import { imageOutputSettings, normalizeImageBackground, normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
 import { normalizePersistedAiConfig, type AiConfig } from "../../../../lib/ai-config";
 import type { ReferenceImage } from "../../../../types/image";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
@@ -37,20 +37,29 @@ export function replaceNodeWithUploadedVideo(node: CanvasNodeData, title: string
     };
 }
 
-export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[]): CanvasNodeMetadata {
+export function buildImageGenerationMetadata(type: CanvasImageGenerationType, config: AiConfig, count: number, references: ReferenceImage[], imageProviderName?: string): CanvasNodeMetadata {
     const persistedReferences = references.flatMap((reference) => {
         const url = referenceUrl(reference);
         return url ? [{ url, maskId: reference.maskId, sourceNodeId: reference.sourceNodeId || reference.id }] : [];
     });
     const maskReference = persistedReferences.find((reference) => Boolean(reference.maskId));
+    const output = imageOutputSettings(config.outputFormat, config.background);
     return {
         generationType: type,
         size: config.size,
         resolution: generationResolution(config),
-        outputFormat: normalizeImageOutputFormat(config.outputFormat),
-        background: normalizeImageBackground(config.background),
+        outputFormat: output.outputFormat,
+        background: output.background,
         quality: config.quality,
-        ...(config.imageProviderType ? { imageProviderId: config.imageProviderId, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion, providerOptions: config.providerOptions } : {}),
+        ...(config.imageProviderType
+            ? {
+                  imageProviderId: config.imageProviderId,
+                  ...(imageProviderName ? { imageProviderName } : {}),
+                  imageProviderType: config.imageProviderType,
+                  imageRequestSchemaVersion: config.imageRequestSchemaVersion,
+                  providerOptions: config.providerOptions === undefined ? undefined : structuredClone(config.providerOptions),
+              }
+            : {}),
         ...(config.videoProviderId ? { videoProviderId: config.videoProviderId } : {}),
         count,
         references: persistedReferences.map((reference) => reference.url),

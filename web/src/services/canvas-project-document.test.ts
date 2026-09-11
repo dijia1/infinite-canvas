@@ -53,6 +53,35 @@ test("removes only media preview fields without mutating text or config content"
     assert.equal(((document.nodes[0]?.metadata as Record<string, unknown>).access as { url: string }).url, "https://cdn.example/image?X-Amz-Signature=secret");
 });
 
+test("preserves generated image model and provider option snapshots while sanitizing previews", () => {
+    const document = {
+        nodes: [
+            {
+                id: "generated",
+                type: "image",
+                metadata: {
+                    content: "blob:local-preview",
+                    mediaId: "media-generated",
+                    generationType: "generation",
+                    imageProviderId: "image-model-v1",
+                    imageProviderName: "Image Model V1",
+                    providerOptions: { style: { preset: "photo" }, seed: 42 },
+                },
+            },
+        ],
+        connections: [],
+        backgroundMode: "lines",
+        showImageInfo: false,
+        viewport: { x: 0, y: 0, k: 1 },
+    } as unknown as CanvasProjectDocument;
+
+    const sanitized = sanitizeCanvasProjectDocument(document);
+
+    assert.equal(sanitized.nodes[0]?.metadata?.content, undefined);
+    assert.equal(sanitized.nodes[0]?.metadata?.imageProviderName, "Image Model V1");
+    assert.deepEqual(sanitized.nodes[0]?.metadata?.providerOptions, { style: { preset: "photo" }, seed: 42 });
+});
+
 test("migrates repeated legacy mask strokes into one document-level mask resource", () => {
     const mask = { version: 1 as const, strokes: [{ id: "stroke", tool: "paint" as const, radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] };
     const document = {
