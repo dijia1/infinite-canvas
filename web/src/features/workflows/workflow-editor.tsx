@@ -33,6 +33,7 @@ import type { CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { ScopedVideoResourceProvider } from "@/app/(user)/canvas/components/canvas-video-content";
 import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import { useCanvasImageResources } from "@/app/(user)/canvas/media/use-canvas-image-resources";
+import { getCanvasRenderDetail } from "@/app/(user)/canvas/media/canvas-media-policy";
 import { isCanvasNodeNearViewport } from "@/app/(user)/canvas/utils/canvas-node-visibility";
 import { appPath } from "@/lib/app-path";
 import { readImageMeta } from "@/lib/image-utils";
@@ -59,6 +60,7 @@ import { pendingWorkflowRetryKey, workflowRunScopeKey } from "./workflow-run-req
 import { useWorkflowRuns } from "./use-workflow-runs";
 import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableImageOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
+import { buildWorkflowPathData, selectWorkflowViewportScene, workflowConnectionPathCache, workflowOutputLinks, workflowOutputPathCache, workflowSelectedImageResourceIds, workflowVisualRenderDetail } from "./workflow-viewport-rendering";
 import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition, WorkflowRunScope } from "./types";
 
 type Viewport = { x: number; y: number; k: number };
@@ -271,39 +273,6 @@ function WorkflowEditorContent() {
             ),
         [compatibleOutputs, runs.detailByNode, inputConnectionsByTarget, nodesById, previewNodeId, mediaPreview],
     );
-    const imageTargets = useMemo(() => {
-        const inputTargets = graph.nodes.flatMap((node) => {
-            if (node.type !== "image_input" || !node.mediaId) return [];
-            const canvasNode = { id: node.id, type: CanvasNodeType.Image, title: "", position: node.position, width: node.width || 340, height: node.height || 240, metadata: { mediaId: node.mediaId } } satisfies CanvasNodeData;
-            const visible = isCanvasNodeNearViewport(canvasNode, viewport, viewportSize);
-            const preview = previewImageNodeIds.has(node.id);
-            const prefetch = !visible && isCanvasNodeNearViewport(canvasNode, viewport, viewportSize, 384);
-            if (!visible && !prefetch && !preview) return [];
-            return [{ node: canvasNode, visible, pinned: preview, prefetch, preview }];
-        });
-        const outputTargets = graph.nodes.flatMap((node) =>
-            (node.outputs || []).flatMap((slot) => {
-                if (slot.type !== "image") return [];
-                const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
-                if (output?.status !== "succeeded" || !output.mediaId) return [];
-                const canvasNode = {
-                    id: workflowOutputResourceNodeId(output.runId, node.id, slot.id),
-                    type: CanvasNodeType.Image,
-                    title: "",
-                    position: slot.position || node.position,
-                    width: slot.width || 340,
-                    height: slot.height || 240,
-                    metadata: { mediaId: output.mediaId },
-                } satisfies CanvasNodeData;
-                const visible = isCanvasNodeNearViewport(canvasNode, viewport, viewportSize);
-                const preview = previewImageNodeIds.has(canvasNode.id);
-                const prefetch = !visible && isCanvasNodeNearViewport(canvasNode, viewport, viewportSize, 384);
-                if (!visible && !prefetch && !preview) return [];
-                return [{ node: canvasNode, visible, pinned: preview, prefetch, preview }];
-            }),
-        );
-        return [...inputTargets, ...outputTargets];
-    }, [compatibleOutputs, runs.detailByNode, graph.nodes, previewImageNodeIds, viewport, viewportSize]);
     const imageDimensions = useRef(new Map<string, { width: number; height: number }>());
     const resolveImageAccess = useCallback(async (node: CanvasNodeData) => {
         const mediaId = node.metadata!.mediaId!;
@@ -311,7 +280,6 @@ function WorkflowEditorContent() {
         if (access.width && access.height) imageDimensions.current.set(mediaId, { width: access.width, height: access.height });
         return access;
     }, []);
-    const imageResources = useCanvasImageResources({ targets: imageTargets, scale: viewport.k, resolveAccess: resolveImageAccess });
     useEffect(() => {
         if (!dirty) return;
         const beforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
@@ -509,33 +477,6 @@ function WorkflowEditorContent() {
         });
     };
 
-    const previewInputs = useCallback(
-        (targetId: string): WorkflowPreviewInput[] =>
-            (inputConnectionsByTarget.get(targetId) || [])
-                .flatMap((connection) => {
-                    const source = nodesById.get(connection.sourceNodeId);
-                    if (!source) return [];
-                    const type = workflowSourceType(source, connection.sourceSlotId);
-                    if (!type) return [];
-                    const execution = connection.sourceSlotId === "output" ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
-                    const resourceNodeId = execution ? workflowOutputResourceNodeId(execution.runId, source.id, connection.sourceSlotId) : source.id;
-                    const mediaId = source.mediaId || execution?.mediaId;
-                    const resource = imageResources.resources.get(resourceNodeId);
-                    return [
-                        {
-                            key: connection.targetPortId,
-                            sourceNodeId: resourceNodeId,
-                            type,
-                            ...(type === "text" ? { text: source.text } : mediaId ? { mediaId } : {}),
-                            ...(type === "image" && resource ? { imageUrl: resource.url, imageStorageKey: resource.storageKey } : {}),
-                            ...(type === "image" && imageResources.errors.get(resourceNodeId) ? { imageError: imageResources.errors.get(resourceNodeId) } : {}),
-                        },
-                    ];
-                }),
-        [compatibleOutputs, runs.detailByNode, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
-    );
-    const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
-
     const validateConnection = useCallback(
         (graph: WorkflowGraph, { sourceNodeId, sourceSlotId, targetNodeId }: { sourceNodeId: string; sourceSlotId: string; targetNodeId: string }) => {
             const source = graph.nodes.find((node) => node.id === sourceNodeId);
@@ -572,6 +513,109 @@ function WorkflowEditorContent() {
         },
     });
     const { interactions } = canvas;
+    const selectedImageResourceIds = useMemo(
+        () => workflowSelectedImageResourceIds(graph, canvas.selectedNodeIds, compatibleOutputs),
+        [canvas.selectedNodeIds, compatibleOutputs, graph],
+    );
+    const imageTargets = useMemo(() => {
+        const inputTargets = graph.nodes.flatMap((node) => {
+            if (node.type !== "image_input" || !node.mediaId) return [];
+            const canvasNode = { id: node.id, type: CanvasNodeType.Image, title: "", position: node.position, width: node.width || 340, height: node.height || 240, metadata: { mediaId: node.mediaId } } satisfies CanvasNodeData;
+            const visible = isCanvasNodeNearViewport(canvasNode, viewport, viewportSize);
+            const preview = previewImageNodeIds.has(node.id);
+            const pinned = preview || selectedImageResourceIds.has(node.id);
+            const prefetch = !visible && isCanvasNodeNearViewport(canvasNode, viewport, viewportSize, 384);
+            if (!visible && !prefetch && !pinned) return [];
+            return [{ node: canvasNode, visible, pinned, prefetch, preview }];
+        });
+        const outputTargets = graph.nodes.flatMap((node) =>
+            (node.outputs || []).flatMap((slot) => {
+                if (slot.type !== "image") return [];
+                const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
+                if (output?.status !== "succeeded" || !output.mediaId) return [];
+                const canvasNode = {
+                    id: workflowOutputResourceNodeId(output.runId, node.id, slot.id),
+                    type: CanvasNodeType.Image,
+                    title: "",
+                    position: slot.position || node.position,
+                    width: slot.width || 340,
+                    height: slot.height || 240,
+                    metadata: { mediaId: output.mediaId },
+                } satisfies CanvasNodeData;
+                const visible = isCanvasNodeNearViewport(canvasNode, viewport, viewportSize);
+                const preview = previewImageNodeIds.has(canvasNode.id);
+                const pinned = preview || selectedImageResourceIds.has(canvasNode.id);
+                const prefetch = !visible && isCanvasNodeNearViewport(canvasNode, viewport, viewportSize, 384);
+                if (!visible && !prefetch && !pinned) return [];
+                return [{ node: canvasNode, visible, pinned, prefetch, preview }];
+            }),
+        );
+        return [...inputTargets, ...outputTargets];
+    }, [compatibleOutputs, graph.nodes, previewImageNodeIds, selectedImageResourceIds, viewport, viewportSize]);
+    const imageResources = useCanvasImageResources({ targets: imageTargets, scale: viewport.k, resolveAccess: resolveImageAccess });
+    const previewInputs = useCallback(
+        (targetId: string): WorkflowPreviewInput[] =>
+            (inputConnectionsByTarget.get(targetId) || [])
+                .flatMap((connection) => {
+                    const source = nodesById.get(connection.sourceNodeId);
+                    if (!source) return [];
+                    const type = workflowSourceType(source, connection.sourceSlotId);
+                    if (!type) return [];
+                    const execution = connection.sourceSlotId === "output" ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
+                    const resourceNodeId = execution ? workflowOutputResourceNodeId(execution.runId, source.id, connection.sourceSlotId) : source.id;
+                    const mediaId = source.mediaId || execution?.mediaId;
+                    const resource = imageResources.resources.get(resourceNodeId);
+                    return [
+                        {
+                            key: connection.targetPortId,
+                            sourceNodeId: resourceNodeId,
+                            type,
+                            ...(type === "text" ? { text: source.text } : mediaId ? { mediaId } : {}),
+                            ...(type === "image" && resource ? { imageUrl: resource.url, imageStorageKey: resource.storageKey } : {}),
+                            ...(type === "image" && imageResources.errors.get(resourceNodeId) ? { imageError: imageResources.errors.get(resourceNodeId) } : {}),
+                        },
+                    ];
+                }),
+        [compatibleOutputs, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
+    );
+    const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
+    const outputLinks = useMemo(() => workflowOutputLinks(graph), [graph]);
+    const visualNodeById = useMemo(() => new Map(canvas.nodes.map((node) => [node.id, node])), [canvas.nodes]);
+    const connectionPathCache = useMemo(() => workflowConnectionPathCache(canvas.connections, visualNodeById), [canvas.connections, visualNodeById]);
+    const outputPathCache = useMemo(() => workflowOutputPathCache(outputLinks, visualNodeById), [outputLinks, visualNodeById]);
+    const interactiveConnectionIds = useMemo(() => {
+        const ids = new Set(interactions.cutConnectionState?.connectionIds || []);
+        if (canvas.selectedConnectionId) ids.add(canvas.selectedConnectionId);
+        return ids;
+    }, [canvas.selectedConnectionId, interactions.cutConnectionState?.connectionIds]);
+    const retainedVisualNodeIds = useMemo(() => {
+        const ids = new Set(canvas.selectedNodeIds);
+        if (interactions.connectingParams) ids.add(interactions.connectingParams.nodeId);
+        for (const connection of canvas.connections) {
+            if (!interactiveConnectionIds.has(connection.id)) continue;
+            ids.add(connection.fromNodeId);
+            ids.add(connection.toNodeId);
+        }
+        return ids;
+    }, [canvas.connections, canvas.selectedNodeIds, interactions.connectingParams, interactiveConnectionIds]);
+    const viewportScene = useMemo(() => selectWorkflowViewportScene({
+        nodes: canvas.nodes,
+        connections: canvas.connections,
+        outputLinks,
+        viewport,
+        viewportSize,
+        retainedNodeIds: retainedVisualNodeIds,
+        interactiveConnectionIds,
+    }), [canvas.connections, canvas.nodes, interactiveConnectionIds, outputLinks, retainedVisualNodeIds, viewport, viewportSize]);
+    const renderDetail = getCanvasRenderDetail(viewport.k);
+    const overviewConnectionPath = useMemo(
+        () => buildWorkflowPathData(viewportScene.visibleConnections, connectionPathCache, interactiveConnectionIds),
+        [connectionPathCache, interactiveConnectionIds, viewportScene.visibleConnections],
+    );
+    const overviewOutputPath = useMemo(
+        () => buildWorkflowPathData(viewportScene.visibleOutputLinks, outputPathCache),
+        [outputPathCache, viewportScene.visibleOutputLinks],
+    );
     const frameGesture = useWorkflowFrameGestures({ updateGraph: setGraph, readOnly: editBlocked, scale: viewport.k, pause: history.pause, resume: history.resume,
         getViewport: () => {
             const current = canvasRef.current?.getViewport() || viewport;
@@ -925,15 +969,17 @@ function WorkflowEditorContent() {
                             })()}
                         />)}
                         <svg className="pointer-events-none absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible">
-                            {canvas.connections.map((connection) => {
-                                const from = canvas.nodes.find((node) => node.id === connection.fromNodeId);
-                                const to = canvas.nodes.find((node) => node.id === connection.toNodeId);
+                            {renderDetail === "overview" && overviewConnectionPath ? <path data-workflow-connection-batch d={overviewConnectionPath} fill="none" stroke={theme.node.muted} strokeWidth="2" strokeOpacity=".82" /> : null}
+                            {viewportScene.visibleConnections.filter((connection) => renderDetail === "full" || interactiveConnectionIds.has(connection.id)).map((connection) => {
+                                const from = viewportScene.nodeById.get(connection.fromNodeId);
+                                const to = viewportScene.nodeById.get(connection.toNodeId);
                                 return from && to ? (
                                     <ConnectionPath
                                         key={connection.id}
                                         connection={connection}
                                         from={from}
                                         to={to}
+                                        pathD={connectionPathCache.get(connection.id)}
                                         active={canvas.selectedConnectionId === connection.id}
                                         pendingCut={interactions.cutConnectionState?.connectionIds.has(connection.id)}
                                         onSelect={(id) => {
@@ -943,32 +989,31 @@ function WorkflowEditorContent() {
                                     />
                                 ) : null;
                             })}
-                            {graph.nodes.flatMap((node) =>
-                                (node.outputs || []).map((slot) => {
-                                    const from = canvas.nodes.find((item) => item.id === workflowVisualNodeId(node.id));
-                                    const to = canvas.nodes.find((item) => item.id === workflowVisualOutputId(node.id, slot.id));
+                            {renderDetail === "overview" && overviewOutputPath ? <path data-workflow-output-batch d={overviewOutputPath} fill="none" stroke={theme.node.muted} strokeWidth="2" strokeOpacity=".55" /> : null}
+                            {renderDetail === "full" ? viewportScene.visibleOutputLinks.map((link) => {
+                                    const from = viewportScene.nodeById.get(link.fromNodeId);
+                                    const to = viewportScene.nodeById.get(link.toNodeId);
                                     return from && to ? (
                                         <path
-                                            key={workflowVisualOutputId(node.id, slot.id)}
-                                            d={`M ${from.position.x + from.width} ${from.position.y + from.height / 2} C ${from.position.x + from.width + 48} ${from.position.y + from.height / 2}, ${to.position.x - 48} ${to.position.y + to.height / 2}, ${to.position.x} ${to.position.y + to.height / 2}`}
+                                            key={link.id}
+                                            d={outputPathCache.get(link.id)}
                                             fill="none"
                                             stroke={theme.node.muted}
                                             strokeWidth="2"
                                             strokeOpacity=".55"
                                         />
                                     ) : null;
-                                }),
-                            )}
-                            {interactions.connectingParams ? <ActiveConnectionPath node={canvas.nodes.find((node) => node.id === interactions.connectingParams?.nodeId)} handle={interactions.connectingParams} mouseWorld={interactions.mouseWorld} /> : null}
+                                }) : null}
+                            {interactions.connectingParams ? <ActiveConnectionPath node={viewportScene.nodeById.get(interactions.connectingParams.nodeId)} handle={interactions.connectingParams} mouseWorld={interactions.mouseWorld} /> : null}
                             {interactions.cutConnectionState ? <polyline points={interactions.cutConnectionState.points.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={theme.node.activeStroke} strokeWidth="2" /> : null}
                         </svg>
-                        {graph.nodes.map((node) => (
+                        {graph.nodes.filter((node) => viewportScene.visibleNodeIds.has(workflowVisualNodeId(node.id))).map((node) => (
                             <WorkflowNodeCard
                                 key={node.id}
                                 node={node}
                                 selected={canvas.selectedNodeIds.has(workflowVisualNodeId(node.id))}
                                 canvasNodeId={workflowVisualNodeId(node.id)}
-                                viewport={viewport}
+                                renderDetail={workflowVisualRenderDetail(renderDetail, workflowVisualNodeId(node.id), retainedVisualNodeIds)}
                                 readOnly={editBlocked}
                                 onLayoutHeightChange={(height) => {
                                     if (height > (node.height || 240)) updateNode(node.id, (current) => ({ ...current, height }));
@@ -1003,7 +1048,7 @@ function WorkflowEditorContent() {
                             />
                         ))}
                         {graph.nodes.flatMap((node) =>
-                            (node.outputs || []).map((slot) => {
+                            (node.outputs || []).filter((slot) => viewportScene.visibleNodeIds.has(workflowVisualOutputId(node.id, slot.id))).map((slot) => {
                                 const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
                                 const detail = runs.detailByNode.get(node.id);
                                 const resourceNodeId = detail ? workflowOutputResourceNodeId(detail.run.id, node.id, slot.id) : undefined;
@@ -1035,7 +1080,7 @@ function WorkflowEditorContent() {
                                     }}
                                     selected={canvas.selectedNodeIds.has(workflowVisualOutputId(node.id, slot.id))}
                                     canvasNodeId={workflowVisualOutputId(node.id, slot.id)}
-                                    viewport={viewport}
+                                    renderDetail={workflowVisualRenderDetail(renderDetail, workflowVisualOutputId(node.id, slot.id), retainedVisualNodeIds)}
                                     readOnly={editBlocked}
                                     onResizeStart={startResize}
                                     onPreviewMedia={() => setMediaPreview({ node, slot })}

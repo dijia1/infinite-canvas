@@ -6,7 +6,9 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as Reac
 import { createPortal } from "react-dom";
 
 import { CanvasConnectionHandle, CanvasNodeFrame, CanvasResizeHandle, canvasNodeSelectionColor, canvasResizeCorners, type CanvasResizeCorner } from "@/components/canvas-node-primitives";
+import { CanvasOverviewNode } from "@/components/canvas-overview-node";
 import { CanvasNodeToolbarAction, CanvasNodeToolbarIconAction, CanvasNodeToolbarShell } from "@/components/canvas-node-toolbar-shell";
+import type { CanvasRenderDetail } from "@/app/(user)/canvas/media/canvas-media-policy";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { WorkflowGenerationConfig, WorkflowNode, WorkflowOutputExecution, WorkflowOutputSlot } from "./types";
@@ -15,13 +17,12 @@ import { WorkflowMediaPreview } from "./workflow-media-preview";
 import { workflowOutputStatusText } from "./workflow-run-state";
 
 export type WorkflowPreviewInput = { key: string; sourceNodeId: string; type: "image" | "video" | "text"; text?: string; mediaId?: string; imageUrl?: string; imageStorageKey?: string; imageError?: string };
-type Viewport = { x: number; y: number; k: number };
 type ResizeStart = (event: ReactPointerEvent, node: WorkflowNode, corner: CanvasResizeCorner, slot?: WorkflowOutputSlot) => void;
 
 export function WorkflowNodeCard({
     node,
     canvasNodeId,
-    viewport,
+    renderDetail = "full",
     selected,
     readOnly = false,
     connecting,
@@ -49,7 +50,7 @@ export function WorkflowNodeCard({
 }: {
     node: WorkflowNode;
     canvasNodeId?: string;
-    viewport?: Viewport;
+    renderDetail?: CanvasRenderDetail;
     selected: boolean;
     readOnly?: boolean;
     connecting: boolean;
@@ -91,6 +92,26 @@ export function WorkflowNodeCard({
     useEffect(() => {
         if (!selected || readOnly) setEditing(false);
     }, [selected, readOnly]);
+    if (renderDetail === "overview") {
+        return <CanvasOverviewNode
+            nodeId={canvasNodeId || node.id}
+            title={node.text || (generation ? "生成配置" : mediaType === "image" ? "图片" : mediaType === "video" ? "视频" : "节点")}
+            position={node.position}
+            width={width}
+            height={height}
+            selected={selected}
+            media={hasMedia}
+            imageSource={mediaType === "image" ? imageUrl : undefined}
+            imageStorageKey={imageStorageKey}
+            fill={theme.node.fill}
+            placeholderFill={theme.toolbar.activeBg}
+            stroke={theme.node.stroke}
+            selectionStroke={canvasNodeSelectionColor}
+            dataAttributes={{ "data-workflow-object": "", "data-workflow-node-id": node.id }}
+            onPointerDown={(event) => onDragStart(event, node)}
+            onImageLoaded={onImageLoaded}
+        />;
+    }
     return (
         <div
             ref={rootRef}
@@ -194,7 +215,7 @@ export function WorkflowNodeCard({
                 />
             ) : null}
             {hovered && !editing && (!readOnly || (hasMedia && onPreviewMedia)) ? (
-                <WorkflowNodeToolbar anchor={rootRef} viewport={viewport} positionKey={`${node.position.x}:${node.position.y}:${width}:${height}`} onMouseEnter={keepHover} onMouseLeave={leaveHover}>
+                <WorkflowNodeToolbar anchor={rootRef} positionKey={`${node.position.x}:${node.position.y}:${width}:${height}`} onMouseEnter={keepHover} onMouseLeave={leaveHover}>
                     {!readOnly && node.type === "text_input" ? <CanvasNodeToolbarAction title="编辑文本" label="编辑文字" icon={<Pencil className="size-4" />} onClick={() => setEditing(true)} /> : null}
                     {!readOnly && mediaType ? (
                         <CanvasNodeToolbarAction
@@ -218,7 +239,7 @@ export function WorkflowOutputCard({
     parent,
     slot,
     canvasNodeId,
-    viewport,
+    renderDetail = "full",
     selected,
     readOnly = false,
     connecting = false,
@@ -245,7 +266,7 @@ export function WorkflowOutputCard({
     parent: WorkflowNode;
     slot: WorkflowOutputSlot;
     canvasNodeId?: string;
-    viewport?: Viewport;
+    renderDetail?: CanvasRenderDetail;
     selected: boolean;
     readOnly?: boolean;
     connecting?: boolean;
@@ -276,6 +297,26 @@ export function WorkflowOutputCard({
     const width = slot.width || (slot.type === "image" ? 340 : 420);
     const height = slot.height || (slot.type === "image" ? 240 : 236);
     const hasMedia = execution?.status === "succeeded" && execution.mediaId && resourceNodeId;
+    if (renderDetail === "overview") {
+        return <CanvasOverviewNode
+            nodeId={canvasNodeId || slot.id}
+            title={slot.type === "image" ? "图片结果" : "视频结果"}
+            position={position}
+            width={width}
+            height={height}
+            selected={selected}
+            media={Boolean(hasMedia)}
+            imageSource={hasMedia && slot.type === "image" ? imageUrl : undefined}
+            imageStorageKey={imageStorageKey}
+            fill={theme.node.fill}
+            placeholderFill={theme.toolbar.activeBg}
+            stroke={theme.node.stroke}
+            selectionStroke={canvasNodeSelectionColor}
+            dataAttributes={{ "data-workflow-object": "", "data-workflow-node-id": parent.id, "data-workflow-slot-id": slot.id }}
+            onPointerDown={(event) => onDragStart(event, parent, slot)}
+            onImageLoaded={onImageLoaded}
+        />;
+    }
     return (
         <div
             ref={rootRef}
@@ -358,7 +399,7 @@ export function WorkflowOutputCard({
                 />
             ) : null}
             {hovered && (!readOnly || (hasMedia && onPreviewMedia)) ? (
-                <WorkflowNodeToolbar anchor={rootRef} viewport={viewport} positionKey={`${position.x}:${position.y}:${width}:${height}`} onMouseEnter={keepHover} onMouseLeave={leaveHover}>
+                <WorkflowNodeToolbar anchor={rootRef} positionKey={`${position.x}:${position.y}:${width}:${height}`} onMouseEnter={keepHover} onMouseLeave={leaveHover}>
                     {hasMedia && onPreviewMedia ? (
                         <CanvasNodeToolbarAction title={slot.type === "image" ? "查看图片详情" : "查看视频"} label={slot.type === "image" ? "查看大图" : "查看视频"} icon={<Maximize2 className="size-4" />} onClick={onPreviewMedia} />
                     ) : null}
@@ -388,14 +429,12 @@ function useNodeHover() {
 
 function WorkflowNodeToolbar({
     anchor,
-    viewport,
     positionKey,
     children,
     onMouseEnter,
     onMouseLeave,
 }: {
     anchor: RefObject<HTMLDivElement | null>;
-    viewport?: Viewport;
     positionKey: string;
     children: ReactNode;
     onMouseEnter: () => void;
@@ -408,13 +447,16 @@ function WorkflowNodeToolbar({
             if (rect) setPosition({ left: rect.left + rect.width / 2, top: rect.top - 14 });
         };
         update();
+        const canvas = anchor.current?.closest<HTMLElement>("[data-infinite-canvas]");
+        canvas?.addEventListener("canvasviewportchange", update);
         window.addEventListener("resize", update);
         window.addEventListener("scroll", update, true);
         return () => {
+            canvas?.removeEventListener("canvasviewportchange", update);
             window.removeEventListener("resize", update);
             window.removeEventListener("scroll", update, true);
         };
-    }, [anchor, viewport?.x, viewport?.y, viewport?.k, positionKey]);
+    }, [anchor, positionKey]);
     return position
         ? createPortal(
               <CanvasNodeToolbarShell className="fixed" style={position} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>

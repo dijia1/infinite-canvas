@@ -16,6 +16,7 @@ import type { CanvasRenderDetail } from "../media/canvas-media-policy";
 import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
 
 import { CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
+import { CanvasOverviewNode } from "@/components/canvas-overview-node";
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
@@ -258,42 +259,24 @@ export const CanvasNode = React.memo(function CanvasNode({
 
     if (renderDetail === "overview") {
         return (
-            <div
-                data-node-id={data.id}
-                className={`node-element absolute select-none ${isSelected ? "z-50" : "z-10"}`}
-                style={{
-                    transform: `translate(${data.position.x}px, ${data.position.y}px)`,
-                    width: data.width,
-                    height: data.height,
-                    contain: "layout paint style",
-                }}
+            <CanvasOverviewNode
+                nodeId={data.id}
+                title={data.title}
+                position={data.position}
+                width={data.width}
+                height={data.height}
+                selected={isSelected}
+                media={hasImageContent || hasVideoContent}
+                imageSource={hasImageContent ? resolvedImageSource : undefined}
+                imageStorageKey={imageStorageKey}
+                fill={theme.node.fill}
+                placeholderFill={theme.toolbar.activeBg}
+                stroke={theme.node.stroke}
+                selectionStroke={selectionBlue}
+                onMouseDown={(event) => onMouseDown(event, data.id)}
                 onContextMenu={(event) => onContextMenu(event, data.id)}
-            >
-                <div
-                    className="relative h-full w-full overflow-hidden rounded-3xl border"
-                    style={{
-                        background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
-                        borderColor: isSelected ? selectionBlue : theme.node.stroke,
-                    }}
-                    title={data.title}
-                    onMouseDown={(event) => onMouseDown(event, data.id)}
-                >
-                    {hasImageContent ? (
-                        <img
-                            src={resolvedImageSource}
-                            alt=""
-                            draggable={false}
-                            className="h-full w-full object-cover"
-                            decoding="async"
-                            onLoad={() => {
-                                if (imageStorageKey) onImageLoaded?.(data.id, imageStorageKey);
-                            }}
-                        />
-                    ) : (
-                        <div className="h-full w-full" style={{ background: theme.toolbar.activeBg }} />
-                    )}
-                </div>
-            </div>
+                onImageLoaded={(storageKey) => onImageLoaded?.(data.id, storageKey)}
+            />
         );
     }
 

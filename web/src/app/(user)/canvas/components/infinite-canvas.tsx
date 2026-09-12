@@ -290,6 +290,7 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
     return (
         <div
             ref={containerRef}
+            data-infinite-canvas
             className="relative h-full w-full cursor-grab select-none overflow-hidden"
             style={{ background: theme.canvas.background, cursor }}
             onPointerDown={handlePointerDown}

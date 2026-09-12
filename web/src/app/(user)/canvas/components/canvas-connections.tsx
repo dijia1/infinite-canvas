@@ -3,9 +3,9 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { getConnectionCurve } from "../utils/canvas-connection-geometry";
 import type { CanvasConnection, CanvasNodeData, ConnectionHandle, Position } from "../types";
 
-export const ConnectionPath = memo(function ConnectionPath({ connection, from, to, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; active: boolean; pendingCut?: boolean; onSelect: (connectionId: string) => void }) {
+export const ConnectionPath = memo(function ConnectionPath({ connection, from, to, pathD: cachedPathD, active, pendingCut, onSelect }: { connection: CanvasConnection; from: CanvasNodeData; to: CanvasNodeData; pathD?: string; active: boolean; pendingCut?: boolean; onSelect: (connectionId: string) => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const { pathD } = getConnectionCurve(from, to);
+    const pathD = cachedPathD || getConnectionCurve(from, to).pathD;
     const highlight = pendingCut || active;
 
     return (
