@@ -3,8 +3,9 @@ import test from "node:test";
 
 import { createCanvasInteractionController } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
 import { CanvasNodeType, type CanvasNodeData, type CanvasConnection } from "@/app/(user)/canvas/types";
+import { canvasFrameRectsOverlap } from "@/lib/canvas-frame";
 import { addWorkflowConnection, appendWorkflowOutput, createWorkflowNode, emptyWorkflowGraph } from "./workflow-graph";
-import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, parseWorkflowVisualId, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowVisualNodeId, workflowVisualOutputId } from "./workflow-canvas-adapter";
+import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, copyWorkflowFrameSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, parseWorkflowVisualId, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowVisualNodeId, workflowVisualOutputId } from "./workflow-canvas-adapter";
 
 function fixture() {
     const input = createWorkflowNode("image_input", { x: 0, y: 0 }, "input:with:colon");
@@ -141,4 +142,46 @@ test("copying output slots does not silently expand selection to generation owne
     const mixed = copyWorkflowSelection(graph, new Set([workflowVisualNodeId(graph.nodes[0]!.id), workflowVisualOutputId(owner.id, slotId)]));
     assert.equal(mixed.nodes.length, 1);
     assert.equal(mixed.nodes[0]!.id, graph.nodes[0]!.id);
+});
+
+test("copying a Frame includes its members but excludes external references and remaps every identity", () => {
+    let graph = addWorkflowConnection(fixture(), { sourceNodeId: "input:with:colon", sourceSlotId: "output", targetNodeId: "generation" });
+    graph = addWorkflowConnection(graph, { sourceNodeId: "generation", sourceSlotId: graph.nodes[1]!.outputs![0]!.id, targetNodeId: "video" });
+    const frame = { id: "frame-a", name: "分支 A", position: { x: 440, y: -60 }, width: 1800, height: 500, nodeIds: ["generation", "video"] };
+    const framed = { ...graph, frames: [frame] };
+    const copied = copyWorkflowFrameSelection(framed, frame.id);
+    assert.equal(copied.frames?.length, 1);
+    assert.equal(copied.nodes.length, 2);
+    assert.equal(copied.connections.length, 1);
+    assert.equal(copied.nodes[0]!.inputPorts?.length, 0);
+    let sequence = 0;
+    const pasted = pasteWorkflowSelection(framed, copied, { x: 48, y: 48 }, () => `copy-${++sequence}`);
+    const result = pasted.graph.frames![1]!;
+    assert.notEqual(result.id, frame.id);
+    assert.equal(result.name, frame.name);
+    assert.equal(canvasFrameRectsOverlap(frame, result), false);
+    assert.deepEqual(result.nodeIds, pasted.graph.nodes.slice(3).map((node) => node.id));
+    assert.equal(pasted.selectedFrameId, result.id);
+    assert.equal(pasted.selectedNodeIds.size, 0);
+    assert.deepEqual(framed.frames, [frame]);
+    const ordinary = copyWorkflowSelection(framed, new Set([workflowVisualNodeId("generation")]));
+    assert.equal(ordinary.frames, undefined);
+});
+
+test("deleting a member removes membership without deleting its Frame", () => {
+    const base = fixture();
+    const graph = { ...base, frames: [{ id: "frame-a", name: "A", position: { x: 0, y: 0 }, width: 2000, height: 600, nodeIds: ["generation", "video"] }] };
+    const next = deleteWorkflowVisualSelection(graph, new Set([workflowVisualNodeId("generation")]));
+    assert.deepEqual(next.frames?.[0]?.nodeIds, ["video"]);
+    assert.equal(next.frames?.[0]?.id, "frame-a");
+    assert.deepEqual(graph.frames[0]!.nodeIds, ["generation", "video"]);
+});
+
+
+test("Frame paste rejects capacity before mutating nodes or allocating identities", () => {
+    const graph = { ...fixture(), frames: Array.from({ length: 1000 }, (_, index) => ({ id: `frame-${index}`, name: "Frame", position: { x: 0, y: 0 }, width: 480, height: 320, nodeIds: [] })) };
+    const copied = copyWorkflowFrameSelection(graph, "frame-0");
+    const before = structuredClone(graph);
+    assert.throws(() => pasteWorkflowSelection(graph, copied, undefined, () => { throw new Error("should not allocate"); }), /1000/);
+    assert.deepEqual(graph, before);
 });

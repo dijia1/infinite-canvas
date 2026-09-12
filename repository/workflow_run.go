@@ -2,6 +2,8 @@ package repository
 
 import (
 	"errors"
+	"fmt"
+	"sort"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/model"
@@ -10,13 +12,24 @@ import (
 )
 
 var (
-	ErrWorkflowRunNotFound = errors.New("workflow run not found")
-	ErrWorkflowRunActive   = errors.New("workflow run is active")
-	ErrWorkflowLeaseLost   = errors.New("workflow attempt lease lost")
-	ErrWorkflowRunStale    = errors.New("workflow run evaluation is stale")
+	ErrWorkflowRunNotFound      = errors.New("workflow run not found")
+	ErrWorkflowRunActive        = errors.New("workflow run is active")
+	ErrWorkflowLeaseLost        = errors.New("workflow attempt lease lost")
+	ErrWorkflowRunStale         = errors.New("workflow run evaluation is stale")
+	ErrWorkflowRunCorrupt       = errors.New("workflow run record is corrupt")
+	ErrWorkflowRevisionConflict = errors.New("workflow revision conflict")
 )
 
 const workflowSchedulerAdvisoryLock int64 = 0x776f726b666c6f77
+const workflowAdmissionAdvisoryNamespace int64 = 0x6672616d6552756e
+
+type WorkflowRunAdmissionConflict struct {
+	Code    string
+	RunID   string
+	NodeIDs []string
+}
+
+func (err *WorkflowRunAdmissionConflict) Error() string { return err.Code }
 
 type WorkflowRunRecord struct {
 	Run      model.WorkflowRun
@@ -25,19 +38,80 @@ type WorkflowRunRecord struct {
 	Attempts []model.WorkflowOutputAttempt
 }
 
-func CreateWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution, outputs []model.WorkflowOutputExecution, mediaIDs []string) (model.WorkflowRun, bool, error) {
+type WorkflowRunListFilter struct {
+	WorkflowID string
+	ScopeType  string
+	FrameID    string
+	Active     string
+}
+
+func AdmitWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution, outputs []model.WorkflowOutputExecution, mediaIDs []string, expectedRevision int) (model.WorkflowRun, bool, error) {
 	database, err := DB()
 	if err != nil {
 		return model.WorkflowRun{}, false, err
 	}
 	inserted := false
 	err = database.Transaction(func(tx *gorm.DB) error {
-		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "request_id"}}, DoNothing: true}).Create(&run)
+		lockIdentity := fmt.Sprintf("%d:%s:%d:%s", len(run.OwnerUID), run.OwnerUID, len(run.WorkflowID), run.WorkflowID)
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, ?))", lockIdentity, workflowAdmissionAdvisoryNamespace).Error; err != nil {
+			return err
+		}
+		var existing model.WorkflowRun
+		result := tx.Where("owner_uid = ? AND request_id = ?", run.OwnerUID, run.RequestID).Limit(1).Find(&existing)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			run = existing
+			return nil
+		}
+		var definition model.Workflow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("owner_uid = ? AND id = ?", run.OwnerUID, run.WorkflowID).First(&definition).Error; err != nil {
+			return err
+		}
+		if definition.Revision != expectedRevision {
+			return ErrWorkflowRevisionConflict
+		}
+		active := []model.WorkflowRun{}
+		if err := tx.Where("owner_uid = ? AND workflow_id = ? AND status IN ?", run.OwnerUID, run.WorkflowID, workflowActiveStatuses()).Order("created_at DESC, id DESC").Find(&active).Error; err != nil {
+			return err
+		}
+		for _, other := range active {
+			if normalizeWorkflowRunScopeType(run.ScopeType) == model.WorkflowRunScopeWorkflow || normalizeWorkflowRunScopeType(other.ScopeType) == model.WorkflowRunScopeWorkflow || (run.FrameID != "" && run.FrameID == other.FrameID) {
+				return &WorkflowRunAdmissionConflict{Code: "workflow_run_scope_active", RunID: other.ID}
+			}
+		}
+		if len(active) > 0 && len(steps) > 0 {
+			candidate := make(map[string]struct{}, len(steps))
+			for _, step := range steps {
+				candidate[step.NodeID] = struct{}{}
+			}
+			activeIDs := make([]string, 0, len(active))
+			for _, other := range active {
+				activeIDs = append(activeIDs, other.ID)
+			}
+			var activeSteps []model.WorkflowStepExecution
+			if err := tx.Where("run_id IN ?", activeIDs).Order("run_id, node_id").Find(&activeSteps).Error; err != nil {
+				return err
+			}
+			byRun := make(map[string][]string)
+			for _, step := range activeSteps {
+				if _, overlaps := candidate[step.NodeID]; overlaps {
+					byRun[step.RunID] = append(byRun[step.RunID], step.NodeID)
+				}
+			}
+			for _, other := range active {
+				if ids := byRun[other.ID]; len(ids) > 0 {
+					sort.Strings(ids)
+					return &WorkflowRunAdmissionConflict{Code: "workflow_run_nodes_active", RunID: other.ID, NodeIDs: ids}
+				}
+			}
+		}
+		result = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "request_id"}}, DoNothing: true}).Create(&run)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
-			existing := model.WorkflowRun{}
 			if err := tx.Where("owner_uid = ? AND request_id = ?", run.OwnerUID, run.RequestID).First(&existing).Error; err != nil {
 				return err
 			}
@@ -60,6 +134,26 @@ func CreateWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecutio
 	return run, inserted, err
 }
 
+func workflowActiveStatuses() []string {
+	return []string{"pending", "running", "stopping", "attention_required"}
+}
+
+func normalizeWorkflowRunScopeType(value model.WorkflowRunScopeType) model.WorkflowRunScopeType {
+	if value == model.WorkflowRunScopeFrame {
+		return value
+	}
+	return model.WorkflowRunScopeWorkflow
+}
+
+func canonicalizeWorkflowRunScope(run *model.WorkflowRun) {
+	if run.ScopeType == model.WorkflowRunScopeFrame && run.FrameID != "" && run.FrameName != "" {
+		return
+	}
+	run.ScopeType = model.WorkflowRunScopeWorkflow
+	run.FrameID = ""
+	run.FrameName = ""
+}
+
 func GetWorkflowRun(ownerUID, id string) (WorkflowRunRecord, bool, error) {
 	database, err := DB()
 	if err != nil {
@@ -70,6 +164,7 @@ func GetWorkflowRun(ownerUID, id string) (WorkflowRunRecord, bool, error) {
 	if result.Error != nil || result.RowsAffected == 0 {
 		return record, false, result.Error
 	}
+	canonicalizeWorkflowRunScope(&record.Run)
 	if err := database.Where("run_id = ?", id).Order("node_id").Find(&record.Steps).Error; err != nil {
 		return record, false, err
 	}
@@ -89,17 +184,34 @@ func GetWorkflowRunByRequest(ownerUID, requestID string) (model.WorkflowRun, boo
 	}
 	item := model.WorkflowRun{}
 	result := database.Where("owner_uid = ? AND request_id = ?", ownerUID, requestID).Limit(1).Find(&item)
+	canonicalizeWorkflowRunScope(&item)
 	return item, result.RowsAffected > 0, result.Error
 }
 
 func ListWorkflowRuns(ownerUID, workflowID string, page, pageSize int) ([]model.WorkflowRun, int64, error) {
+	return ListWorkflowRunsFiltered(ownerUID, WorkflowRunListFilter{WorkflowID: workflowID}, page, pageSize)
+}
+
+func ListWorkflowRunsFiltered(ownerUID string, filter WorkflowRunListFilter, page, pageSize int) ([]model.WorkflowRun, int64, error) {
 	database, err := DB()
 	if err != nil {
 		return nil, 0, err
 	}
 	query := database.Model(&model.WorkflowRun{}).Where("owner_uid = ?", ownerUID)
-	if workflowID != "" {
-		query = query.Where("workflow_id = ?", workflowID)
+	if filter.WorkflowID != "" {
+		query = query.Where("workflow_id = ?", filter.WorkflowID)
+	}
+	if filter.ScopeType != "" {
+		query = query.Where("scope_type = ?", filter.ScopeType)
+	}
+	if filter.FrameID != "" {
+		query = query.Where("frame_id = ?", filter.FrameID)
+	}
+	if filter.Active == "1" {
+		query = query.Where("status IN ?", workflowActiveStatuses())
+	}
+	if filter.Active == "0" {
+		query = query.Where("status NOT IN ?", workflowActiveStatuses())
 	}
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -107,6 +219,9 @@ func ListWorkflowRuns(ownerUID, workflowID string, page, pageSize int) ([]model.
 	}
 	items := []model.WorkflowRun{}
 	err = query.Omit("snapshot").Order("created_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error
+	for index := range items {
+		canonicalizeWorkflowRunScope(&items[index])
+	}
 	return items, total, err
 }
 
@@ -121,6 +236,9 @@ func ListOpenWorkflowRuns(afterID string, limit int) ([]model.WorkflowRun, error
 		query = query.Where("id > ?", afterID)
 	}
 	err = query.Order("id").Limit(limit).Find(&items).Error
+	for index := range items {
+		canonicalizeWorkflowRunScope(&items[index])
+	}
 	return items, err
 }
 
@@ -194,6 +312,28 @@ func ClaimWorkflowAttempt(globalLimit, runLimit int, allowNew bool, current time
 			return nil
 		}
 
+		var runID string
+		result := tx.Raw(`
+			SELECT run.id
+			FROM workflow_runs run
+			WHERE run.stop_requested = false
+			  AND run.status IN ('pending','running','attention_required')
+			  AND EXISTS (SELECT 1 FROM workflow_output_executions output WHERE output.run_id = run.id AND output.status = 'ready')
+			  AND (SELECT COUNT(*) FROM workflow_output_attempts attempt
+			       WHERE attempt.run_id = run.id AND attempt.status IN ('claimed','submitting','running','uncertain')) < ?
+			ORDER BY run.created_at, run.id
+			LIMIT 1`, runLimit).Scan(&runID)
+		if result.Error != nil || runID == "" {
+			return result.Error
+		}
+		var run model.WorkflowRun
+		result = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", runID).First(&run)
+		if result.Error != nil {
+			return result.Error
+		}
+		if run.StopRequested || (run.Status != "pending" && run.Status != "running" && run.Status != "attention_required") {
+			return nil
+		}
 		var active int64
 		if err := tx.Model(&model.WorkflowOutputAttempt{}).Where("status IN ?", []string{"claimed", "submitting", "running", "uncertain"}).Count(&active).Error; err != nil {
 			return err
@@ -201,18 +341,18 @@ func ClaimWorkflowAttempt(globalLimit, runLimit int, allowNew bool, current time
 		if int(active) >= globalLimit {
 			return nil
 		}
+		var activeForRun int64
+		if err := tx.Model(&model.WorkflowOutputAttempt{}).Where("run_id = ? AND status IN ?", run.ID, []string{"claimed", "submitting", "running", "uncertain"}).Count(&activeForRun).Error; err != nil {
+			return err
+		}
+		if int(activeForRun) >= runLimit {
+			return nil
+		}
 		var output model.WorkflowOutputExecution
-		result := tx.Raw(`
-			SELECT output.* FROM workflow_output_executions output
-			JOIN workflow_runs run ON run.id = output.run_id
-			WHERE output.status = 'ready'
-			  AND run.stop_requested = false
-			  AND run.status IN ('pending','running','attention_required')
-			  AND (SELECT COUNT(*) FROM workflow_output_attempts attempt
-			       WHERE attempt.run_id = output.run_id AND attempt.status IN ('claimed','submitting','running','uncertain')) < ?
-			ORDER BY run.created_at, output.node_id, output.slot_id
-			FOR UPDATE OF output, run SKIP LOCKED LIMIT 1`, runLimit).Scan(&output)
-		if result.Error != nil || output.RunID == "" {
+		result = tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("run_id = ? AND status = 'ready'", run.ID).
+			Order("node_id, slot_id").Limit(1).Find(&output)
+		if result.Error != nil || result.RowsAffected == 0 {
 			return result.Error
 		}
 		claimID := workflowClaimID()
@@ -224,10 +364,6 @@ func ClaimWorkflowAttempt(globalLimit, runLimit int, allowNew bool, current time
 			RetryRequestID: output.RetryRequestID,
 			Status:         "claimed", ClaimID: claimID, LeaseUntil: &leaseUntil, NextPollAt: current,
 			QueuedAt: &queuedAt, CreatedAt: current, UpdatedAt: current,
-		}
-		var run model.WorkflowRun
-		if err := tx.Where("id = ?", output.RunID).First(&run).Error; err != nil {
-			return err
 		}
 		attempt.OwnerUID = run.OwnerUID
 		if err := tx.Create(&attempt).Error; err != nil {
@@ -365,6 +501,16 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 	output := model.WorkflowOutputExecution{}
 	err = database.Transaction(func(tx *gorm.DB) error {
 		var run model.WorkflowRun
+		if err := tx.Where("owner_uid = ? AND id = ?", ownerUID, runID).First(&run).Error; err != nil {
+			return ErrWorkflowRunNotFound
+		}
+		if run.WorkflowID == "" {
+			return ErrWorkflowRunCorrupt
+		}
+		lockIdentity := fmt.Sprintf("%d:%s:%d:%s", len(run.OwnerUID), run.OwnerUID, len(run.WorkflowID), run.WorkflowID)
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(hashtextextended(?, ?))", lockIdentity, workflowAdmissionAdvisoryNamespace).Error; err != nil {
+			return err
+		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("owner_uid = ? AND id = ?", ownerUID, runID).First(&run).Error; err != nil {
 			return ErrWorkflowRunNotFound
 		}
@@ -389,6 +535,15 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 		if output.Status != "failed" {
 			return ErrWorkflowRunActive
 		}
+		var steps []model.WorkflowStepExecution
+		if err := tx.Where("run_id = ?", run.ID).Order("node_id").Find(&steps).Error; err != nil {
+			return err
+		}
+		if conflict, err := workflowRunConflict(tx, run, steps, run.ID); err != nil {
+			return err
+		} else if conflict != nil {
+			return conflict
+		}
 		output.Attempt++
 		output.Status, output.Error, output.MediaID, output.RetryRequestID, output.UpdatedAt = "waiting", "", "", retryRequestID, current
 		if err := tx.Save(&output).Error; err != nil {
@@ -397,6 +552,50 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 		return tx.Model(&model.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{"status": "running", "finished_at": nil, "updated_at": current, "state_version": gorm.Expr("state_version + 1")}).Error
 	})
 	return output, err
+}
+
+func workflowRunConflict(tx *gorm.DB, candidate model.WorkflowRun, steps []model.WorkflowStepExecution, excludeRunID string) (*WorkflowRunAdmissionConflict, error) {
+	active := []model.WorkflowRun{}
+	query := tx.Where("owner_uid = ? AND workflow_id = ? AND status IN ?", candidate.OwnerUID, candidate.WorkflowID, workflowActiveStatuses())
+	if excludeRunID != "" {
+		query = query.Where("id <> ?", excludeRunID)
+	}
+	if err := query.Order("created_at DESC, id DESC").Find(&active).Error; err != nil {
+		return nil, err
+	}
+	for _, other := range active {
+		if normalizeWorkflowRunScopeType(candidate.ScopeType) == model.WorkflowRunScopeWorkflow || normalizeWorkflowRunScopeType(other.ScopeType) == model.WorkflowRunScopeWorkflow || (candidate.FrameID != "" && candidate.FrameID == other.FrameID) {
+			return &WorkflowRunAdmissionConflict{Code: "workflow_run_scope_active", RunID: other.ID}, nil
+		}
+	}
+	if len(active) == 0 || len(steps) == 0 {
+		return nil, nil
+	}
+	candidateNodes := make(map[string]struct{}, len(steps))
+	for _, step := range steps {
+		candidateNodes[step.NodeID] = struct{}{}
+	}
+	activeIDs := make([]string, 0, len(active))
+	for _, other := range active {
+		activeIDs = append(activeIDs, other.ID)
+	}
+	var activeSteps []model.WorkflowStepExecution
+	if err := tx.Where("run_id IN ?", activeIDs).Order("run_id, node_id").Find(&activeSteps).Error; err != nil {
+		return nil, err
+	}
+	byRun := make(map[string][]string)
+	for _, step := range activeSteps {
+		if _, ok := candidateNodes[step.NodeID]; ok {
+			byRun[step.RunID] = append(byRun[step.RunID], step.NodeID)
+		}
+	}
+	for _, other := range active {
+		if ids := byRun[other.ID]; len(ids) > 0 {
+			sort.Strings(ids)
+			return &WorkflowRunAdmissionConflict{Code: "workflow_run_nodes_active", RunID: other.ID, NodeIDs: ids}, nil
+		}
+	}
+	return nil, nil
 }
 
 func DeleteWorkflowRun(ownerUID, id string) error {

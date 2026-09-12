@@ -13,8 +13,9 @@ import (
 )
 
 type CreateWorkflowRunInput struct {
-	RequestID string `json:"requestId"`
-	Revision  *int   `json:"revision,omitempty"`
+	RequestID string                  `json:"requestId"`
+	Revision  *int                    `json:"revision,omitempty"`
+	Scope     *model.WorkflowRunScope `json:"scope,omitempty"`
 }
 
 type RetryWorkflowOutputInput struct {
@@ -38,6 +39,27 @@ type WorkflowRunList struct {
 	PageSize int                 `json:"pageSize"`
 }
 
+type WorkflowRunListFilter struct {
+	WorkflowID string
+	ScopeType  string
+	FrameID    string
+	Active     string
+}
+
+type WorkflowRunScopeState struct {
+	Scope       model.WorkflowRunScope `json:"scope"`
+	LatestRun   *model.WorkflowRun     `json:"latestRun"`
+	ActiveRunID *string                `json:"activeRunId"`
+}
+
+type WorkflowRunState struct {
+	WorkflowID string                  `json:"workflowId"`
+	Revision   int                     `json:"revision"`
+	Scopes     []WorkflowRunScopeState `json:"scopes"`
+	NodeRunIDs map[string]string       `json:"nodeRunIds"`
+	ActiveRuns WorkflowRunList         `json:"activeRuns"`
+}
+
 func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, input CreateWorkflowRunInput) (WorkflowRunDetail, error) {
 	workflowID, err := normalizeWorkflowPathID(workflowID)
 	if err != nil {
@@ -47,11 +69,15 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 	if strings.TrimSpace(user.UID) == "" || requestID == "" || len(requestID) > 128 {
 		return WorkflowRunDetail{}, workflowValidationError{message: "运行请求 ID 无效"}
 	}
+	scope, err := normalizeWorkflowRunScope(input.Scope)
+	if err != nil {
+		return WorkflowRunDetail{}, err
+	}
 	if existing, found, err := repository.GetWorkflowRunByRequest(user.UID, requestID); err != nil {
 		return WorkflowRunDetail{}, err
 	} else if found {
-		if existing.WorkflowID != workflowID {
-			return WorkflowRunDetail{}, workflowValidationError{message: "运行请求 ID 已用于其他流程"}
+		if err := validateWorkflowRunReplay(existing, workflowID, scope, input.Revision); err != nil {
+			return WorkflowRunDetail{}, err
 		}
 		return GetWorkflowRun(ctx, user, existing.ID)
 	}
@@ -65,15 +91,25 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 	if err != nil {
 		return WorkflowRunDetail{}, err
 	}
+	if input.Scope != nil && input.Revision == nil {
+		return WorkflowRunDetail{}, newWorkflowFrameValidationError("workflow_run_revision_required", "运行指定范围时必须提供流程版本", map[string]any{"workflowId": workflowID})
+	}
+	if input.Scope == nil && len(workflow.Graph.Frames) > 0 {
+		return WorkflowRunDetail{}, newWorkflowFrameValidationError("workflow_run_scope_required", "当前流程包含 Frame，请刷新后明确选择运行范围", map[string]any{"workflowId": workflowID})
+	}
 	if input.Revision != nil {
 		if *input.Revision < 1 {
 			return WorkflowRunDetail{}, workflowValidationError{message: "流程版本无效"}
 		}
 		if *input.Revision != workflow.Revision {
-			return WorkflowRunDetail{}, ErrWorkflowConflict
+			return WorkflowRunDetail{}, NewWorkflowBusinessError("workflow_revision_conflict", "流程已在其他位置更新，请刷新后重试", map[string]any{"workflowId": workflowID, "requestedRevision": *input.Revision, "serverRevision": workflow.Revision})
 		}
 	}
 	graph, err := normalizeAndSizeWorkflowGraph(workflow.Graph)
+	if err != nil {
+		return WorkflowRunDetail{}, err
+	}
+	graph, err = SelectWorkflowRunGraph(graph, scope)
 	if err != nil {
 		return WorkflowRunDetail{}, err
 	}
@@ -87,8 +123,16 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 	current := time.Now().UTC()
 	run := model.WorkflowRun{
 		ID: newID("workflow-run"), OwnerUID: user.UID, RequestID: requestID, WorkflowID: workflow.ID,
-		Revision: workflow.Revision, Title: workflow.Name, Snapshot: string(snapshot), Status: "pending", StateVersion: 1,
+		Revision: workflow.Revision, Title: workflow.Name, ScopeType: scope.Type, FrameID: scope.FrameID, Snapshot: string(snapshot), Status: "pending", StateVersion: 1,
 		CreatedAt: current, UpdatedAt: current,
+	}
+	if scope.Type == model.WorkflowRunScopeFrame {
+		for _, frame := range workflow.Graph.Frames {
+			if frame.ID == scope.FrameID {
+				run.FrameName = frame.Name
+				break
+			}
+		}
 	}
 	steps := []model.WorkflowStepExecution{}
 	outputs := []model.WorkflowOutputExecution{}
@@ -101,21 +145,40 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 			outputs = append(outputs, model.WorkflowOutputExecution{RunID: run.ID, NodeID: node.ID, SlotID: slot.ID, Status: "waiting", Attempt: 1, UpdatedAt: current})
 		}
 	}
-	created, _, err := repository.CreateWorkflowRun(run, steps, outputs, workflowGraphMediaIDs(graph))
+	created, _, err := repository.AdmitWorkflowRun(run, steps, outputs, workflowGraphMediaIDs(graph), workflow.Revision)
 	if err != nil {
+		if errors.Is(err, repository.ErrWorkflowRevisionConflict) {
+			serverRevision := workflow.Revision
+			if current, found, readErr := repository.GetWorkflow(user.UID, workflowID); readErr == nil && found {
+				serverRevision = current.Revision
+			}
+			data := map[string]any{"workflowId": workflowID, "serverRevision": serverRevision}
+			if input.Revision != nil {
+				data["requestedRevision"] = *input.Revision
+			}
+			return WorkflowRunDetail{}, NewWorkflowBusinessError("workflow_revision_conflict", "流程已在其他位置更新，请刷新后重试", data)
+		}
+		var conflict *repository.WorkflowRunAdmissionConflict
+		if errors.As(err, &conflict) {
+			data := map[string]any{"runId": conflict.RunID, "workflowId": workflowID}
+			if len(conflict.NodeIDs) > 0 {
+				data["nodeIds"] = conflict.NodeIDs
+			}
+			return WorkflowRunDetail{}, NewWorkflowBusinessError(conflict.Code, "运行范围与已有活跃运行冲突", data)
+		}
 		return WorkflowRunDetail{}, workflowRepositoryError(err)
 	}
-	if created.WorkflowID != workflowID {
-		return WorkflowRunDetail{}, workflowValidationError{message: "运行请求 ID 已用于其他流程"}
+	if err := validateWorkflowRunReplay(created, workflowID, scope, input.Revision); err != nil {
+		return WorkflowRunDetail{}, err
 	}
 	return GetWorkflowRun(ctx, user, created.ID)
 }
 
-func ListWorkflowRuns(_ context.Context, user PortalUser, workflowID string, page, pageSize int) (WorkflowRunList, error) {
+func ListWorkflowRuns(_ context.Context, user PortalUser, filter WorkflowRunListFilter, page, pageSize int) (WorkflowRunList, error) {
 	if strings.TrimSpace(user.UID) == "" {
 		return WorkflowRunList{}, workflowValidationError{message: "未经过 Portal Gateway 身份验证"}
 	}
-	workflowID = strings.TrimSpace(workflowID)
+	workflowID := strings.TrimSpace(filter.WorkflowID)
 	if workflowID != "" {
 		var err error
 		workflowID, err = normalizeWorkflowPathID(workflowID)
@@ -125,8 +188,118 @@ func ListWorkflowRuns(_ context.Context, user PortalUser, workflowID string, pag
 	}
 	query := model.Query{Page: page, PageSize: pageSize}
 	query.Normalize()
-	items, total, err := repository.ListWorkflowRuns(user.UID, workflowID, query.Page, query.PageSize)
+	scopeType := strings.TrimSpace(filter.ScopeType)
+	if scopeType != "" && scopeType != string(model.WorkflowRunScopeWorkflow) && scopeType != string(model.WorkflowRunScopeFrame) {
+		return WorkflowRunList{}, workflowValidationError{message: "运行范围筛选无效"}
+	}
+	frameID := strings.TrimSpace(filter.FrameID)
+	if frameID != "" {
+		var err error
+		frameID, err = normalizeWorkflowIdentifier(frameID, "Frame ID")
+		if err != nil {
+			return WorkflowRunList{}, err
+		}
+	}
+	if frameID != "" && scopeType != string(model.WorkflowRunScopeFrame) {
+		return WorkflowRunList{}, workflowValidationError{message: "Frame 筛选必须指定 frame 范围"}
+	}
+	if filter.Active != "" && filter.Active != "0" && filter.Active != "1" {
+		return WorkflowRunList{}, workflowValidationError{message: "活跃状态筛选无效"}
+	}
+	items, total, err := repository.ListWorkflowRunsFiltered(user.UID, repository.WorkflowRunListFilter{WorkflowID: workflowID, ScopeType: scopeType, FrameID: frameID, Active: filter.Active}, query.Page, query.PageSize)
 	return WorkflowRunList{Items: items, Total: total, Page: query.Page, PageSize: query.PageSize}, err
+}
+
+func GetWorkflowRunState(_ context.Context, user PortalUser, workflowID string, page, pageSize int) (WorkflowRunState, error) {
+	if strings.TrimSpace(user.UID) == "" {
+		return WorkflowRunState{}, workflowValidationError{message: "未经过 Portal Gateway 身份验证"}
+	}
+	var err error
+	workflowID, err = normalizeWorkflowPathID(workflowID)
+	if err != nil {
+		return WorkflowRunState{}, err
+	}
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	record, err := repository.GetWorkflowRunState(user.UID, workflowID, page, pageSize)
+	if err != nil {
+		if errors.Is(err, repository.ErrWorkflowRunNotFound) {
+			return WorkflowRunState{}, safeMessageError{message: "流程不存在"}
+		}
+		return WorkflowRunState{}, err
+	}
+	scopes := make([]model.WorkflowRunScope, 0, len(record.Workflow.Graph.Frames)+1)
+	scopes = append(scopes, model.WorkflowRunScope{Type: model.WorkflowRunScopeWorkflow})
+	for _, frame := range record.Workflow.Graph.Frames {
+		scopes = append(scopes, model.WorkflowRunScope{Type: model.WorkflowRunScopeFrame, FrameID: frame.ID})
+	}
+	nodeRunIDs := make(map[string]string)
+	for _, node := range record.Workflow.Graph.Nodes {
+		if node.Type == model.WorkflowNodeImageGeneration || node.Type == model.WorkflowNodeVideoGeneration {
+			if runID := record.NodeRunIDs[node.ID]; runID != "" {
+				nodeRunIDs[node.ID] = runID
+			}
+		}
+	}
+	result := WorkflowRunState{WorkflowID: workflowID, Revision: record.Workflow.Revision, NodeRunIDs: nodeRunIDs, ActiveRuns: WorkflowRunList{Items: record.ActiveRuns, Total: record.ActiveTotal, Page: page, PageSize: pageSize}}
+	for _, scope := range scopes {
+		key := string(scope.Type) + "\x00" + scope.FrameID
+		item := WorkflowRunScopeState{Scope: scope}
+		if latest, ok := record.LatestRuns[key]; ok {
+			current := latest
+			item.LatestRun = &current
+		}
+		if activeID := record.ActiveRunIDs[key]; activeID != "" {
+			current := activeID
+			item.ActiveRunID = &current
+		}
+		result.Scopes = append(result.Scopes, item)
+	}
+	return result, nil
+}
+
+func normalizeWorkflowRunScope(input *model.WorkflowRunScope) (model.WorkflowRunScope, error) {
+	if input == nil {
+		return model.WorkflowRunScope{Type: model.WorkflowRunScopeWorkflow}, nil
+	}
+	scope := *input
+	scope.FrameID = strings.TrimSpace(scope.FrameID)
+	switch scope.Type {
+	case model.WorkflowRunScopeWorkflow:
+		if scope.FrameID != "" {
+			return model.WorkflowRunScope{}, workflowValidationError{message: "整图运行不能指定 Frame"}
+		}
+	case model.WorkflowRunScopeFrame:
+		if scope.FrameID == "" {
+			return model.WorkflowRunScope{}, workflowValidationError{message: "Frame ID 无效"}
+		}
+		id, err := normalizeWorkflowIdentifier(scope.FrameID, "Frame ID")
+		if err != nil {
+			return model.WorkflowRunScope{}, err
+		}
+		scope.FrameID = id
+	default:
+		return model.WorkflowRunScope{}, workflowValidationError{message: "运行范围无效"}
+	}
+	return scope, nil
+}
+
+func validateWorkflowRunReplay(existing model.WorkflowRun, workflowID string, scope model.WorkflowRunScope, revision *int) error {
+	actualType := existing.ScopeType
+	if actualType == "" {
+		actualType = model.WorkflowRunScopeWorkflow
+	}
+	if existing.WorkflowID != workflowID || actualType != scope.Type || existing.FrameID != scope.FrameID || (revision != nil && existing.Revision != *revision) {
+		return NewWorkflowBusinessError("workflow_run_request_mismatch", "运行请求 ID 已用于其他范围或版本", map[string]any{"workflowId": workflowID, "runId": existing.ID})
+	}
+	return nil
 }
 
 func GetWorkflowRun(_ context.Context, user PortalUser, id string) (WorkflowRunDetail, error) {
@@ -184,11 +357,18 @@ func RetryWorkflowOutput(_ context.Context, user PortalUser, id string, input Re
 		return WorkflowRunDetail{}, workflowValidationError{message: "重试槽位无效"}
 	}
 	if _, err := repository.RetryWorkflowOutput(user.UID, id, nodeID, slotID, requestID, time.Now().UTC()); err != nil {
+		var conflict *repository.WorkflowRunAdmissionConflict
 		switch {
 		case errors.Is(err, repository.ErrWorkflowRunNotFound):
 			return WorkflowRunDetail{}, safeMessageError{message: "运行记录不存在"}
 		case errors.Is(err, repository.ErrWorkflowRunActive):
 			return WorkflowRunDetail{}, workflowValidationError{message: "当前槽位不可重试"}
+		case errors.As(err, &conflict):
+			data := map[string]any{"runId": conflict.RunID, "workflowRunId": id, "nodeId": nodeID, "slotId": slotID}
+			if len(conflict.NodeIDs) > 0 {
+				data["nodeIds"] = conflict.NodeIDs
+			}
+			return WorkflowRunDetail{}, NewWorkflowBusinessError(conflict.Code, "重试范围与已有活跃运行冲突", data)
 		default:
 			return WorkflowRunDetail{}, err
 		}

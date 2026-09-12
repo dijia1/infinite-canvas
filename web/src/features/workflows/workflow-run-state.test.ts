@@ -1,16 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findCompatibleWorkflowOutput, findWorkflowOutput, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
+import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunScopeLabel, workflowRunStatusText } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun } from "./types";
 
-const run = (id: string, workflowId: string, status: WorkflowRun["status"], createdAt: string): WorkflowRun => ({ id, workflowId, status, createdAt, updatedAt: createdAt, requestId: `${id}-request`, revision: 1, title: id, stopRequested: false });
+const run = (id: string, workflowId: string, status: WorkflowRun["status"], createdAt: string): WorkflowRun => ({ id, workflowId, status, createdAt, updatedAt: createdAt, requestId: `${id}-request`, revision: 1, title: id, scopeType: "workflow", frameId: "", frameName: "", stopRequested: false });
 const output = (status: WorkflowOutputExecution["status"]): WorkflowOutputExecution => ({ runId: "run-1", nodeId: "node-1", slotId: "slot-1", status, attempt: 1, updatedAt: "2026-09-09T00:00:00Z" });
 
 test("classifies open runs and explains uncertain recovery", () => {
     for (const status of ["pending", "running", "stopping", "attention_required"] as const) assert.equal(isWorkflowRunActive(status), true);
     for (const status of ["completed", "partially_completed", "failed", "stopped"] as const) assert.equal(isWorkflowRunActive(status), false);
     assert.match(workflowRunStatusText("attention_required"), /恢复原任务/);
+});
+
+test("labels run history from its immutable scope snapshot", () => {
+    assert.equal(workflowRunScopeLabel({ scopeType: "workflow", frameName: "" }), "整个流程");
+    assert.equal(workflowRunScopeLabel({ scopeType: "frame", frameName: "二次元分支" }), "二次元分支");
+    assert.equal(workflowRunScopeLabel({ scopeType: "frame", frameName: "" }), "包裹框");
 });
 
 test("selects the latest run for one workflow without mixing deleted definitions", () => {
@@ -63,4 +69,32 @@ test("download counts successful image slots from run snapshot, excluding inputs
     } as unknown as Parameters<typeof workflowDownloadImageCount>[0];
     assert.equal(workflowDownloadImageCount(detail), 1);
     assert.equal(workflowDownloadImageCount(undefined), 0);
+});
+
+test("indexes each node from the exact server-selected run regardless of detail arrival order", () => {
+    const detail = (nodeId: string, runId: string, slotType: "image" | "video" = "image") => ({
+        run: { ...run(runId, "workflow", "completed", "2026-09-11T00:00:00Z"), scopeType: "frame" as const, frameId: `frame-${nodeId}`, frameName: nodeId },
+        graph: { version: 1 as const, nodes: [{ id: nodeId, type: slotType === "image" ? "image_generation" as const : "video_generation" as const, position: { x: 0, y: 0 }, outputs: [{ id: "out", type: slotType }] }], connections: [] },
+        steps: [], attempts: [], outputs: [{ runId, nodeId, slotId: "out", status: "succeeded" as const, attempt: 1, mediaId: `media-${runId}`, updatedAt: "2026-09-11T00:00:01Z" }],
+    });
+    const a = detail("a", "run-a");
+    const b = detail("b", "run-b");
+    const graph: WorkflowGraph = { version: 1, nodes: [...a.graph.nodes, ...b.graph.nodes], connections: [] };
+    for (const details of [new Map([["run-a", a], ["run-b", b]]), new Map([["run-b", b], ["run-a", a]])]) {
+        const indexed = indexWorkflowRunDetailsByNode(details, { a: "run-a", b: "run-b" }, graph);
+        assert.equal(indexed.get("a")?.run.id, "run-a");
+        assert.equal(indexed.get("b")?.run.id, "run-b");
+    }
+});
+
+test("never falls back to an older detail while the selected source is missing or incompatible", () => {
+    const old = {
+        run: { ...run("run-old", "workflow", "completed", "2026-09-11T00:00:00Z"), scopeType: "frame" as const, frameId: "frame", frameName: "Frame" },
+        graph: { version: 1 as const, nodes: [{ id: "node", type: "image_generation" as const, position: { x: 0, y: 0 }, outputs: [{ id: "out", type: "image" as const }] }], connections: [] },
+        steps: [], attempts: [], outputs: [{ runId: "run-old", nodeId: "node", slotId: "out", status: "succeeded" as const, attempt: 1, mediaId: "old", updatedAt: "2026-09-11T00:00:01Z" }],
+    };
+    const graph = old.graph;
+    assert.equal(indexWorkflowRunDetailsByNode(new Map([["run-old", old]]), { node: "run-new" }, graph).has("node"), false);
+    const incompatible = { ...old, run: { ...old.run, id: "run-new" }, graph: { ...old.graph, nodes: [{ ...old.graph.nodes[0], type: "video_generation" as const, outputs: [{ id: "out", type: "video" as const }] }] } };
+    assert.equal(indexWorkflowRunDetailsByNode(new Map([["run-new", incompatible]]), { node: "run-new" }, graph).has("node"), false);
 });

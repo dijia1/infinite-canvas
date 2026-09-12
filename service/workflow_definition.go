@@ -18,6 +18,7 @@ import (
 const (
 	workflowGraphVersion     = 1
 	maxWorkflowGraphNodes    = 1000
+	maxWorkflowGraphFrames   = 1000
 	maxWorkflowConnections   = 5000
 	maxWorkflowNodeInputs    = 9
 	maxWorkflowNodeOutputs   = 9
@@ -41,14 +42,16 @@ func IsWorkflowValidationError(err error) bool {
 }
 
 type WorkflowCreateInput struct {
-	Name  string               `json:"name"`
-	Graph *model.WorkflowGraph `json:"graph,omitempty"`
+	Name               string               `json:"name"`
+	Graph              *model.WorkflowGraph `json:"graph,omitempty"`
+	FrameSchemaVersion *int                 `json:"frameSchemaVersion,omitempty"`
 }
 
 type WorkflowUpdateInput struct {
-	Revision int                 `json:"revision"`
-	Name     string              `json:"name"`
-	Graph    model.WorkflowGraph `json:"graph"`
+	Revision           int                 `json:"revision"`
+	Name               string              `json:"name"`
+	Graph              model.WorkflowGraph `json:"graph"`
+	FrameSchemaVersion *int                `json:"frameSchemaVersion,omitempty"`
 }
 
 type WorkflowCopyInput struct {
@@ -102,6 +105,9 @@ func CreateWorkflow(_ context.Context, user PortalUser, input WorkflowCreateInpu
 	if err != nil {
 		return model.Workflow{}, err
 	}
+	if len(graph.Frames) > 0 && !validWorkflowFrameSchemaVersion(input.FrameSchemaVersion) {
+		return model.Workflow{}, NewWorkflowBusinessError("workflow_frame_client_outdated", "页面版本过旧，请刷新后继续", nil)
+	}
 	current := now()
 	item := model.Workflow{ID: newID("workflow"), OwnerUID: user.UID, Name: name, Graph: graph, Revision: 1, CreatedAt: current, UpdatedAt: current}
 	created, err := repository.CreateWorkflow(item)
@@ -130,8 +136,11 @@ func UpdateWorkflow(_ context.Context, user PortalUser, id string, input Workflo
 	if err != nil {
 		return model.Workflow{}, err
 	}
-	updated, accepted, err := repository.UpdateWorkflow(user.UID, id, input.Revision, name, graph, now())
+	updated, accepted, err := repository.UpdateWorkflowWithFrameSchema(user.UID, id, input.Revision, name, graph, input.FrameSchemaVersion, now())
 	if err != nil {
+		if errors.Is(err, repository.ErrWorkflowFrameClientOutdated) {
+			return model.Workflow{}, NewWorkflowBusinessError("workflow_frame_client_outdated", "页面版本过旧，请刷新后继续", map[string]any{"workflowId": id})
+		}
 		return model.Workflow{}, workflowRepositoryError(err)
 	}
 	if accepted {
@@ -237,17 +246,24 @@ func normalizeWorkflowGraph(graph model.WorkflowGraph) (model.WorkflowGraph, err
 	if graph.Version != workflowGraphVersion {
 		return model.WorkflowGraph{}, workflowValidationError{message: "流程图版本无效"}
 	}
-	if len(graph.Nodes) > maxWorkflowGraphNodes || len(graph.Connections) > maxWorkflowConnections {
+	if len(graph.Nodes) > maxWorkflowGraphNodes || len(graph.Connections) > maxWorkflowConnections || len(graph.Frames) > maxWorkflowGraphFrames {
 		return model.WorkflowGraph{}, workflowValidationError{message: "流程图规模超过保存上限"}
 	}
 
 	graph.Nodes = append([]model.WorkflowNode(nil), graph.Nodes...)
 	graph.Connections = append([]model.WorkflowConnection(nil), graph.Connections...)
+	graph.Frames = append([]model.WorkflowFrame(nil), graph.Frames...)
 	if graph.Nodes == nil {
 		graph.Nodes = []model.WorkflowNode{}
 	}
 	if graph.Connections == nil {
 		graph.Connections = []model.WorkflowConnection{}
+	}
+	for index := range graph.Frames {
+		graph.Frames[index].NodeIDs = append([]string(nil), graph.Frames[index].NodeIDs...)
+		if graph.Frames[index].NodeIDs == nil {
+			graph.Frames[index].NodeIDs = []string{}
+		}
 	}
 
 	nodes := make(map[string]model.WorkflowNode, len(graph.Nodes))
@@ -260,6 +276,9 @@ func normalizeWorkflowGraph(graph model.WorkflowGraph) (model.WorkflowGraph, err
 			return model.WorkflowGraph{}, workflowValidationError{message: "流程节点 ID 重复"}
 		}
 		nodes[node.ID] = *node
+	}
+	if err := normalizeWorkflowFrames(graph.Frames, nodes); err != nil {
+		return model.WorkflowGraph{}, err
 	}
 
 	incoming := make(map[string]int, len(nodes))
@@ -296,6 +315,74 @@ func normalizeWorkflowGraph(graph model.WorkflowGraph) (model.WorkflowGraph, err
 		return model.WorkflowGraph{}, workflowValidationError{message: "流程图不能包含循环连接"}
 	}
 	return graph, nil
+}
+
+func validWorkflowFrameSchemaVersion(version *int) bool {
+	return version != nil && *version == 1
+}
+
+func normalizeWorkflowFrames(frames []model.WorkflowFrame, nodes map[string]model.WorkflowNode) error {
+	frameIDs := make(map[string]struct{}, len(frames))
+	for index := range frames {
+		frame := &frames[index]
+		id, err := normalizeWorkflowIdentifier(frame.ID, "Frame ID")
+		if err != nil {
+			return err
+		}
+		frame.ID = id
+		if _, exists := frameIDs[id]; exists {
+			return workflowValidationError{message: "Frame ID 重复"}
+		}
+		frameIDs[id] = struct{}{}
+		frame.Name = strings.TrimSpace(frame.Name)
+		if length := utf8.RuneCountInString(frame.Name); length < 1 || length > 128 {
+			return workflowValidationError{message: "Frame 名称长度应为 1-128 个字符"}
+		}
+		if !finiteWorkflowNumber(frame.Position.X) || !finiteWorkflowNumber(frame.Position.Y) || !finiteWorkflowNumber(frame.Width) || !finiteWorkflowNumber(frame.Height) || frame.Width <= 0 || frame.Height <= 0 {
+			return workflowValidationError{message: "Frame 位置或尺寸无效"}
+		}
+	}
+	for index := range frames {
+		for otherIndex := index + 1; otherIndex < len(frames); otherIndex++ {
+			if workflowFramesOverlap(frames[index], frames[otherIndex]) {
+				return workflowValidationError{message: "Frame 不能重叠"}
+			}
+		}
+	}
+	members := make(map[string]string)
+	for index := range frames {
+		frame := &frames[index]
+		inside := make(map[string]struct{}, len(frame.NodeIDs))
+		for memberIndex, value := range frame.NodeIDs {
+			id, err := normalizeWorkflowIdentifier(value, "Frame 成员 ID")
+			if err != nil {
+				return err
+			}
+			frame.NodeIDs[memberIndex] = id
+			if _, isFrame := frameIDs[id]; isFrame {
+				return workflowValidationError{message: "Frame 不能包含另一个 Frame"}
+			}
+			if _, exists := nodes[id]; !exists {
+				return workflowValidationError{message: "Frame 成员引用的节点不存在"}
+			}
+			if _, duplicate := inside[id]; duplicate {
+				return workflowValidationError{message: "Frame 成员不能重复"}
+			}
+			inside[id] = struct{}{}
+			if prior, assigned := members[id]; assigned && prior != frame.ID {
+				return workflowValidationError{message: "同一节点不能属于多个 Frame"}
+			}
+			members[id] = frame.ID
+		}
+	}
+	return nil
+}
+
+func workflowFramesOverlap(first, second model.WorkflowFrame) bool {
+	return first.Position.X < second.Position.X+second.Width &&
+		second.Position.X < first.Position.X+first.Width &&
+		first.Position.Y < second.Position.Y+second.Height &&
+		second.Position.Y < first.Position.Y+first.Height
 }
 
 func normalizeWorkflowNode(node *model.WorkflowNode) error {

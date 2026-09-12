@@ -81,7 +81,11 @@ func PrepareWorkflowImageDownload(ctx context.Context, user PortalUser, runID st
 	if err != nil {
 		return nil, err
 	}
-	result := &WorkflowImageDownload{Filename: workflowDownloadName(detail.Run.Title) + "-" + workflowDownloadName(detail.Run.ID) + ".zip", store: store}
+	name := workflowDownloadName(detail.Run.Title)
+	if detail.Run.ScopeType == model.WorkflowRunScopeFrame && detail.Run.FrameName != "" {
+		name += "-" + workflowDownloadName(detail.Run.FrameName)
+	}
+	result := &WorkflowImageDownload{Filename: name + "-" + workflowDownloadName(detail.Run.ID) + ".zip", store: store}
 	for _, output := range outputs {
 		if err := ctx.Err(); err != nil {
 			return nil, err

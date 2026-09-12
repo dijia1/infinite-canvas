@@ -32,6 +32,10 @@ export function workflowRunStatusText(status: WorkflowRunStatus) {
     return runStatusText[status];
 }
 
+export function workflowRunScopeLabel(run: Pick<WorkflowRun, "scopeType" | "frameName">) {
+    return run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程";
+}
+
 export function workflowOutputStatusText(status: WorkflowOutputExecution["status"] | undefined) {
     return status ? outputStatusText[status] : "等待运行结果";
 }
@@ -82,6 +86,57 @@ export function indexCompatibleWorkflowOutputs(detail: Pick<WorkflowRunDetail, "
         if (original && current && original.nodeType === current.nodeType && original.slotType === current.slotType) compatible.set(key, output);
     }
     return compatible;
+}
+
+export function indexWorkflowRunDetailsByNode(
+    detailsByRunId: ReadonlyMap<string, WorkflowRunDetail>,
+    nodeRunIds: Readonly<Record<string, string>>,
+    graph: WorkflowGraph,
+) {
+    const indexed = new Map<string, WorkflowRunDetail>();
+    const currentNodes = new Map(graph.nodes.map((node) => [node.id, node]));
+    for (const [nodeId, runId] of Object.entries(nodeRunIds)) {
+        const detail = detailsByRunId.get(runId);
+        const current = currentNodes.get(nodeId);
+        const original = detail?.graph.nodes.find((node) => node.id === nodeId);
+        if (!detail || !current || !original || current.type !== original.type) continue;
+        const originalSlots = new Map((original.outputs || []).map((slot) => [slot.id, slot.type]));
+        if (!(current.outputs || []).some((slot) => originalSlots.get(slot.id) === slot.type)) continue;
+        indexed.set(nodeId, detail);
+    }
+    return indexed;
+}
+
+export function indexWorkflowRunOutputsByNode(detailsByNode: ReadonlyMap<string, WorkflowRunDetail>, graph: WorkflowGraph) {
+    const indexed = new Map<string, WorkflowOutputExecution>();
+    const currentNodes = new Map<string, WorkflowGraph["nodes"][number]>();
+    for (const node of graph.nodes) if (!currentNodes.has(node.id)) currentNodes.set(node.id, node);
+    const runs = new Map<string, {
+        nodes: Map<string, { type: WorkflowGraph["nodes"][number]["type"]; slots: Map<string, WorkflowOutputSlot["type"]> }>;
+        outputs: Map<string, WorkflowOutputExecution>;
+    }>();
+    for (const [nodeId, detail] of detailsByNode) {
+        let run = runs.get(detail.run.id);
+        if (!run) {
+            const nodes = new Map<string, { type: WorkflowGraph["nodes"][number]["type"]; slots: Map<string, WorkflowOutputSlot["type"]> }>();
+            for (const node of detail.graph.nodes) {
+                if (nodes.has(node.id)) continue;
+                nodes.set(node.id, { type: node.type, slots: new Map((node.outputs || []).map((slot) => [slot.id, slot.type])) });
+            }
+            run = { nodes, outputs: indexWorkflowOutputs(detail.outputs) };
+            runs.set(detail.run.id, run);
+        }
+        const current = currentNodes.get(nodeId);
+        const original = run.nodes.get(nodeId);
+        if (!current || !original || current.type !== original.type) continue;
+        for (const slot of current.outputs || []) {
+            if (original.slots.get(slot.id) !== slot.type) continue;
+            const key = workflowOutputKey(nodeId, slot.id);
+            const output = run.outputs.get(key);
+            if (output) indexed.set(key, output);
+        }
+    }
+    return indexed;
 }
 
 export function latestWorkflowRun(items: WorkflowRun[] | undefined, workflowId: string | undefined) {

@@ -72,7 +72,7 @@ func TestDeletingAWorkflowPreservesItsRunUntilTheRunReleasesMedia(t *testing.T) 
 		t.Fatal(err)
 	}
 	run := model.WorkflowRun{ID: "workflow-delete-run", OwnerUID: media.OwnerUID, RequestID: "workflow-delete-request", WorkflowID: definition.ID, Revision: definition.Revision, Snapshot: `{"version":1}`, Status: "completed", StateVersion: 1, CreatedAt: current, UpdatedAt: current, FinishedAt: &current}
-	if _, inserted, err := CreateWorkflowRun(run, nil, nil, []string{media.ID}); err != nil || !inserted {
+	if _, inserted, err := createWorkflowRunFixture(run, nil, nil, []string{media.ID}); err != nil || !inserted {
 		t.Fatalf("create run = inserted %t, err %v", inserted, err)
 	}
 	if deleted, err := DeleteWorkflow(media.OwnerUID, definition.ID, definition.Revision); err != nil || !deleted {

@@ -12,6 +12,7 @@ import (
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 	"github.com/basketikun/infinite-canvas/service"
+	"gorm.io/gorm"
 )
 
 func canvasDocument(uid string, count, sequence int) json.RawMessage {
@@ -130,7 +131,20 @@ func seed(dir string, png []byte) ([]fixture, error) {
 					outputs = append(outputs, model.WorkflowOutputExecution{RunID: id, NodeID: node.ID, SlotID: slot.ID, Status: "succeeded", Attempt: 1, MediaID: media[0].ID, UpdatedAt: time.Now().UTC()})
 				}
 			}
-			if _, _, err := repository.CreateWorkflowRun(run, steps, outputs, nil); err != nil {
+			if err := db.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Create(&run).Error; err != nil {
+					return err
+				}
+				if len(steps) > 0 {
+					if err := tx.Create(&steps).Error; err != nil {
+						return err
+					}
+				}
+				if len(outputs) > 0 {
+					return tx.Create(&outputs).Error
+				}
+				return nil
+			}); err != nil {
 				return nil, err
 			}
 			f.RunID = id

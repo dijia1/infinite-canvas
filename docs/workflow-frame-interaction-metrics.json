@@ -1,0 +1,181 @@
+{
+  "fixture": {
+    "nodes": 250,
+    "nodeType": "text_input",
+    "frames": 30,
+    "frameMembers": 0,
+    "viewport": {
+      "x": 430,
+      "y": 235,
+      "scale": 0.3
+    },
+    "browserViewport": "1280x720",
+    "gesture": "wheel up 0.5 then down 0.5 at screen (650,420)",
+    "measurement": "rAF intervals until 900ms after last input"
+  },
+  "baseline": [
+    {
+      "at": "2026-09-11T09:27:35.244Z",
+      "frames": 30,
+      "dom": 3105,
+      "images": 0,
+      "samples": 112,
+      "p50": 8.30000000000291,
+      "p95": 9.400000000008731,
+      "p99": 25,
+      "max": 82.5,
+      "duration": 1041.6000000238419,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T09:34:34.219Z",
+      "frames": 30,
+      "dom": 3105,
+      "images": 0,
+      "samples": 115,
+      "p50": 8.300000000046566,
+      "p95": 9.299999999988358,
+      "p99": 24.399999999965075,
+      "max": 59.100000000034925,
+      "duration": 1041.3999999761581,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T09:35:07.236Z",
+      "frames": 30,
+      "dom": 3105,
+      "images": 0,
+      "samples": 115,
+      "p50": 8.300000000046566,
+      "p95": 9.099999999976717,
+      "p99": 9.400000000023283,
+      "max": 50,
+      "duration": 999.6999999880791,
+      "resourceCount": 1
+    }
+  ],
+  "initialImplementation": [
+    {
+      "at": "2026-09-11T09:57:30.534Z",
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 70,
+      "p50": 9,
+      "p95": 41.39999999999418,
+      "p99": 92.5,
+      "max": 92.5,
+      "duration": 1128.2999999821186,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T09:58:03.090Z",
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 66,
+      "p50": 8.5,
+      "p95": 57.5,
+      "p99": 91.70000000001164,
+      "max": 91.70000000001164,
+      "duration": 1050.2000000178814,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T09:58:30.940Z",
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 51,
+      "p50": 9.30000000000291,
+      "p95": 58.30000000000291,
+      "p99": 108.30000000000291,
+      "max": 108.30000000000291,
+      "duration": 1100.199999988079,
+      "resourceCount": 1
+    }
+  ],
+  "finalImplementation": [
+    {
+      "at": "2026-09-11T10:12:03.765Z",
+      "counters": {
+        "viewport": 2,
+        "elementFromPoint": 0,
+        "cursorWrites": 0
+      },
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 106,
+      "p50": 8.30000000000291,
+      "p95": 25,
+      "p99": 41,
+      "max": 48.900000000001455,
+      "duration": 1068.199999988079,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T10:12:23.068Z",
+      "counters": {
+        "viewport": 2,
+        "elementFromPoint": 0,
+        "cursorWrites": 0
+      },
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 105,
+      "p50": 8.30000000000291,
+      "p95": 25,
+      "p99": 33.299999999995634,
+      "max": 64.90000000000146,
+      "duration": 1064.5,
+      "resourceCount": 1
+    },
+    {
+      "at": "2026-09-11T10:12:41.920Z",
+      "counters": {
+        "viewport": 2,
+        "elementFromPoint": 0,
+        "cursorWrites": 0
+      },
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 105,
+      "p50": 8.30000000000291,
+      "p95": 24.30000000000291,
+      "p99": 26,
+      "max": 67,
+      "duration": 1074.0999999940395,
+      "resourceCount": 1
+    }
+  ],
+  "instrumentedBeforeLocalFix": [
+    {
+      "at": "2026-09-11T10:09:43.356Z",
+      "counters": {
+        "viewport": 4,
+        "elementFromPoint": 7,
+        "cursorWrites": 7
+      },
+      "frames": 30,
+      "dom": 3241,
+      "images": 0,
+      "samples": 98,
+      "p50": 8.30000000000291,
+      "p95": 33,
+      "p99": 74.5,
+      "max": 74.5,
+      "duration": 1055.199999988079,
+      "resourceCount": 1
+    }
+  ],
+  "limitations": [
+    "Short sequential samples, not randomized or long-duration profiling.",
+    "Additional viewport and DOM counters only in instrumented pre-fix and final samples.",
+    "No media decode or provider requests in this text-only fixture.",
+    "Attempted pan samples were marquee selection rather than real panning; excluded.",
+    "Initial refresh retained old bundle; discarded those samples."
+  ]
+}

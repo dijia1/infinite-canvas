@@ -10,6 +10,8 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+var ErrWorkflowFrameClientOutdated = errors.New("workflow frame client outdated")
+
 func CreateWorkflow(item model.Workflow) (model.Workflow, error) {
 	database, err := DB()
 	if err != nil {
@@ -61,6 +63,10 @@ func ListWorkflows(ownerUID string, page, pageSize int) ([]model.WorkflowListIte
 }
 
 func UpdateWorkflow(ownerUID, id string, revision int, name string, graph model.WorkflowGraph, updatedAt string) (model.Workflow, bool, error) {
+	return UpdateWorkflowWithFrameSchema(ownerUID, id, revision, name, graph, nil, updatedAt)
+}
+
+func UpdateWorkflowWithFrameSchema(ownerUID, id string, revision int, name string, graph model.WorkflowGraph, frameSchemaVersion *int, updatedAt string) (model.Workflow, bool, error) {
 	database, err := DB()
 	if err != nil {
 		return model.Workflow{}, false, err
@@ -77,6 +83,9 @@ func UpdateWorkflow(ownerUID, id string, revision int, name string, graph model.
 		}
 		if existing.Revision != revision {
 			return nil
+		}
+		if (len(existing.Graph.Frames) > 0 || len(graph.Frames) > 0) && (frameSchemaVersion == nil || *frameSchemaVersion != 1) {
+			return ErrWorkflowFrameClientOutdated
 		}
 		update := model.Workflow{Name: name, Graph: graph, Revision: revision + 1, UpdatedAt: updatedAt}
 		result := tx.Model(&model.Workflow{}).

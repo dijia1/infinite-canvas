@@ -28,7 +28,22 @@ type CanvasPointerEvent = {
     ctrlKey?: boolean;
     shiftKey?: boolean;
     metaKey?: boolean;
+    altKey?: boolean;
     stopPropagation?: () => void;
+};
+
+export type CanvasNodeDragLifecycleEvent = {
+    nodeIds: ReadonlySet<string>;
+    initialPositions: ReadonlyMap<string, Position>;
+    altKey: boolean;
+};
+
+export type CanvasNodeDragEndEvent = CanvasNodeDragLifecycleEvent & {
+    cancelled: boolean;
+};
+
+export type CanvasNodeDragConstraintEvent = CanvasNodeDragLifecycleEvent & {
+    delta: Position;
 };
 
 export type CanvasInteractionControllerOptions = {
@@ -60,6 +75,9 @@ export type CanvasInteractionControllerOptions = {
     onWarning?: (message: string) => void;
     requestAnimationFrame?: (callback: FrameRequestCallback) => number;
     cancelAnimationFrame?: (handle: number) => void;
+    onNodeDragStart?: (event: CanvasNodeDragLifecycleEvent) => void;
+    onNodeDragEnd?: (event: CanvasNodeDragEndEvent) => void;
+    constrainNodeDrag?: (event: CanvasNodeDragConstraintEvent) => Position;
 };
 
 export type CanvasInteractionController = {
@@ -79,6 +97,7 @@ export type CanvasInteractionController = {
     handleGlobalMouseUp: (event: CanvasPointerEvent) => void;
     handleGlobalPointerUp: (event: CanvasPointerEvent) => void;
     finishNodeDrag: (clientX?: number, clientY?: number) => void;
+    cancelNodeDrag: () => void;
     finishCutConnection: () => boolean;
     createConnectedNode: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, pending: PendingConnectionCreate) => void;
     cancelPendingConnectionCreate: () => void;
@@ -94,6 +113,8 @@ const initialDragState = () => ({
     startY: 0,
     initialSelectedNodes: [] as { id: string; x: number; y: number }[],
     initialSelectedNodePositions: new Map<string, Position>(),
+    altKey: false,
+    lifecycleStarted: false,
 });
 
 function defaultRequestFrame(callback: FrameRequestCallback) {
@@ -122,6 +143,10 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
     let isNodeDragging = false;
     let animationFrame: number | null = null;
     const drag = initialDragState();
+    const constrainedDragDelta = (delta: Position) => {
+        const next = options.constrainNodeDrag?.({ nodeIds: new Set(drag.initialSelectedNodePositions.keys()), initialPositions: drag.initialSelectedNodePositions, altKey: drag.altKey, delta }) || delta;
+        return Number.isFinite(next.x) && Number.isFinite(next.y) ? next : delta;
+    };
     const dragPerf = { startedAt: 0, frameCount: 0, movedNodeCount: 0 };
     const cutPerf = { startedAt: 0, moveCount: 0, scannedConnections: 0 };
 
@@ -283,6 +308,8 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         drag.startY = event.clientY;
         drag.initialSelectedNodes = options.nodesRef.current.filter((node) => dragIds.has(node.id)).map((node) => ({ id: node.id, x: node.position.x, y: node.position.y }));
         drag.initialSelectedNodePositions = new Map(drag.initialSelectedNodes.map(({ id, x, y }) => [id, { x, y }]));
+        drag.altKey = Boolean(event.altKey);
+        drag.lifecycleStarted = false;
         if (isCanvasPerfDebugEnabled()) {
             dragPerf.startedAt = performance.now();
             dragPerf.frameCount = 0;
@@ -293,7 +320,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         setDragging(true);
     };
 
-    const finishNodeDrag = (clientX?: number, clientY?: number) => {
+    const finishNodeDragInternal = (clientX?: number, clientY?: number, cancelled = false) => {
         if (animationFrame !== null) {
             (options.cancelAnimationFrame || defaultCancelFrame)(animationFrame);
             animationFrame = null;
@@ -302,30 +329,37 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
 
         const wasClick = !drag.hasMoved && drag.initialSelectedNodes.length === 1;
         const clickedNodeId = drag.initialSelectedNodes[0]?.id;
-        const dx = clientX == null ? 0 : (clientX - drag.startX) / options.viewportRef.current.k;
-        const dy = clientY == null ? 0 : (clientY - drag.startY) / options.viewportRef.current.k;
+        const rawDelta = { x: clientX == null ? 0 : (clientX - drag.startX) / options.viewportRef.current.k, y: clientY == null ? 0 : (clientY - drag.startY) / options.viewportRef.current.k };
+        const { x: dx, y: dy } = constrainedDragDelta(rawDelta);
         const initialPositions = drag.initialSelectedNodePositions;
 
         if (drag.hasMoved && clientX != null && clientY != null) {
             options.setNodes((previous) => applyNodeDragPositions(previous, initialPositions, dx, dy));
         }
-        options.resume();
-        setDragging(false);
-
-        drag.isDraggingNode = false;
-        drag.hasMoved = false;
-        drag.initialSelectedNodes = [];
-        drag.initialSelectedNodePositions = new Map();
-        if (dragPerf.startedAt) {
-            logCanvasPerf("drag end", {
-                durationMs: Math.round(performance.now() - dragPerf.startedAt),
-                frameCount: dragPerf.frameCount,
-                movedNodeCount: dragPerf.movedNodeCount,
-                committed: !wasClick,
-            });
-            dragPerf.startedAt = 0;
-            dragPerf.frameCount = 0;
-            dragPerf.movedNodeCount = 0;
+        try {
+            if (drag.lifecycleStarted) {
+                options.onNodeDragEnd?.({ nodeIds: new Set(initialPositions.keys()), initialPositions, altKey: drag.altKey, cancelled });
+            }
+        } finally {
+            options.resume();
+            setDragging(false);
+            drag.isDraggingNode = false;
+            drag.hasMoved = false;
+            drag.initialSelectedNodes = [];
+            drag.initialSelectedNodePositions = new Map();
+            drag.altKey = false;
+            drag.lifecycleStarted = false;
+            if (dragPerf.startedAt) {
+                logCanvasPerf("drag end", {
+                    durationMs: Math.round(performance.now() - dragPerf.startedAt),
+                    frameCount: dragPerf.frameCount,
+                    movedNodeCount: dragPerf.movedNodeCount,
+                    committed: !wasClick,
+                });
+                dragPerf.startedAt = 0;
+                dragPerf.frameCount = 0;
+                dragPerf.movedNodeCount = 0;
+            }
         }
         if (wasClick && clickedNodeId) {
             const clickedNode = options.nodesRef.current.find((node) => node.id === clickedNodeId);
@@ -333,13 +367,21 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
             else options.setDialogNodeId?.(clickedNodeId);
         }
     };
+    const finishNodeDrag = (clientX?: number, clientY?: number) => finishNodeDragInternal(clientX, clientY, false);
+    const cancelNodeDrag = () => finishNodeDragInternal(undefined, undefined, true);
 
     const handleGlobalMouseMove = (event: CanvasPointerEvent) => {
         if (drag.isDraggingNode) {
-            const dx = (event.clientX - drag.startX) / options.viewportRef.current.k;
-            const dy = (event.clientY - drag.startY) / options.viewportRef.current.k;
+            const rawDelta = { x: (event.clientX - drag.startX) / options.viewportRef.current.k, y: (event.clientY - drag.startY) / options.viewportRef.current.k };
             const initialPositions = drag.initialSelectedNodePositions;
-            if (Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3) drag.hasMoved = true;
+            const passedThreshold = Math.abs(event.clientX - drag.startX) > 3 || Math.abs(event.clientY - drag.startY) > 3;
+            if (!drag.hasMoved && !passedThreshold) return;
+            if (!drag.hasMoved) {
+                drag.hasMoved = true;
+                drag.lifecycleStarted = true;
+                options.onNodeDragStart?.({ nodeIds: new Set(initialPositions.keys()), initialPositions, altKey: drag.altKey });
+            }
+            const { x: dx, y: dy } = constrainedDragDelta(rawDelta);
             if (dragPerf.startedAt) {
                 dragPerf.frameCount += 1;
                 if (dragPerf.frameCount <= 3 || dragPerf.frameCount % 30 === 0) logCanvasPerf("drag move", { frameCount: dragPerf.frameCount, movedNodeCount: dragPerf.movedNodeCount, dx: Math.round(dx), dy: Math.round(dy) });
@@ -457,26 +499,33 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
     };
 
     const resetInteractionState = () => {
+        cancelNodeDrag();
         clearCutConnectionState();
         setSelection(null);
         cancelPendingConnectionCreate();
     };
 
     const dispose = () => {
-        if (animationFrame !== null) {
-            (options.cancelAnimationFrame || defaultCancelFrame)(animationFrame);
-            animationFrame = null;
+        try {
+            cancelNodeDrag();
+        } finally {
+            if (animationFrame !== null) {
+                (options.cancelAnimationFrame || defaultCancelFrame)(animationFrame);
+                animationFrame = null;
+            }
+            drag.isDraggingNode = false;
+            drag.hasMoved = false;
+            drag.initialSelectedNodes = [];
+            drag.initialSelectedNodePositions = new Map();
+            drag.altKey = false;
+            drag.lifecycleStarted = false;
+            isNodeDragging = false;
+            connectingParams = null;
+            connectionTargetNodeId = null;
+            pendingConnectionCreate = null;
+            selectionBox = null;
+            cutConnectionState = null;
         }
-        drag.isDraggingNode = false;
-        drag.hasMoved = false;
-        drag.initialSelectedNodes = [];
-        drag.initialSelectedNodePositions = new Map();
-        isNodeDragging = false;
-        connectingParams = null;
-        connectionTargetNodeId = null;
-        pendingConnectionCreate = null;
-        selectionBox = null;
-        cutConnectionState = null;
     };
 
     return {
@@ -512,6 +561,7 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         handleGlobalMouseUp,
         handleGlobalPointerUp,
         finishNodeDrag,
+        cancelNodeDrag,
         finishCutConnection,
         createConnectedNode,
         cancelPendingConnectionCreate,
@@ -552,7 +602,7 @@ export function useCanvasInteractions(options: UseCanvasInteractionsOptions) {
         const handlePointerUp = (event: PointerEvent) => {
             controller.handleGlobalPointerUp(event);
         };
-        const cancelNodeDrag = () => controller.finishNodeDrag();
+        const cancelNodeDrag = () => controller.cancelNodeDrag();
         window.addEventListener("mousemove", controller.handleGlobalMouseMove);
         window.addEventListener("mouseup", controller.handleGlobalMouseUp);
         window.addEventListener("pointerup", handlePointerUp);
@@ -585,6 +635,7 @@ export function useCanvasInteractions(options: UseCanvasInteractionsOptions) {
         handleGlobalPointerMove: controller.handleGlobalPointerMove,
         handleGlobalMouseUp: controller.handleGlobalMouseUp,
         finishNodeDrag: controller.finishNodeDrag,
+        cancelNodeDrag: controller.cancelNodeDrag,
         finishCutConnection: controller.finishCutConnection,
         createConnectedNode: controller.createConnectedNode,
         cancelPendingConnectionCreate: controller.cancelPendingConnectionCreate,

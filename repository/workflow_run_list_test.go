@@ -25,7 +25,7 @@ func TestListWorkflowRunsOmitsSnapshotWithoutChangingResults(t *testing.T) {
 		item := base
 		item.ID, item.RequestID, item.OwnerUID, item.WorkflowID = fixture.id, fixture.id+"-request", fixture.owner, fixture.workflow
 		item.CreatedAt = current.Add(fixture.age)
-		if _, inserted, err := CreateWorkflowRun(item, nil, nil, nil); err != nil || !inserted {
+		if _, inserted, err := createWorkflowRunFixture(item, nil, nil, nil); err != nil || !inserted {
 			t.Fatalf("create fixture: inserted=%t err=%v", inserted, err)
 		}
 		record, found, err := GetWorkflowRun(item.OwnerUID, item.ID)

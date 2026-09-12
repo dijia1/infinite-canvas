@@ -7,6 +7,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 
 type CanvasZoomControlsProps = {
+    frameShortcuts?: boolean;
     scale: number;
     onScaleChange: (scale: number) => void;
     onReset: () => void;
@@ -14,7 +15,7 @@ type CanvasZoomControlsProps = {
     onToggleMiniMap: () => void;
 };
 
-export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
+export function CanvasZoomControls({ frameShortcuts = false, scale, onScaleChange, onReset, isMiniMapOpen, onToggleMiniMap }: CanvasZoomControlsProps) {
     const [shortcutsOpen, setShortcutsOpen] = useState(false);
     const colorTheme = useThemeStore((state) => state.theme);
     const theme = canvasThemes[colorTheme];
@@ -66,6 +67,7 @@ export function CanvasZoomControls({ scale, onScaleChange, onReset, isMiniMapOpe
                     <Shortcut label="Ctrl / Cmd + Z" value="撤销（Shift + Z 重做）" />
                     <Shortcut label="Shift / Ctrl / Cmd + 点击" value="追加选择节点" />
                     <Shortcut label="Ctrl / Cmd + C / V" value="复制 / 粘贴节点" />
+                    {frameShortcuts ? <Shortcut label="Alt + 拖动" value="移出所属包裹框" /> : null}
                     <Shortcut label="Delete / Backspace" value="删除选中" />
                 </div>
             </Modal>

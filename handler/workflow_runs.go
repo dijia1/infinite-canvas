@@ -35,12 +35,31 @@ func WorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
-	items, err := service.ListWorkflowRuns(r.Context(), user, r.URL.Query().Get("workflowId"), page, pageSize)
+	items, err := service.ListWorkflowRuns(r.Context(), user, service.WorkflowRunListFilter{
+		WorkflowID: r.URL.Query().Get("workflowId"), ScopeType: r.URL.Query().Get("scopeType"),
+		FrameID: r.URL.Query().Get("frameId"), Active: r.URL.Query().Get("active"),
+	}, page, pageSize)
 	if err != nil {
 		writeWorkflowRunError(w, err)
 		return
 	}
 	OK(w, items)
+}
+
+func WorkflowRunState(w http.ResponseWriter, r *http.Request, workflowID string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	page, _ := strconv.Atoi(r.URL.Query().Get("activePage"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("activePageSize"))
+	item, err := service.GetWorkflowRunState(r.Context(), user, workflowID, page, pageSize)
+	if err != nil {
+		writeWorkflowRunError(w, err)
+		return
+	}
+	OK(w, item)
 }
 
 func WorkflowRun(w http.ResponseWriter, r *http.Request, id string) {
@@ -103,6 +122,15 @@ func DeleteWorkflowRun(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func writeWorkflowRunError(w http.ResponseWriter, err error) {
+	var business *service.WorkflowBusinessError
+	if errors.As(err, &business) {
+		data := map[string]any{"code": business.Code}
+		for key, value := range business.Data {
+			data[key] = value
+		}
+		FailDataStatus(w, business.HTTPStatus, business.Message, data)
+		return
+	}
 	if errors.Is(err, service.ErrWorkflowConflict) {
 		writeWorkflowError(w, err)
 		return

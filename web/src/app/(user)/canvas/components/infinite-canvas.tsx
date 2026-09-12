@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 
+import { canvasFrameScreenMetrics } from "@/lib/canvas-frame-interaction";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasNodeData, ViewportTransform } from "../types";
@@ -43,6 +44,21 @@ export function finishCanvasPan(state: CanvasPanState, onCanvasDeselect?: () => 
     return true;
 }
 
+export function applyCanvasSceneViewport(
+    scene: { style: Pick<CSSStyleDeclaration, "transform" | "setProperty" | "getPropertyValue"> },
+    viewport: ViewportTransform,
+    previousViewport: ViewportTransform | null = null,
+) {
+    if (previousViewport && sameViewport(previousViewport, viewport)) return false;
+    scene.style.transform = `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.k})`;
+    if (scene.style.getPropertyValue("--canvas-scale") !== String(viewport.k)) {
+        scene.style.setProperty("--canvas-scale", String(viewport.k));
+        scene.style.setProperty("--canvas-inverse-scale", String(1 / viewport.k));
+        scene.style.setProperty("--canvas-frame-border-screen-width", `${canvasFrameScreenMetrics(viewport.k).border}px`);
+    }
+    return true;
+}
+
 export function InfiniteCanvas({ ref, containerRef, viewport, cursor, backgroundMode = "lines", onViewportChange, onCanvasMouseDown, onCanvasDeselect, onContextMenu, onDrop, debugSelectedNode, children }: InfiniteCanvasProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const panState = useRef<CanvasPanState>({
@@ -61,6 +77,7 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
     const nextViewportRef = useRef<ViewportTransform | null>(null);
     const nextWheelViewportRef = useRef<ViewportTransform | null>(null);
     const sceneRef = useRef<HTMLDivElement | null>(null);
+    const appliedViewportRef = useRef<ViewportTransform | null>(null);
     const gridRef = useRef<HTMLDivElement | null>(null);
     const onViewportChangeRef = useRef(onViewportChange);
     const isViewportManipulatingRef = useRef(false);
@@ -83,13 +100,16 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
         viewportRef.current = nextViewport;
         scaleRef.current = nextViewport.k;
         const scene = sceneRef.current;
-        if (scene) scene.style.transform = `translate3d(${nextViewport.x}px, ${nextViewport.y}px, 0) scale(${nextViewport.k})`;
+        if (scene && applyCanvasSceneViewport(scene, nextViewport, appliedViewportRef.current)) {
+            appliedViewportRef.current = nextViewport;
+            containerRef.current?.dispatchEvent(new Event("canvasviewportchange"));
+        }
         const grid = gridRef.current;
         if (!grid) return;
         const gridSize = 48 * nextViewport.k;
         grid.style.backgroundSize = `${gridSize}px ${gridSize}px`;
         grid.style.backgroundPosition = `${nextViewport.x % gridSize}px ${nextViewport.y % gridSize}px`;
-    }, []);
+    }, [containerRef]);
 
     const scheduleViewportCommit = useCallback((nextViewport: ViewportTransform, force = false) => {
         const scheduler = viewportCommitSchedulerRef.current;

@@ -223,6 +223,8 @@ export function WorkflowOutputCard({
     readOnly = false,
     connecting = false,
     execution,
+    loadingExecution,
+    executionLoadError,
     resourceNodeId,
     videoVisible,
     imageUrl,
@@ -248,6 +250,8 @@ export function WorkflowOutputCard({
     readOnly?: boolean;
     connecting?: boolean;
     execution?: WorkflowOutputExecution;
+    loadingExecution?: boolean;
+    executionLoadError?: string;
     resourceNodeId?: string;
     videoVisible?: boolean;
     imageUrl?: string;
@@ -309,14 +313,14 @@ export function WorkflowOutputCard({
                         />
                     ) : (
                         <div className={`flex max-w-[85%] flex-col items-center gap-2 text-center text-xs ${execution?.status === "failed" || execution?.status === "blocked" ? "text-red-500" : "opacity-55"}`}>
-                            {execution && ["ready", "claimed", "submitting", "running"].includes(execution.status) ? (
+                            {loadingExecution || (execution && ["ready", "claimed", "submitting", "running"].includes(execution.status)) ? (
                                 <LoaderCircle className="size-6 animate-spin" />
                             ) : slot.type === "image" ? (
                                 <ImageIcon className="size-7" />
                             ) : (
                                 <Video className="size-7" />
                             )}
-                            <span>{workflowOutputStatusText(execution?.status)}</span>
+                            <span>{executionLoadError || (loadingExecution ? "正在加载运行结果" : workflowOutputStatusText(execution?.status))}</span>
                             {execution?.error ? <span className="line-clamp-3 opacity-80">{execution.error}</span> : null}
                         </div>
                     )}

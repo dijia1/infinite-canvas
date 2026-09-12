@@ -15,6 +15,7 @@ export class ApiRequestError extends Error {
         message: string,
         readonly status: number,
         readonly code: number,
+        readonly data?: unknown,
     ) {
         super(message);
         this.name = "ApiRequestError";
@@ -140,7 +141,7 @@ async function apiRequest<T>(config: { signal?: AbortSignal; timeout?: number; u
 
     const payload = result as ApiResponse<T>;
     if (response.status < 200 || response.status >= 300 || payload.code !== 0) {
-        throw new ApiRequestError(payload.msg || "请求失败", response.status, payload.code);
+        throw new ApiRequestError(payload.msg || "请求失败", response.status, payload.code, payload.data);
     }
 
     return payload.data;

@@ -51,6 +51,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, con
                 <section className="flex flex-wrap items-start justify-between gap-3 border-b border-stone-200 pb-4 dark:border-stone-800">
                     <div className="min-w-0">
                         <h2 className="truncate text-lg font-semibold">{detail.run.title}</h2>
+                        <p className="mt-1 text-xs text-stone-500">{detail.run.scopeType === "frame" ? `包裹框：${detail.run.frameName || "未命名"}` : "整个流程"}</p>
                         <p className="mt-1 text-xs text-stone-500">快照 v{detail.run.revision} · {new Date(detail.run.createdAt).toLocaleString("zh-CN")}</p>
                         <p className="mt-2 text-sm">{workflowRunStatusText(detail.run.status)}</p>
                     </div>

@@ -1,3 +1,5 @@
+import type { CanvasFrameData } from "@/lib/canvas-frame";
+
 export type WorkflowMediaType = "image" | "video" | "text";
 
 export type WorkflowNodeType = "image_input" | "video_input" | "text_input" | "image_generation" | "video_generation";
@@ -54,6 +56,7 @@ export type WorkflowGraph = {
     version: 1;
     nodes: WorkflowNode[];
     connections: WorkflowConnection[];
+    frames?: CanvasFrameData[];
 };
 
 export type WorkflowRecord = {
@@ -86,6 +89,9 @@ export type WorkflowRun = {
     workflowId: string;
     revision: number;
     title: string;
+    scopeType: "workflow" | "frame";
+    frameId: string;
+    frameName: string;
     status: WorkflowRunStatus;
     stopRequested: boolean;
     createdAt: string;
@@ -143,4 +149,28 @@ export type WorkflowRunList = {
     total: number;
     page: number;
     pageSize: number;
+};
+
+export type WorkflowRunScope =
+    | { type: "workflow" }
+    | { type: "frame"; frameId: string };
+
+export type CreateWorkflowRunInput = {
+    requestId: string;
+    revision: number;
+    scope: WorkflowRunScope;
+};
+
+export type WorkflowRunScopeState = {
+    scope: WorkflowRunScope;
+    latestRun: WorkflowRun | null;
+    activeRunId: string | null;
+};
+
+export type WorkflowRunState = {
+    workflowId: string;
+    revision: number;
+    scopes: WorkflowRunScopeState[];
+    nodeRunIds: Record<string, string>;
+    activeRuns: WorkflowRunList;
 };

@@ -71,7 +71,7 @@ func TestWorkflowRunRoutesAreIdempotentOwnerScopedAndProtectActiveRuns(t *testin
 	}
 	secondWorkflowID := createRouteWorkflow(t, owner, "1k")
 	mismatched := workflowRequest(http.MethodPost, "/api/v1/workflows/"+secondWorkflowID+"/runs", owner, `{"requestId":"same-start-request"}`)
-	if mismatched.Code != http.StatusBadRequest || workflowResponse(t, mismatched).Code != 1 {
+	if mismatched.Code != http.StatusConflict || workflowResponse(t, mismatched).Code != 1 {
 		t.Fatalf("cross-workflow idempotency key = %d/%s", mismatched.Code, mismatched.Body.String())
 	}
 
@@ -247,7 +247,7 @@ func TestWorkflowRunConcurrentRequestIDCannotCrossWorkflows(t *testing.T) {
 		switch {
 		case response.Code == http.StatusOK && payload.Code == 0:
 			successes++
-		case response.Code == http.StatusBadRequest && payload.Code == 1:
+		case response.Code == http.StatusConflict && payload.Code == 1:
 			conflicts++
 		default:
 			t.Fatalf("unexpected concurrent start response = %d/%s", response.Code, response.Body.String())

@@ -75,3 +75,23 @@ test("prefers the latest in-memory draft when a later browser storage write fail
     assert.deepEqual(readWorkflowDraft(storage, "owner-a", "workflow-latest"), latest);
     clearWorkflowDraft(storage, "owner-a", "workflow-latest");
 });
+
+test("late save acknowledgements preserve newer Frame membership and recoverable layout", () => {
+    const submitted = { name: "Frames", graph: { ...emptyWorkflowGraph(), nodes: [{ id: "text", type: "text_input" as const, position: { x: 40, y: 80 }, width: 160, height: 80, text: "input" }], frames: [{ id: "a", name: "A", position: { x: 0, y: 0 }, width: 300, height: 240, nodeIds: ["text"] }] } };
+    const current = structuredClone(submitted);
+    current.graph.frames[0]!.name = "Renamed while saving";
+    current.graph.frames[0]!.nodeIds = [];
+    current.graph.nodes[0]!.position.x = 348;
+    const saved = { ...savedWorkflow("Frames", 2), graph: submitted.graph };
+    const result = applyWorkflowSaveResult(current, workflowEditorSnapshot(submitted), saved);
+    assert.deepEqual(result.document, current);
+    assert.notEqual(workflowEditorSnapshot(result.document), result.savedSnapshot);
+    assert.equal(remoteWorkflowEditorState(saved.id, result.revision, true, { ...saved, revision: 3 }), undefined);
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) };
+    const draft = { revision: result.revision, document: result.document };
+    writeWorkflowDraft(storage, "frame-owner", saved.id, draft);
+    assert.deepEqual(readWorkflowDraft(storage, "frame-owner", saved.id), draft);
+    assert.equal(readWorkflowDraft(storage, "other-owner", saved.id), undefined);
+    clearWorkflowDraft(storage, "frame-owner", saved.id);
+});

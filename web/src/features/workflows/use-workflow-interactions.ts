@@ -5,7 +5,8 @@ import { nanoid } from "nanoid";
 import { useCanvasInteractions } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
 import type { CanvasNodeData, CanvasConnection, Position, ViewportTransform } from "@/app/(user)/canvas/types";
 import { addWorkflowConnection, createWorkflowNode } from "./workflow-graph";
-import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowConnectionInput, workflowVisualNodeId, type WorkflowConnectionValidator } from "./workflow-canvas-adapter";
+import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, copyWorkflowFrameSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowConnectionInput, workflowVisualNodeId, type WorkflowConnectionValidator } from "./workflow-canvas-adapter";
+import { autoAssignWorkflowFrameMembers, constrainWorkflowMemberMove, detachWorkflowFrameMembersInPlace, expandWorkflowFrames, restoreWorkflowFrameGeometries, restoreWorkflowFrameMembersInsideOriginalFrames, workflowFrameOptionDragVisualIds } from "./workflow-frames";
 import type { WorkflowGraph, WorkflowNode, WorkflowNodeType } from "./types";
 
 type Options = {
@@ -19,6 +20,7 @@ type Options = {
     readOnly?: boolean;
     validateConnection?: WorkflowConnectionValidator;
     makeNode?: (type: WorkflowNodeType, position: Position) => WorkflowNode;
+    onNodeDragActiveChange?: (active: boolean) => void;
 };
 
 export function useWorkflowInteractions(options: Options) {
@@ -40,6 +42,7 @@ export function useWorkflowInteractions(options: Options) {
     const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
     const clipboardRef = useRef<WorkflowGraph | null>(null);
     const pasteCountRef = useRef(0);
+    const nodeDragRef = useRef<{ graph: WorkflowGraph; nodeIds: ReadonlySet<string>; altKey: boolean } | undefined>(undefined);
     const setSelectedNodeIds: Dispatch<SetStateAction<Set<string>>> = (next) => {
         const value = typeof next === "function" ? next(selectedNodeIdsRef.current) : next;
         selectedNodeIdsRef.current = value;
@@ -53,7 +56,12 @@ export function useWorkflowInteractions(options: Options) {
         optionsRef.current.setGraph(next);
     };
     const warn = (error: unknown) => optionsRef.current.onWarning(error instanceof Error ? error.message : "无法修改流程");
-    const setNodes: Dispatch<SetStateAction<CanvasNodeData[]>> = (next) => updateGraph(applyWorkflowVisualNodes(graphRef.current, typeof next === "function" ? next(nodesRef.current) : next));
+    const setNodes: Dispatch<SetStateAction<CanvasNodeData[]>> = (next) => {
+        let graph = applyWorkflowVisualNodes(graphRef.current, typeof next === "function" ? next(nodesRef.current) : next);
+        const drag = nodeDragRef.current;
+        if (drag && !drag.altKey) graph = expandWorkflowFrames(graph, drag.nodeIds);
+        updateGraph(graph);
+    };
     const setConnections: Dispatch<SetStateAction<CanvasConnection[]>> = (next) => {
         if (optionsRef.current.readOnly) return;
         try { updateGraph(applyWorkflowVisualConnections(graphRef.current, typeof next === "function" ? next(connectionsRef.current) : next, optionsRef.current.validateConnection)); }
@@ -66,7 +74,47 @@ export function useWorkflowInteractions(options: Options) {
         createConnectionId: nanoid,
         normalizeConnection: (first, second, _nodes, handle) => optionsRef.current.readOnly ? null : normalizeWorkflowCanvasConnection(graphRef.current, first, second, handle, optionsRef.current.validateConnection),
         onWarning: options.onWarning,
+        onNodeDragStart: ({ nodeIds, altKey }) => {
+            const before = graphRef.current;
+            nodeDragRef.current = { graph: before, nodeIds: new Set(nodeIds), altKey };
+            optionsRef.current.onNodeDragActiveChange?.(true);
+            if (altKey) updateGraph(detachWorkflowFrameMembersInPlace(before, nodeIds));
+        },
+        constrainNodeDrag: ({ nodeIds, altKey, delta }) => {
+            const before = nodeDragRef.current?.graph;
+            return !before || altKey ? delta : constrainWorkflowMemberMove(before, nodeIds, delta);
+        },
+        onNodeDragEnd: ({ nodeIds, initialPositions, altKey, cancelled }) => {
+            try {
+                const before = nodeDragRef.current?.graph;
+                let next = graphRef.current;
+                if (cancelled) {
+                    next = applyWorkflowVisualNodes(
+                        next,
+                        toWorkflowCanvasNodes(next).map((node) => {
+                            const position = initialPositions.get(node.id);
+                            return position ? { ...node, position } : node;
+                        }),
+                    );
+                    if (before) next = restoreWorkflowFrameGeometries(next, nodeIds, before);
+                }
+                if (before && altKey) next = restoreWorkflowFrameMembersInsideOriginalFrames(next, nodeIds, before);
+                else if (!cancelled) next = autoAssignWorkflowFrameMembers(next, nodeIds);
+                next = expandWorkflowFrames(next, nodeIds);
+                updateGraph(next);
+            } finally {
+                nodeDragRef.current = undefined;
+                optionsRef.current.onNodeDragActiveChange?.(false);
+            }
+        },
     });
+    const handleNodeMouseDown = (event: Parameters<typeof interactions.handleNodeMouseDown>[0], nodeId: string) => {
+        if (event.altKey) {
+            const selection = selectedNodeIdsRef.current.has(nodeId) ? selectedNodeIdsRef.current : new Set([nodeId]);
+            setSelectedNodeIds(workflowFrameOptionDragVisualIds(graphRef.current, selection));
+        }
+        interactions.handleNodeMouseDown(event, nodeId);
+    };
     useEffect(() => {
         const cancel = () => interactions.resetInteractionState();
         window.addEventListener("blur", cancel);
@@ -80,9 +128,9 @@ export function useWorkflowInteractions(options: Options) {
             setSelectedNodeIds(new Set()); setSelectedConnectionId(null);
         } catch (error) { warn(error); }
     };
-    const copySelection = () => {
-        const clipboard = copyWorkflowSelection(graphRef.current, selectedNodeIdsRef.current);
-        if (!clipboard.nodes.length) {
+    const copySelection = (frameId?: string) => {
+        const clipboard = frameId ? copyWorkflowFrameSelection(graphRef.current, frameId) : copyWorkflowSelection(graphRef.current, selectedNodeIdsRef.current);
+        if (!clipboard.nodes.length && !clipboard.frames?.length) {
             clipboardRef.current = null;
             pasteCountRef.current = 0;
             if (selectedNodeIdsRef.current.size) optionsRef.current.onWarning("请复制所属配置，或将生成结果添加为输入");
@@ -94,9 +142,13 @@ export function useWorkflowInteractions(options: Options) {
     const pasteSelection = () => {
         if (optionsRef.current.readOnly || !clipboardRef.current) return false;
         const offset = 48 * ++pasteCountRef.current;
-        const pasted = pasteWorkflowSelection(graphRef.current, clipboardRef.current, { x: offset, y: offset });
-        updateGraph(pasted.graph); setSelectedNodeIds(pasted.selectedNodeIds); setSelectedConnectionId(null);
-        return true;
+        try {
+            const pasted = pasteWorkflowSelection(graphRef.current, clipboardRef.current, { x: offset, y: offset });
+            updateGraph(pasted.selectedFrameId ? pasted.graph : autoAssignWorkflowFrameMembers(pasted.graph, pasted.selectedNodeIds));
+            setSelectedNodeIds(pasted.selectedNodeIds);
+            setSelectedConnectionId(null);
+            return { selectedFrameId: pasted.selectedFrameId };
+        } catch (error) { warn(error); return false; }
     };
     const createConnectedNode = (type: WorkflowNodeType) => {
         const pending = interactions.pendingConnectionCreate;
@@ -108,10 +160,10 @@ export function useWorkflowInteractions(options: Options) {
         const input = connection && workflowConnectionInput(connection.fromNodeId, connection.toNodeId);
         if (!input) { optionsRef.current.onWarning("该节点类型无法连接到当前端口"); return; }
         try {
-            updateGraph(addWorkflowConnection(graph, input));
+            updateGraph(autoAssignWorkflowFrameMembers(addWorkflowConnection(graph, input), new Set([visualId])));
             setSelectedNodeIds(new Set([visualId])); setSelectedConnectionId(null);
             interactions.cancelPendingConnectionCreate();
         } catch (error) { warn(error); }
     };
-    return { nodes, connections, nodesRef, selectedNodeIds, setSelectedNodeIds, selectedConnectionId, setSelectedConnectionId, interactions, deleteSelection, copySelection, pasteSelection, createConnectedNode, setVisualNodes: setNodes };
+    return { nodes, connections, nodesRef, selectedNodeIds, setSelectedNodeIds, selectedConnectionId, setSelectedConnectionId, interactions, handleNodeMouseDown, deleteSelection, copySelection, pasteSelection, createConnectedNode, setVisualNodes: setNodes };
 }

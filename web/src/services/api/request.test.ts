@@ -52,3 +52,13 @@ test("sends PUT and DELETE JSON bodies and preserves conflict status", async () 
         axios.request = originalRequest;
     }
 });
+
+test("API errors retain structured business conflict data without changing numeric envelope codes", async () => {
+    const originalRequest = axios.request;
+    axios.request = (async () => ({ status: 409, data: { code: 1, data: { code: "workflow_run_scope_active", runId: "run-1" }, msg: "范围正在运行" } })) as typeof axios.request;
+    try {
+        await assert.rejects(apiPut("/api/test", {}), (error: unknown) => error instanceof ApiRequestError && error.status === 409 && error.code === 1 && (error.data as { code?: string })?.code === "workflow_run_scope_active");
+    } finally {
+        axios.request = originalRequest;
+    }
+});

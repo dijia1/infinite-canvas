@@ -16,24 +16,29 @@ import { clearPendingWorkflowRetryRequest, ensureWorkflowRetryRequest, pendingWo
 import { isWorkflowRunActive, workflowOutputKey, workflowRunStatusText } from "./workflow-run-state";
 
 export function WorkflowRunHistory() {
+    const session = useQuery(portalSessionQuery);
+    const ownerUID = session.data?.user.uid;
+    return <WorkflowRunHistoryContent key={ownerUID || "pending"} ownerUID={ownerUID} />;
+}
+
+function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
     const router = useRouter();
     const queryClient = useQueryClient();
     const { message, modal } = App.useApp();
-    const session = useQuery(portalSessionQuery);
-    const ownerUID = session.data?.user.uid;
     const [page, setPage] = useState(1);
     const [selectedRunId, setSelectedRunId] = useState<string>();
     const [pendingRetryRequests, setPendingRetryRequests] = useState<Record<string, PendingWorkflowRetryRequest>>({});
     const pageSize = 16;
     const runs = useQuery({
-        queryKey: ["workflow-runs", page, pageSize],
+        queryKey: ["workflow-runs", ownerUID, page, pageSize],
         queryFn: () => fetchWorkflowRuns(page, pageSize),
+        enabled: Boolean(ownerUID),
         refetchInterval: (query) => query.state.data?.items.some((run) => isWorkflowRunActive(run.status)) ? 2500 : false,
     });
     const detail = useQuery({
-        queryKey: ["workflow-run", selectedRunId],
+        queryKey: ["workflow-run", ownerUID, selectedRunId],
         queryFn: () => fetchWorkflowRun(selectedRunId!),
-        enabled: Boolean(selectedRunId),
+        enabled: Boolean(ownerUID && selectedRunId),
         refetchInterval: (query) => isWorkflowRunActive(query.state.data?.run.status) ? 1500 : false,
     });
     useEffect(() => {
@@ -43,7 +48,7 @@ export function WorkflowRunHistory() {
         setPendingRetryRequests(Object.fromEntries(restored.map((request) => [pendingWorkflowRetryKey(request), request])));
     }, [ownerUID, selectedRunId]);
     const updateDetail = (value: NonNullable<typeof detail.data>) => {
-        queryClient.setQueryData(["workflow-run", value.run.id], value);
+        queryClient.setQueryData(["workflow-run", ownerUID, value.run.id], value);
         void queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
     };
     useEffect(() => {
@@ -145,6 +150,7 @@ export function WorkflowRunHistory() {
                                     <div className="min-w-0">
                                         <div className="flex min-w-0 items-center gap-2">
                                             <h2 className="truncate text-sm font-medium">{run.title}</h2>
+                                            <span className="truncate text-xs text-stone-500">{run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程"}</span>
                                             <span className="shrink-0 text-xs text-stone-400">v{run.revision}</span>
                                         </div>
                                         <p className="mt-1 flex items-center gap-1 text-xs text-stone-500"><Clock3 className="size-3" />{new Date(run.createdAt).toLocaleString("zh-CN")}</p>
@@ -158,7 +164,7 @@ export function WorkflowRunHistory() {
                 ) : <Empty description="还没有运行记录" />}
             </div>
             <Drawer title="运行详情" open={Boolean(selectedRunId)} width="min(920px, 94vw)" destroyOnHidden onClose={() => setSelectedRunId(undefined)}>
-                {detail.isError ? <Empty description={detail.error instanceof Error ? detail.error.message : "运行详情加载失败"}><Button onClick={() => void detail.refetch()}>重新加载</Button></Empty> : (
+                {detail.isError && !detail.data ? <Empty description={detail.error instanceof Error ? detail.error.message : "运行详情加载失败"}><Button onClick={() => void detail.refetch()}>重新加载</Button></Empty> : (
                     <WorkflowRunDetail
                         detail={detail.data}
                         stopping={stop.isPending}

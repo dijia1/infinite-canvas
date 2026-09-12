@@ -42,6 +42,7 @@ func New() *gin.Engine {
 	v1.POST("/canvas/projects/:id/share", func(c *gin.Context) { handler.ShareCanvasProject(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/workflows", gin.WrapF(handler.Workflows))
 	v1.POST("/workflows", gin.WrapF(handler.CreateWorkflow))
+	v1.GET("/workflows/:id/run-state", func(c *gin.Context) { handler.WorkflowRunState(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/workflows/:id", func(c *gin.Context) { handler.Workflow(c.Writer, c.Request, c.Param("id")) })
 	v1.PUT("/workflows/:id", func(c *gin.Context) { handler.UpdateWorkflow(c.Writer, c.Request, c.Param("id")) })
 	v1.POST("/workflows/:id/copy", func(c *gin.Context) { handler.CopyWorkflow(c.Writer, c.Request, c.Param("id")) })

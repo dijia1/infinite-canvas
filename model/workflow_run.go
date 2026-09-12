@@ -2,21 +2,36 @@ package model
 
 import "time"
 
+type WorkflowRunScopeType string
+
+const (
+	WorkflowRunScopeWorkflow WorkflowRunScopeType = "workflow"
+	WorkflowRunScopeFrame    WorkflowRunScopeType = "frame"
+)
+
+type WorkflowRunScope struct {
+	Type    WorkflowRunScopeType `json:"type"`
+	FrameID string               `json:"frameId,omitempty"`
+}
+
 // Run snapshots never reference the mutable definition through a cascading FK.
 type WorkflowRun struct {
-	ID            string     `json:"id" gorm:"primaryKey;size:128"`
-	OwnerUID      string     `json:"-" gorm:"index;uniqueIndex:idx_workflow_run_request"`
-	RequestID     string     `json:"requestId" gorm:"size:128;uniqueIndex:idx_workflow_run_request"`
-	WorkflowID    string     `json:"workflowId" gorm:"index"`
-	Revision      int        `json:"revision"`
-	Title         string     `json:"title"`
-	Snapshot      string     `json:"-" gorm:"type:text"`
-	Status        string     `json:"status" gorm:"index"`
-	StateVersion  int64      `json:"-" gorm:"not null;default:1"`
-	StopRequested bool       `json:"stopRequested"`
-	CreatedAt     time.Time  `json:"createdAt" gorm:"index"`
-	UpdatedAt     time.Time  `json:"updatedAt"`
-	FinishedAt    *time.Time `json:"finishedAt,omitempty"`
+	ID            string               `json:"id" gorm:"primaryKey;size:128"`
+	OwnerUID      string               `json:"-" gorm:"index;uniqueIndex:idx_workflow_run_request"`
+	RequestID     string               `json:"requestId" gorm:"size:128;uniqueIndex:idx_workflow_run_request"`
+	WorkflowID    string               `json:"workflowId" gorm:"index"`
+	Revision      int                  `json:"revision"`
+	Title         string               `json:"title"`
+	ScopeType     WorkflowRunScopeType `json:"scopeType" gorm:"size:16;not null;default:workflow"`
+	FrameID       string               `json:"frameId" gorm:"size:128;not null;default:''"`
+	FrameName     string               `json:"frameName" gorm:"size:128;not null;default:''"`
+	Snapshot      string               `json:"-" gorm:"type:text"`
+	Status        string               `json:"status" gorm:"index"`
+	StateVersion  int64                `json:"-" gorm:"not null;default:1"`
+	StopRequested bool                 `json:"stopRequested"`
+	CreatedAt     time.Time            `json:"createdAt" gorm:"index"`
+	UpdatedAt     time.Time            `json:"updatedAt"`
+	FinishedAt    *time.Time           `json:"finishedAt,omitempty"`
 }
 
 type WorkflowStepExecution struct {

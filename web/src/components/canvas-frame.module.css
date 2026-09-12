@@ -1,0 +1,176 @@
+.body {
+    pointer-events: none;
+    position: absolute;
+    z-index: 0;
+    box-sizing: border-box;
+    contain: layout style;
+    border-radius: calc(16px * var(--canvas-inverse-scale, 1));
+    background: color-mix(in srgb, currentColor 3.5%, transparent);
+}
+
+.controls {
+    pointer-events: none;
+    position: absolute;
+    z-index: 60;
+    box-sizing: border-box;
+    container-type: inline-size;
+    transform-origin: top left;
+}
+
+.outline {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    border: var(--canvas-frame-border-screen-width, 2px) solid;
+    border-radius: 16px;
+}
+
+.header {
+    pointer-events: auto;
+    position: absolute;
+    inset: 0 0 auto;
+    display: flex;
+    height: min(32px, 100%);
+    min-width: 0;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    overflow: hidden;
+    border-bottom: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+    border-radius: 14px 14px 0 0;
+    padding: 0 6px;
+    background: color-mix(in srgb, currentColor 7%, transparent);
+    font-size: 12px;
+}
+
+.movableHeader {
+    cursor: move;
+}
+
+.readOnlyHeader {
+    cursor: default;
+}
+
+.actions {
+    display: flex;
+    min-width: 0;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: 2px;
+}
+
+.actions :global(button),
+.actions :global([role="button"]) {
+    min-width: 24px;
+    height: 24px;
+    min-height: 24px;
+    padding-inline: 4px;
+    font-size: 12px;
+    line-height: 1;
+}
+
+.title,
+.titleInput {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow: hidden;
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 24px;
+    white-space: nowrap;
+}
+
+.title {
+    text-overflow: ellipsis;
+    outline: none;
+}
+
+.titleInput {
+    cursor: text;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    outline: none;
+}
+
+.edgeClip {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    overflow: hidden;
+    border-radius: 16px;
+}
+
+.edge {
+    pointer-events: none;
+    position: absolute;
+    display: none;
+    background: #2f80ff;
+}
+
+.edge[data-active="true"] {
+    display: block;
+}
+
+.top,
+.bottom {
+    right: 0;
+    left: 0;
+    height: var(--canvas-frame-border-screen-width, 2px);
+}
+
+.top {
+    top: 0;
+}
+
+.bottom {
+    bottom: 0;
+}
+
+.left,
+.right {
+    top: 0;
+    bottom: 0;
+    width: var(--canvas-frame-border-screen-width, 2px);
+}
+
+.left {
+    left: 0;
+}
+
+.right {
+    right: 0;
+}
+
+@container (max-width: 180px) {
+    .actions :global([data-frame-run-status]) {
+        display: none;
+    }
+}
+
+@container (max-width: 112px) {
+    .actions :global([data-frame-run-label]) {
+        display: none;
+    }
+}
+
+@container (max-width: 72px) {
+    .title,
+    .titleInput {
+        display: none;
+    }
+}
+
+@container (max-width: 28px) {
+    .actions {
+        display: none;
+    }
+}
+
+.resizeCursor,
+.resizeCursor * {
+    cursor: var(--canvas-frame-resize-cursor) !important;
+}

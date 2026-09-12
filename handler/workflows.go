@@ -159,6 +159,15 @@ func writeWorkflowConflict(w http.ResponseWriter, r *http.Request, user service.
 }
 
 func writeWorkflowError(w http.ResponseWriter, err error) {
+	var business *service.WorkflowBusinessError
+	if errors.As(err, &business) {
+		data := map[string]any{"code": business.Code}
+		for key, value := range business.Data {
+			data[key] = value
+		}
+		FailDataStatus(w, business.HTTPStatus, business.Message, data)
+		return
+	}
 	if errors.Is(err, service.ErrWorkflowConflict) {
 		FailStatus(w, http.StatusConflict, "流程已在其他位置更新，请刷新后重试")
 		return

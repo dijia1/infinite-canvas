@@ -1,12 +1,16 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { App, Button, Drawer, Empty, Modal, Spin } from "antd";
-import { Download, Image as ImageIcon, List, Play, Square, Video } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { App, Button, Drawer, Dropdown, Empty, Modal, Spin } from "antd";
+import { ChevronDown, Download, Image as ImageIcon, List, Play, Square, Video } from "lucide-react";
 import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 
+import { CanvasFrame } from "@/components/canvas-frame";
+import { useCanvasFrameResize } from "@/components/use-canvas-frame-resize";
+import { autoAssignWorkflowFrameMembers, createWorkflowFrame, deleteWorkflowFrame, expandWorkflowFrames, renameWorkflowFrame } from "./workflow-frames";
+import { useWorkflowFrameGestures } from "./use-workflow-frames";
 import { EditorSyncStatus } from "@/components/editor-sync-status";
 import { useEditorNavigation } from "@/components/layout/editor-navigation";
 import { useNavigationRoute } from "@/components/layout/use-navigation-route";
@@ -30,13 +34,14 @@ import { ScopedVideoResourceProvider } from "@/app/(user)/canvas/components/canv
 import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import { useCanvasImageResources } from "@/app/(user)/canvas/media/use-canvas-image-resources";
 import { isCanvasNodeNearViewport } from "@/app/(user)/canvas/utils/canvas-node-visibility";
+import { appPath } from "@/lib/app-path";
 import { readImageMeta } from "@/lib/image-utils";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isEditableTarget } from "@/lib/editable-target";
 import { uploadUserImage } from "@/services/api/image";
 import { ApiRequestError } from "@/services/api/request";
 import { uploadVideoMedia } from "@/services/api/video-media";
-import { createWorkflowRun, fetchWorkflow, fetchWorkflowRun, fetchWorkflowRuns, fetchWorkflowVideos, retryWorkflowOutput, stopWorkflowRun, updateWorkflow } from "@/services/api/workflows";
+import { fetchWorkflow, fetchWorkflowVideos, updateWorkflow } from "@/services/api/workflows";
 import { portalSessionQuery } from "@/services/api/session";
 import { getRemoteImageAccess } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
@@ -50,29 +55,13 @@ import { WorkflowNodeCard, WorkflowOutputCard, type WorkflowPreviewInput } from 
 import { WorkflowMediaPreview } from "./workflow-media-preview";
 import { WorkflowImageAssetCard } from "./workflow-image-asset-card";
 import { WorkflowRunDetail } from "./workflow-run-detail";
-import {
-    clearPendingWorkflowRetryRequest,
-    clearPendingWorkflowRunRequest,
-    ensureWorkflowRetryRequest,
-    ensureWorkflowRunRequest,
-    pendingWorkflowRetryKey,
-    readPendingWorkflowRetryRequests,
-    readPendingWorkflowRunRequest,
-    workflowRetryWasAccepted,
-    writePendingWorkflowRetryRequest,
-    writePendingWorkflowRunRequest,
-    type PendingWorkflowRetryRequest,
-    type PendingWorkflowRunRequest,
-} from "./workflow-run-requests";
-import { workflowDownloadImageCount, indexCompatibleWorkflowOutputs, findCompatibleWorkflowOutput, findWorkflowOutput, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
+import { pendingWorkflowRetryKey, workflowRunScopeKey } from "./workflow-run-requests";
+import { useWorkflowRuns } from "./use-workflow-runs";
+import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableImageOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
-import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition } from "./types";
+import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition, WorkflowRunScope } from "./types";
 
 type Viewport = { x: number; y: number; k: number };
-
-function isDefinitiveWorkflowMutationError(error: unknown) {
-    return error instanceof ApiRequestError && error.status >= 400 && error.status < 500;
-}
 
 export function WorkflowEditor() {
     const route = useParams<{ id: string | string[] }>();
@@ -104,11 +93,15 @@ function WorkflowEditorContent() {
     const videoInputRef = useRef<HTMLInputElement>(null);
     const loadedRef = useRef("");
     const editorDocumentRef = useRef<WorkflowEditorDocument>({ name: "", graph: emptyWorkflowGraph() });
+    const nodeDragActiveRef = useRef(false);
 
-    const requestRestoreScopeRef = useRef("");
-    const retryRestoreScopeRef = useRef("");
     const [name, setName] = useState("");
-    const [graph, setGraph] = useState<WorkflowGraph>(emptyWorkflowGraph);
+    const [graph, setGraphState] = useState<WorkflowGraph>(emptyWorkflowGraph);
+    const setGraph = useCallback((update: SetStateAction<WorkflowGraph>) => setGraphState((current) => {
+        const next = typeof update === "function" ? update(current) : update;
+        return nodeDragActiveRef.current ? next : expandWorkflowFrames(next);
+    }), []);
+    const [targetFrameId, setTargetFrameId] = useState<string>();
     const [revision, setRevision] = useState(0);
     const [savedSnapshot, setSavedSnapshot] = useState("");
     const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 80, k: 0.8 });
@@ -120,7 +113,10 @@ function WorkflowEditorContent() {
     const [viewScope, setViewScope] = useState("");
     const [mediaPreview, setMediaPreview] = useState<{ node: WorkflowNode; slot?: WorkflowOutputSlot }>();
     const [resizing, setResizing] = useState(false);
-    const [starting, setStarting] = useState(false);
+    const startingScopesRef = useRef(new Set<string>());
+    const [startingScopes, setStartingScopes] = useState<ReadonlySet<string>>(new Set());
+    const [stoppingRuns, setStoppingRuns] = useState<ReadonlySet<string>>(new Set());
+    const [retryingKeys, setRetryingKeys] = useState<ReadonlySet<string>>(new Set());
     const [draftRecoveryPending, setDraftRecoveryPending] = useState(false);
     const draftRecoveryKey = useRef("");
     const [saveState, setSaveState] = useState<WorkflowAutosaveState>({ revision: 0, dirty: false, status: "idle", error: undefined });
@@ -150,32 +146,26 @@ function WorkflowEditorContent() {
     const [uploading, setUploading] = useState(false);
     const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
-    const [currentRunId, setCurrentRunId] = useState<string | null>();
     const [runDetailOpen, setRunDetailOpen] = useState(false);
-    const [pendingRunRequest, setPendingRunRequest] = useState<PendingWorkflowRunRequest>();
-    const [pendingRetryRequests, setPendingRetryRequests] = useState<Record<string, PendingWorkflowRetryRequest>>({});
 
     const workflow = useQuery({ queryKey: workflowDetailQueryKey(workflowId), queryFn: () => fetchWorkflow(workflowId!), enabled: Boolean(workflowId), refetchOnMount: "always", refetchOnWindowFocus: false, refetchOnReconnect: false });
     const lease = useWorkflowEditorLease(draftOwnerUID, workflow.data ? workflowId : undefined, async (signal?: AbortSignal) => refreshForLease.current(signal));
     const readOnly = !lease.editable || draftRecoveryPending;
-    const editBlocked = readOnly || starting || Boolean(pendingRunRequest);
+    const editBlocked = readOnly;
     const editBlockedRef = useRef(editBlocked);
     editBlockedRef.current = editBlocked;
     const workflowVideos = useQuery({ queryKey: ["workflow-video-assets"], queryFn: fetchWorkflowVideos, enabled: assetPickerOpen && mediaTarget?.type === "video" });
-    const workflowRuns = useQuery({
-        queryKey: ["workflow-runs", "workflow", workflowId],
-        queryFn: () => fetchWorkflowRuns(1, 1, workflowId),
-        enabled: Boolean(workflowId && workflow.data),
-        refetchInterval: (query) => (query.state.data?.items.some((run) => run.workflowId === workflowId && isWorkflowRunActive(run.status)) ? 2500 : false),
-    });
-    const currentRun = useQuery({
-        queryKey: ["workflow-run", currentRunId],
-        queryFn: () => fetchWorkflowRun(currentRunId!),
-        enabled: Boolean(currentRunId),
-        refetchInterval: (query) => (isWorkflowRunActive(query.state.data?.run.status) ? 1500 : false),
-    });
-    const compatibleOutputs = useMemo(() => indexCompatibleWorkflowOutputs(currentRun.data, graph), [currentRun.data, graph]);
-    const downloadImageCount = useMemo(() => workflowDownloadImageCount(currentRun.data), [currentRun.data]);
+    const visibleRunNodeIds = useMemo(() => {
+        const ids = new Set(graph.nodes.filter((node) => (node.outputs || []).some((slot) => isCanvasNodeNearViewport({ id: node.id, type: CanvasNodeType.Image, title: "", position: slot.position || node.position, width: slot.width || 340, height: slot.height || 240 }, viewport, viewportSize, 384))).map((node) => node.id));
+        if (previewNodeId) for (const connection of graph.connections) if (connection.targetNodeId === previewNodeId && connection.sourceSlotId !== "output") ids.add(connection.sourceNodeId);
+        if (mediaPreview?.slot) ids.add(mediaPreview.node.id);
+        return ids;
+    }, [graph.nodes, graph.connections, viewport, viewportSize, previewNodeId, mediaPreview]);
+    const runs = useWorkflowRuns({ ownerUID: draftOwnerUID, workflowId: workflow.data ? workflowId : undefined, graph, visibleNodeIds: visibleRunNodeIds });
+    const currentRun = { data: runs.selectedDetail, isError: !runs.selectedDetail && Boolean(runs.selectedError), error: runs.selectedError, refetch: runs.refresh };
+    const compatibleOutputs = useMemo(() => indexWorkflowRunOutputsByNode(runs.detailByNode, graph), [runs.detailByNode, graph]);
+    const downloadImageCount = workflowDownloadImageCount(currentRun.data);
+    const scopeStates = useMemo(() => new Map((runs.overview?.scopes || []).map((item) => [workflowRunScopeKey(item.scope), item])), [runs.overview]);
     const nodesById = useMemo(() => {
         const index = new Map<string, WorkflowNode>();
         for (const node of graph.nodes) if (!index.has(node.id)) index.set(node.id, node);
@@ -191,49 +181,6 @@ function WorkflowEditorContent() {
         for (const inputs of index.values()) inputs.sort((left, right) => left.order - right.order);
         return index;
     }, [graph.connections]);
-    useEffect(() => {
-        setCurrentRunId(undefined);
-        setRunDetailOpen(false);
-        setPendingRunRequest(undefined);
-        setPendingRetryRequests({});
-        requestRestoreScopeRef.current = "";
-        retryRestoreScopeRef.current = "";
-    }, [workflowId]);
-    useEffect(() => {
-        if (!draftOwnerUID || !workflowId || !workflow.data || revision < 1 || typeof window === "undefined") return;
-        const scope = `${draftOwnerUID}:${workflowId}:${revision}`;
-        if (requestRestoreScopeRef.current === scope) return;
-        requestRestoreScopeRef.current = scope;
-        setPendingRunRequest(readPendingWorkflowRunRequest(window.sessionStorage, draftOwnerUID, workflowId));
-    }, [draftOwnerUID, revision, workflow.data, workflowId]);
-    useEffect(() => {
-        if (currentRunId !== undefined || !workflowRuns.data) return;
-        setCurrentRunId(latestWorkflowRun(workflowRuns.data.items, workflowId)?.id || null);
-    }, [currentRunId, workflowId, workflowRuns.data]);
-    useEffect(() => {
-        if (!draftOwnerUID || !currentRunId || typeof window === "undefined") return;
-        const scope = `${draftOwnerUID}:${currentRunId}`;
-        if (retryRestoreScopeRef.current === scope) return;
-        retryRestoreScopeRef.current = scope;
-        const restored = readPendingWorkflowRetryRequests(window.sessionStorage, draftOwnerUID, currentRunId);
-        if (restored.length) setPendingRetryRequests((current) => ({ ...current, ...Object.fromEntries(restored.map((request) => [pendingWorkflowRetryKey(request), request])) }));
-    }, [currentRunId, draftOwnerUID]);
-    useEffect(() => {
-        if (!pendingRunRequest || !workflowRuns.data) return;
-        const accepted = workflowRuns.data.items.find((run) => run.requestId === pendingRunRequest.requestId && run.workflowId === pendingRunRequest.workflowId);
-        if (!accepted) return;
-        setCurrentRunId(accepted.id);
-        if (draftOwnerUID && typeof window !== "undefined") clearPendingWorkflowRunRequest(window.sessionStorage, draftOwnerUID, pendingRunRequest.workflowId);
-        setPendingRunRequest(undefined);
-    }, [draftOwnerUID, pendingRunRequest, workflowRuns.data]);
-    useEffect(() => {
-        if (!currentRun.data) return;
-        const accepted = Object.entries(pendingRetryRequests).filter(([, pending]) => pending.runId === currentRun.data!.run.id && workflowRetryWasAccepted(pending, findWorkflowOutput(currentRun.data!.outputs, pending.nodeId, pending.slotId)));
-        if (!accepted.length) return;
-        if (draftOwnerUID && typeof window !== "undefined") accepted.forEach(([, pending]) => clearPendingWorkflowRetryRequest(window.sessionStorage, draftOwnerUID, pending));
-        setPendingRetryRequests((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !accepted.some(([acceptedKey]) => acceptedKey === key))));
-    }, [currentRun.data, draftOwnerUID, pendingRetryRequests]);
-
     const currentSnapshot = useMemo(() => workflowEditorSnapshot({ name, graph }), [graph, name]);
     editorDocumentRef.current = { name, graph };
     const dirty = Boolean(savedSnapshot && currentSnapshot !== savedSnapshot);
@@ -318,11 +265,11 @@ function WorkflowEditorContent() {
                         if (!source || workflowSourceType(source, connection.sourceSlotId) !== "image") return [];
                         if (connection.sourceSlotId === "output") return [source.id];
                         const output = compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
-                        return output?.mediaId && currentRun.data ? [workflowOutputResourceNodeId(currentRun.data.run.id, source.id, connection.sourceSlotId)] : [];
+                        return output?.mediaId ? [workflowOutputResourceNodeId(output.runId, source.id, connection.sourceSlotId)] : [];
                     })
-                    .concat(mediaPreview ? [mediaPreview.slot && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, mediaPreview.node.id, mediaPreview.slot.id) : mediaPreview.node.id] : []),
+                    .concat(mediaPreview ? [mediaPreview.slot && runs.detailByNode.has(mediaPreview.node.id) ? workflowOutputResourceNodeId(runs.detailByNode.get(mediaPreview.node.id)!.run.id, mediaPreview.node.id, mediaPreview.slot.id) : mediaPreview.node.id] : []),
             ),
-        [compatibleOutputs, currentRun.data, inputConnectionsByTarget, nodesById, previewNodeId, mediaPreview],
+        [compatibleOutputs, runs.detailByNode, inputConnectionsByTarget, nodesById, previewNodeId, mediaPreview],
     );
     const imageTargets = useMemo(() => {
         const inputTargets = graph.nodes.flatMap((node) => {
@@ -336,11 +283,11 @@ function WorkflowEditorContent() {
         });
         const outputTargets = graph.nodes.flatMap((node) =>
             (node.outputs || []).flatMap((slot) => {
-                if (slot.type !== "image" || !currentRun.data) return [];
+                if (slot.type !== "image") return [];
                 const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
                 if (output?.status !== "succeeded" || !output.mediaId) return [];
                 const canvasNode = {
-                    id: workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id),
+                    id: workflowOutputResourceNodeId(output.runId, node.id, slot.id),
                     type: CanvasNodeType.Image,
                     title: "",
                     position: slot.position || node.position,
@@ -356,7 +303,7 @@ function WorkflowEditorContent() {
             }),
         );
         return [...inputTargets, ...outputTargets];
-    }, [compatibleOutputs, currentRun.data, graph.nodes, previewImageNodeIds, viewport, viewportSize]);
+    }, [compatibleOutputs, runs.detailByNode, graph.nodes, previewImageNodeIds, viewport, viewportSize]);
     const imageDimensions = useRef(new Map<string, { width: number; height: number }>());
     const resolveImageAccess = useCallback(async (node: CanvasNodeData) => {
         const mediaId = node.metadata!.mediaId!;
@@ -394,104 +341,34 @@ function WorkflowEditorContent() {
             message.error(error instanceof Error ? error.message : "保存流程失败");
         },
     };
-    const cacheRun = useCallback(
-        (detail: NonNullable<typeof currentRun.data>) => {
-            queryClient.setQueryData(["workflow-run", detail.run.id], detail);
-            setCurrentRunId(detail.run.id);
-            void queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
-        },
-        [queryClient],
-    );
-    const createRun = useMutation({
-        retry: false,
-        mutationFn: (request: PendingWorkflowRunRequest) => createWorkflowRun(request.workflowId, request.requestId, request.revision),
-        onSuccess: (detail, request) => {
-            cacheRun(detail);
-            if (draftOwnerUID && typeof window !== "undefined") clearPendingWorkflowRunRequest(window.sessionStorage, draftOwnerUID, request.workflowId);
-            setPendingRunRequest((current) => (current?.requestId === request.requestId ? undefined : current));
-            message.success("流程已开始运行");
-        },
-        onError: (error, request) => {
-            if (isDefinitiveWorkflowMutationError(error)) {
-                if (draftOwnerUID && typeof window !== "undefined") clearPendingWorkflowRunRequest(window.sessionStorage, draftOwnerUID, request.workflowId);
-                setPendingRunRequest((current) => (current?.requestId === request.requestId ? undefined : current));
-            } else {
-                void workflowRuns.refetch();
-                message.warning("运行请求结果待确认，可再次点击并使用同一请求确认");
-                return;
-            }
-            message.error(error instanceof Error ? error.message : "启动流程失败");
-        },
-    });
-    const stopRun = useMutation({
-        mutationFn: (runId: string) => stopWorkflowRun(runId),
-        onSuccess: (detail) => {
-            cacheRun(detail);
-            message.success("已停止领取新的生成任务");
-        },
-        onError: (error) => message.error(error instanceof Error ? error.message : "停止流程失败"),
-    });
-    const retryOutput = useMutation({
-        retry: false,
-        mutationFn: (request: PendingWorkflowRetryRequest) => retryWorkflowOutput(request.runId, { requestId: request.requestId, nodeId: request.nodeId, slotId: request.slotId }),
-        onSuccess: (detail, request) => {
-            cacheRun(detail);
-            const key = pendingWorkflowRetryKey(request);
-            if (draftOwnerUID && typeof window !== "undefined") clearPendingWorkflowRetryRequest(window.sessionStorage, draftOwnerUID, request);
-            setPendingRetryRequests((current) => {
-                if (current[key]?.requestId !== request.requestId) return current;
-                const next = { ...current };
-                delete next[key];
-                return next;
-            });
-            message.success("已重新提交失败输出");
-        },
-        onError: (error, request) => {
-            if (isDefinitiveWorkflowMutationError(error)) {
-                const key = pendingWorkflowRetryKey(request);
-                if (draftOwnerUID && typeof window !== "undefined") clearPendingWorkflowRetryRequest(window.sessionStorage, draftOwnerUID, request);
-                setPendingRetryRequests((current) => {
-                    if (current[key]?.requestId !== request.requestId) return current;
-                    const next = { ...current };
-                    delete next[key];
-                    return next;
-                });
-                message.error(error instanceof Error ? error.message : "重试输出失败");
-                return;
-            }
-            void currentRun.refetch();
-            message.warning("重试请求结果待确认，可再次点击并使用同一请求确认");
-        },
-    });
-
-    const startRun = async () => {
-        if (starting || createRun.isPending || readOnly) return;
-        setStarting(true);
+    const startRun = async (scope: WorkflowRunScope = { type: "workflow" }) => {
+        const key = workflowRunScopeKey(scope);
+        if (startingScopesRef.current.has(key) || readOnly) return;
+        startingScopesRef.current.add(key); setStartingScopes(new Set(startingScopesRef.current));
         try {
             let confirmedRevision = revision;
-            if (!pendingRunRequest) {
+            if (!runs.pendingByScope.has(key)) {
                 autosave.update(editorDocumentRef.current);
                 confirmedRevision = await autosave.flush();
             }
-            const request = ensureWorkflowRunRequest(pendingRunRequest, workflowId!, confirmedRevision, nanoid);
-            if (draftOwnerUID) writePendingWorkflowRunRequest(window.sessionStorage, draftOwnerUID, request);
-            setPendingRunRequest(request);
-            createRun.mutate(request);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "保存完成后才能运行");
-        } finally {
-            setStarting(false);
-        }
+            await runs.start(scope, confirmedRevision);
+            message.success("流程已开始运行");
+        } catch (error) { message.error(error instanceof Error ? error.message : "运行请求结果待确认，可再次点击确认"); }
+        finally { startingScopesRef.current.delete(key); setStartingScopes(new Set(startingScopesRef.current)); }
     };
-    const startOutputRetry = (nodeId: string, slotId: string) => {
-        if (!currentRun.data) return;
-        const output = compatibleOutputs.get(workflowOutputKey(nodeId, slotId));
-        if (!output) return;
-        const key = pendingWorkflowRetryKey({ runId: currentRun.data.run.id, nodeId, slotId });
-        const request = ensureWorkflowRetryRequest(pendingRetryRequests[key], { runId: currentRun.data.run.id, nodeId, slotId, attempt: output.attempt }, nanoid);
-        if (draftOwnerUID && typeof window !== "undefined") writePendingWorkflowRetryRequest(window.sessionStorage, draftOwnerUID, request);
-        setPendingRetryRequests((current) => ({ ...current, [key]: request }));
-        retryOutput.mutate(request);
+    const stopRun = async (runId: string) => {
+        setStoppingRuns((current) => new Set([...current, runId]));
+        try { await runs.stop(runId); message.success("已停止领取新的生成任务"); }
+        catch (error) { message.error(error instanceof Error ? error.message : "停止流程失败"); }
+        finally { setStoppingRuns((current) => new Set([...current].filter((id) => id !== runId))); }
+    };
+    const startOutputRetry = async (runId: string, nodeId: string, slotId: string) => {
+        const key = pendingWorkflowRetryKey({ runId, nodeId, slotId });
+        if (retryingKeys.has(key)) return;
+        setRetryingKeys((current) => new Set([...current, key]));
+        try { await runs.retry(runId, nodeId, slotId); message.success("已重新提交失败输出"); }
+        catch (error) { message.error(error instanceof Error ? error.message : "重试请求结果待确认，可再次点击确认"); }
+        finally { setRetryingKeys((current) => new Set([...current].filter((item) => item !== key))); }
     };
 
     const updateNode = useCallback(
@@ -532,8 +409,9 @@ function WorkflowEditorContent() {
             const dy = position.y - node.position.y;
             node = { ...node, position, outputs: node.outputs?.map((slot) => ({ ...slot, position: { x: (slot.position?.x || 0) + dx, y: (slot.position?.y || 0) + dy } })) };
             if (mediaId) node.mediaId = mediaId;
-            setGraph((current) => ({ ...current, nodes: [...current.nodes, node] }));
-            canvas.setSelectedNodeIds(new Set([workflowVisualNodeId(node.id)]));
+            const visualId = workflowVisualNodeId(node.id);
+            setGraph((current) => autoAssignWorkflowFrameMembers({ ...current, nodes: [...current.nodes, node] }, new Set([visualId])));
+            canvas.setSelectedNodeIds(new Set([visualId]));
         },
         [makeNode, centerPosition],
     );
@@ -616,7 +494,8 @@ function WorkflowEditorContent() {
                     changed ||= next !== node;
                     return next;
                 }
-                const output = currentRun.data && findCompatibleWorkflowOutput(currentRun.data, current, nodeId, slotId);
+                const detail = runs.detailByNode.get(nodeId);
+                const output = detail && findCompatibleWorkflowOutput(detail, current, nodeId, slotId);
                 if (output?.mediaId !== mediaId) return node;
                 const outputs = node.outputs?.map((slot) => {
                     if (slot.id !== slotId || slot.type !== "image") return slot;
@@ -638,8 +517,8 @@ function WorkflowEditorContent() {
                     if (!source) return [];
                     const type = workflowSourceType(source, connection.sourceSlotId);
                     if (!type) return [];
-                    const execution = connection.sourceSlotId === "output" || !currentRun.data ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
-                    const resourceNodeId = execution && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, source.id, connection.sourceSlotId) : source.id;
+                    const execution = connection.sourceSlotId === "output" ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
+                    const resourceNodeId = execution ? workflowOutputResourceNodeId(execution.runId, source.id, connection.sourceSlotId) : source.id;
                     const mediaId = source.mediaId || execution?.mediaId;
                     const resource = imageResources.resources.get(resourceNodeId);
                     return [
@@ -653,7 +532,7 @@ function WorkflowEditorContent() {
                         },
                     ];
                 }),
-        [compatibleOutputs, currentRun.data, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
+        [compatibleOutputs, runs.detailByNode, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
     );
     const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
 
@@ -688,8 +567,35 @@ function WorkflowEditorContent() {
         readOnly: editBlocked,
         validateConnection,
         makeNode,
+        onNodeDragActiveChange: (active) => {
+            nodeDragActiveRef.current = active;
+        },
     });
     const { interactions } = canvas;
+    const frameGesture = useWorkflowFrameGestures({ updateGraph: setGraph, readOnly: editBlocked, scale: viewport.k, pause: history.pause, resume: history.resume,
+        getViewport: () => {
+            const current = canvasRef.current?.getViewport() || viewport;
+            const rect = containerRef.current?.getBoundingClientRect();
+            return { x: current.x + (rect?.left || 0), y: current.y + (rect?.top || 0), k: current.k };
+        },
+    });
+    const frameOnlySelected = Boolean(targetFrameId && !canvas.selectedNodeIds.size && !canvas.selectedConnectionId);
+    useEffect(() => { if (targetFrameId && !graph.frames?.some((frame) => frame.id === targetFrameId)) setTargetFrameId(undefined); }, [graph.frames, targetFrameId]);
+    const addFrame = () => {
+        if (editBlockedRef.current || frameGesture.active) return;
+        const id = nanoid();
+        const center = centerPosition();
+        try {
+            const next = createWorkflowFrame(graph, { id, name: `包裹框 ${(graph.frames?.length || 0) + 1}`, position: { x: center.x - 240, y: center.y - 160 } }, canvas.selectedNodeIds);
+            setGraph(next);
+            canvas.setSelectedNodeIds(new Set()); canvas.setSelectedConnectionId(null); setTargetFrameId(id);
+        } catch (error) { message.warning(error instanceof Error ? error.message : "无法创建包裹框"); }
+    };
+    const deleteSelection = () => {
+        if (editBlockedRef.current) return;
+        if (frameOnlySelected) { setGraph((current) => deleteWorkflowFrame(current, targetFrameId!)); setTargetFrameId(undefined); }
+        else canvas.deleteSelection();
+    };
     const pendingSourceNode = interactions.pendingConnectionCreate ? canvas.nodes.find((item) => item.id === interactions.pendingConnectionCreate?.connection.nodeId) : undefined;
     const connectionCreateOptions: [WorkflowNodeType, string][] =
         interactions.pendingConnectionCreate?.connection.handleType === "source"
@@ -710,22 +616,23 @@ function WorkflowEditorContent() {
                     ["video_input", "视频"],
                 ];
     const deselect = () => {
+        setTargetFrameId(undefined);
         canvas.setSelectedNodeIds(new Set());
         canvas.setSelectedConnectionId(null);
         interactions.resetInteractionState();
     };
     const startNodeDrag = (event: ReactPointerEvent, node: WorkflowNode) => {
         if (event.button !== 0 || (event.target as Element).closest("button,input,textarea,.ant-select,[contenteditable=true],[data-canvas-no-drag]")) return;
-        if (!editBlockedRef.current) interactions.handleNodeMouseDown(event, workflowVisualNodeId(node.id));
+        if (!editBlockedRef.current) canvas.handleNodeMouseDown(event, workflowVisualNodeId(node.id));
     };
     const startOutputDrag = (event: ReactPointerEvent, node: WorkflowNode, slot: WorkflowOutputSlot) => {
         if (event.button !== 0 || (event.target as Element).closest("button,input,[data-canvas-no-drag]")) return;
-        if (!editBlockedRef.current) interactions.handleNodeMouseDown(event, workflowVisualOutputId(node.id, slot.id));
+        if (!editBlockedRef.current) canvas.handleNodeMouseDown(event, workflowVisualOutputId(node.id, slot.id));
     };
     useEffect(() => {
         autosave.update({ name, graph });
-        autosave.setEnabled(!readOnly && !interactions.isNodeDragging && !resizing && !pendingRunRequest);
-    }, [autosave, name, graph, readOnly, interactions.isNodeDragging, resizing, pendingRunRequest]);
+        autosave.setEnabled(!readOnly && !interactions.isNodeDragging && !resizing && !frameGesture.active);
+    }, [autosave, name, graph, readOnly, interactions.isNodeDragging, resizing, frameGesture.active]);
     const resizeSession = useRef<{ id: string; clientX: number; clientY: number; start: Parameters<typeof resizeCanvasNode>[0]; config: boolean } | null>(null);
     const visualNodesRef = useRef(canvas.nodes);
     visualNodesRef.current = canvas.nodes;
@@ -834,10 +741,11 @@ function WorkflowEditorContent() {
         const keydown = (event: KeyboardEvent) => {
             if (isEditableTarget(event.target) || document.querySelector(".ant-modal-wrap:not([style*='display: none']),.ant-drawer-open")) return;
             if (event.key === "Escape") {
+                frameGesture.finish();
                 deselect();
                 return;
             }
-            if (editBlocked || interactions.isNodeDragging || resizing) return;
+            if (editBlocked || interactions.isNodeDragging || resizing || frameGesture.active || event.isComposing || event.repeat) return;
             const modifier = event.metaKey || event.ctrlKey;
             if (modifier && event.key.toLowerCase() === "s") {
                 event.preventDefault();
@@ -849,12 +757,13 @@ function WorkflowEditorContent() {
                 event.preventDefault();
                 history.redo();
             } else if (modifier && event.key.toLowerCase() === "c") {
-                if (canvas.copySelection()) event.preventDefault();
+                if (canvas.copySelection(frameOnlySelected ? targetFrameId : undefined)) event.preventDefault();
             } else if (modifier && event.key.toLowerCase() === "v") {
-                if (canvas.pasteSelection()) event.preventDefault();
+                const pasted = canvas.pasteSelection();
+                if (pasted) { event.preventDefault(); setTargetFrameId(pasted.selectedFrameId); }
             } else if (event.key === "Delete" || event.key === "Backspace") {
                 event.preventDefault();
-                canvas.deleteSelection();
+                deleteSelection();
             }
         };
         window.addEventListener("keydown", keydown);
@@ -880,13 +789,13 @@ function WorkflowEditorContent() {
     const navigationRef = useRef(navigateAway);
     navigationRef.current = navigateAway;
     useEffect(() => editorNavigation?.register((href) => navigationRef.current(href)), [editorNavigation]);
-    const downloadImages = async () => {
-        if (!currentRun.data || downloadController.current) return;
+    const downloadImages = async (runId = currentRun.data?.run.id) => {
+        if (!runId || downloadController.current) return;
         const controller = new AbortController();
         downloadController.current = controller;
         setDownloading(true);
         try {
-            const count = await downloadWorkflowImages(currentRun.data.run.id, controller.signal);
+            const count = await downloadWorkflowImages(runId, controller.signal);
             if (count) message.success(`已发起下载，共 ${count} 张图片`);
         } catch (error) {
             if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "发起下载失败");
@@ -896,8 +805,25 @@ function WorkflowEditorContent() {
         }
     };
     const leave = () => navigateAway(home.href);
-    const latestRunSummary = latestWorkflowRun(workflowRuns.data?.items, workflowId);
-    const runActive = isWorkflowRunActive(currentRun.data?.run.status || latestRunSummary?.status);
+    const anyActive = Boolean(runs.overview?.activeRuns.total);
+    const fullActive = Boolean(scopeStates.get(workflowRunScopeKey({ type: "workflow" }))?.activeRunId);
+    const unframedRun = graph.frames?.length ? undefined : scopeStates.get(workflowRunScopeKey({ type: "workflow" }))?.latestRun || undefined;
+    const runDisabled = (scope: WorkflowRunScope) => (scope.type === "frame" && !graph.frames?.find((frame) => frame.id === scope.frameId)?.nodeIds.some((id) => nodesById.get(id)?.type.endsWith("_generation"))) || readOnly || resizing || interactions.isNodeDragging || frameGesture.active || startingScopes.has(workflowRunScopeKey(scope)) || (!runs.pendingByScope.has(workflowRunScopeKey(scope)) && (scope.type === "workflow" ? anyActive : fullActive || Boolean(scopeStates.get(workflowRunScopeKey(scope))?.activeRunId)));
+    const openRun = (id: string) => { runs.selectRun(id); setRunDetailOpen(true); };
+    const frameLabel = (frame: { id: string; name: string }) => {
+        const duplicates = graph.frames?.filter((item) => item.name === frame.name) || [];
+        if (duplicates.length < 2) return frame.name;
+        const suffix = frame.id.slice(-6);
+        return `${frame.name} · ${duplicates.filter((item) => item.id.endsWith(suffix)).length > 1 ? frame.id : suffix}`;
+    };
+    const visibleFrames = (graph.frames || []).filter((frame) => frame.id === targetFrameId || isCanvasNodeNearViewport({ ...frame, type: CanvasNodeType.Text, title: frame.name }, viewport, viewportSize, 128));
+    const frameResizeHover = useCanvasFrameResize({
+        containerRef, frames: visibleFrames, selectedFrameId: targetFrameId, readOnly: editBlocked, active: frameGesture.active,
+        getViewport: () => canvasRef.current?.getViewport() || viewport,
+        onSelect: (id) => { setTargetFrameId(id); canvas.setSelectedNodeIds(new Set()); canvas.setSelectedConnectionId(null); },
+        onResizeStart: frameGesture.start,
+    });
+    const latestDownloadRuns = (runs.overview?.scopes || []).flatMap((item) => item.latestRun ? [item.latestRun] : []);
 
     if (session.isPending || workflow.isPending || (!loadedRef.current && (session.isFetching || workflow.isFetching)))
         return (
@@ -915,12 +841,12 @@ function WorkflowEditorContent() {
 
     return (
         <ScopedVideoResourceProvider
-            scope={`workflow:${workflowId}:run:${currentRun.data?.run.id || "definition"}`}
+            scope={`workflow:${draftOwnerUID}:${workflowId}`}
             nodeIds={[
                 ...graph.nodes.filter((node) => node.type === "video_input").map((node) => node.id),
                 ...graph.nodes.flatMap((node) =>
                     (node.outputs || []).flatMap((slot) =>
-                        slot.type === "video" && currentRun.data && compatibleOutputs.get(workflowOutputKey(node.id, slot.id))?.mediaId ? [workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id)] : [],
+                        slot.type === "video" && compatibleOutputs.get(workflowOutputKey(node.id, slot.id))?.mediaId ? [workflowOutputResourceNodeId(compatibleOutputs.get(workflowOutputKey(node.id, slot.id))!.runId, node.id, slot.id)] : [],
                     ),
                 ),
                 ...activePreviewInputs.filter((input) => input.type === "video" && input.mediaId).map((input) => `preview-${input.sourceNodeId}-${input.key}`),
@@ -945,10 +871,12 @@ function WorkflowEditorContent() {
                     menu={{
                         items: [
                             { key: "library", label: "我的流程", onClick: leave },
+                            { key: "frame", label: canvas.selectedNodeIds.size ? "从所选节点创建包裹框" : "新建包裹框", disabled: editBlocked, onClick: addFrame },
+                            { key: "dissolve-frame", label: "解散包裹框（保留节点）", disabled: editBlocked || !targetFrameId, onClick: () => { setGraph((current) => deleteWorkflowFrame(current, targetFrameId!)); setTargetFrameId(undefined); } },
                             { type: "divider" },
                             { key: "undo", label: "撤销", disabled: readOnly || !history.canUndo, onClick: history.undo },
                             { key: "redo", label: "重做", disabled: readOnly || !history.canRedo, onClick: history.redo },
-                            { key: "save", label: saveState.status === "conflict" ? "处理保存冲突" : "立即保存", disabled: readOnly || Boolean(pendingRunRequest), onClick: () => void retrySave() },
+                            { key: "save", label: saveState.status === "conflict" ? "处理保存冲突" : "立即保存", disabled: readOnly, onClick: () => void retrySave() },
                         ],
                     }}
                     status={<EditorSyncStatus
@@ -959,22 +887,17 @@ function WorkflowEditorContent() {
                     />}
                     actions={
                         <>
-                            <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!downloadImageCount} onClick={() => void downloadImages()}>
-                                下载
-                            </Button>
-                            {currentRun.data ? (
-                                <Button type="text" onClick={() => setRunDetailOpen(true)}>
-                                    {workflowRunStatusText(currentRun.data.run.status)}
-                                </Button>
-                            ) : null}
-                            {runActive && currentRun.data && !currentRun.data.run.stopRequested ? (
-                                <Button danger icon={<Square className="size-4" />} loading={stopRun.isPending} onClick={() => stopRun.mutate(currentRun.data.run.id)}>
-                                    停止
-                                </Button>
-                            ) : null}
-                            <Button icon={<Play className="size-4" />} disabled={readOnly || runActive || resizing || interactions.isNodeDragging} loading={starting || createRun.isPending} onClick={() => void startRun()}>
-                                {pendingRunRequest ? "确认上次运行" : "运行"}
-                            </Button>
+                            {graph.frames?.length ? <Dropdown trigger={["click"]} menu={{ items: latestDownloadRuns.map((run) => ({ key: run.id, label: run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程", onClick: () => void downloadImages(run.id) })) }}>
+                                <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!latestDownloadRuns.length}>下载 <ChevronDown className="size-3" /></Button>
+                            </Dropdown> : <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!unframedRun || (currentRun.data?.run.id === unframedRun.id && !downloadImageCount)} onClick={() => void downloadImages(unframedRun?.id)}>下载</Button>}
+                            {anyActive ? <Dropdown trigger={["click"]} menu={{ items: (runs.overview?.activeRuns.items || []).map((run) => ({ key: run.id, label: `${run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程"} · ${workflowRunStatusText(run.status)}`, onClick: () => openRun(run.id) })).concat([{ key: "history", label: "查看全部运行记录", onClick: () => void navigateAway(appPath("/workflow-runs")) }]) }}>
+                                <Button type="text">{runs.overview?.activeRuns.total} 个运行中 <ChevronDown className="size-3" /></Button>
+                            </Dropdown> : runs.selectedRun ? <Button type="text" onClick={() => openRun(runs.selectedRun!.id)}>{workflowRunStatusText(runs.selectedRun.status)}</Button> : unframedRun ? <Button type="text" onClick={() => openRun(unframedRun.id)}>{workflowRunStatusText(unframedRun.status)}</Button> : null}
+                            {graph.frames?.length ? <Dropdown trigger={["click"]} menu={{ items: [
+                                ...graph.frames.map((frame) => { const scope: WorkflowRunScope = { type: "frame", frameId: frame.id }; const state = scopeStates.get(workflowRunScopeKey(scope)); return { key: frame.id, label: `${frameLabel(frame)}${state?.activeRunId ? " · 运行中" : ""}`, disabled: runDisabled(scope), onClick: () => void startRun(scope) }; }),
+                                { type: "divider" as const }, { key: "all", label: "运行全部", disabled: runDisabled({ type: "workflow" }), onClick: () => void startRun() },
+                            ] }}><Button icon={<Play className="size-4" />} disabled={readOnly}>运行 <ChevronDown className="size-3" /></Button></Dropdown>
+                            : <Button icon={<Play className="size-4" />} disabled={runDisabled({ type: "workflow" })} loading={startingScopes.has(workflowRunScopeKey({ type: "workflow" }))} onClick={() => void startRun()}>{runs.pendingByScope.has(workflowRunScopeKey({ type: "workflow" })) ? "确认上次运行" : "运行"}</Button>}
                         </>
                     }
                 />
@@ -985,10 +908,22 @@ function WorkflowEditorContent() {
                         viewport={viewport}
                         backgroundMode={backgroundMode}
                         onViewportChange={setViewport}
-                        onCanvasMouseDown={readOnly ? undefined : interactions.handleCanvasMouseDown}
+                        onCanvasMouseDown={readOnly ? undefined : (event) => { setTargetFrameId(undefined); interactions.handleCanvasMouseDown(event); }}
                         onCanvasDeselect={deselect}
                         onContextMenu={(event) => event.preventDefault()}
                     >
+                        {visibleFrames.map((frame) => <CanvasFrame key={frame.id} frame={frame} selected={targetFrameId === frame.id} readOnly={editBlocked}
+                            onSelect={() => { setTargetFrameId(frame.id); canvas.setSelectedNodeIds(new Set()); canvas.setSelectedConnectionId(null); }}
+                            onMoveStart={frameGesture.start} hoveredDirection={frameResizeHover?.frameId === frame.id ? frameResizeHover.direction : undefined}
+                            onRename={(id, nextName) => { if (!editBlockedRef.current) setGraph((current) => renameWorkflowFrame(current, id, nextName)); }}
+                            headerActions={(() => {
+                                const scope: WorkflowRunScope = { type: "frame", frameId: frame.id };
+                                const key = workflowRunScopeKey(scope); const state = scopeStates.get(key);
+                                return <><Button size="small" type="text" aria-label={`运行 ${frame.name}`} icon={<Play className="size-3.5" />} disabled={runDisabled(scope)} loading={startingScopes.has(key)} onClick={() => void startRun(scope)}><span data-frame-run-label>{runs.pendingByScope.has(key) ? "确认" : "运行"}</span></Button>
+                                    {state?.activeRunId ? <Button size="small" type="text" aria-label={`停止 ${frame.name}`} icon={<Square className="size-3.5" />} loading={stoppingRuns.has(state.activeRunId)} onClick={() => void stopRun(state.activeRunId!)} /> : null}
+                                    {state?.latestRun ? <button data-frame-run-status className="px-1 text-xs opacity-65" onClick={() => openRun(state.latestRun!.id)}>{workflowRunStatusText(state.latestRun.status)}</button> : null}</>;
+                            })()}
+                        />)}
                         <svg className="pointer-events-none absolute left-0 top-0 h-[10000px] w-[10000px] overflow-visible">
                             {canvas.connections.map((connection) => {
                                 const from = canvas.nodes.find((node) => node.id === connection.fromNodeId);
@@ -1070,13 +1005,17 @@ function WorkflowEditorContent() {
                         {graph.nodes.flatMap((node) =>
                             (node.outputs || []).map((slot) => {
                                 const output = compatibleOutputs.get(workflowOutputKey(node.id, slot.id));
-                                const resourceNodeId = currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id) : undefined;
+                                const detail = runs.detailByNode.get(node.id);
+                                const resourceNodeId = detail ? workflowOutputResourceNodeId(detail.run.id, node.id, slot.id) : undefined;
+                                const retryKey = detail ? pendingWorkflowRetryKey({ runId: detail.run.id, nodeId: node.id, slotId: slot.id }) : "";
                                 const resource = resourceNodeId ? imageResources.resources.get(resourceNodeId) : undefined;
                                 return <WorkflowOutputCard
                                     key={workflowOutputKey(node.id, slot.id)}
                                     parent={node}
                                     slot={slot}
                                     execution={output}
+                                    loadingExecution={Boolean(runs.overview?.nodeRunIds[node.id] && !detail)}
+                                    executionLoadError={!detail && runs.error instanceof Error ? runs.error.message : undefined}
                                     resourceNodeId={resourceNodeId}
                                     videoVisible={isCanvasNodeNearViewport(
                                         { id: workflowOutputKey(node.id, slot.id), type: CanvasNodeType.Video, title: "", position: slot.position || node.position, width: slot.width || 420, height: slot.height || 236 } satisfies CanvasNodeData,
@@ -1086,10 +1025,10 @@ function WorkflowEditorContent() {
                                     imageUrl={resource?.url}
                                     imageStorageKey={resource?.storageKey}
                                     imageError={resourceNodeId ? imageResources.errors.get(resourceNodeId) : undefined}
-                                    retrying={retryOutput.isPending && retryOutput.variables?.nodeId === node.id && retryOutput.variables.slotId === slot.id}
-                                    confirmingRetry={Boolean(currentRun.data && pendingRetryRequests[pendingWorkflowRetryKey({ runId: currentRun.data.run.id, nodeId: node.id, slotId: slot.id })])}
+                                    retrying={retryingKeys.has(retryKey)}
+                                    confirmingRetry={runs.pendingRetryKeys.has(retryKey)}
                                     onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
-                                    onRetryOutput={currentRun.data && isRetryableImageOutput(slot, output, currentRun.data.run) ? () => startOutputRetry(node.id, slot.id) : undefined}
+                                    onRetryOutput={detail && isRetryableImageOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
                                     onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
                                     onImageDimensions={(dimensions) => {
                                         if (output?.mediaId) fitLoadedImage(node.id, output.mediaId, dimensions, slot.id);
@@ -1147,7 +1086,7 @@ function WorkflowEditorContent() {
                     <CanvasToolbar
                         homeLabel={home.label}
                         onHome={leave}
-                        selectedCount={canvas.selectedNodeIds.size + (canvas.selectedConnectionId ? 1 : 0)}
+                        selectedCount={canvas.selectedNodeIds.size + (canvas.selectedConnectionId ? 1 : 0) + (frameOnlySelected ? 1 : 0)}
                         canUndo={!editBlocked && history.canUndo}
                         canRedo={!editBlocked && history.canRedo}
                         backgroundMode={backgroundMode}
@@ -1173,7 +1112,8 @@ function WorkflowEditorContent() {
                         onUpload={() => {
                             if (!editBlocked) imageInputRef.current?.click();
                         }}
-                        onDelete={canvas.deleteSelection}
+                        onDelete={deleteSelection}
+                        onAddFrame={editBlocked ? undefined : addFrame}
                         onClear={() => {
                             if (!editBlocked)
                                 modal.confirm({
@@ -1191,6 +1131,7 @@ function WorkflowEditorContent() {
                         onBackgroundModeChange={setBackgroundMode}
                     />
                     <CanvasZoomControls
+                        frameShortcuts
                         scale={viewport.k}
                         onScaleChange={(k) => setViewport((current) => ({ x: viewportSize.width / 2 - ((viewportSize.width / 2 - current.x) * k) / current.k, y: viewportSize.height / 2 - ((viewportSize.height / 2 - current.y) * k) / current.k, k }))}
                         onReset={resetView}
@@ -1278,9 +1219,9 @@ function WorkflowEditorContent() {
                     {mediaPreview
                         ? (() => {
                               const { node, slot } = mediaPreview;
-                              const output = slot && currentRun.data ? compatibleOutputs.get(workflowOutputKey(node.id, slot.id)) : undefined;
+                              const output = slot ? compatibleOutputs.get(workflowOutputKey(node.id, slot.id)) : undefined;
                               const mediaId = slot ? output?.mediaId : node.mediaId;
-                              const resourceId = slot && currentRun.data ? workflowOutputResourceNodeId(currentRun.data.run.id, node.id, slot.id) : node.id;
+                              const resourceId = slot && output ? workflowOutputResourceNodeId(output.runId, node.id, slot.id) : node.id;
                               const resource = imageResources.resources.get(resourceId);
                               return (
                                   <div className="h-[65vh]">
@@ -1331,17 +1272,11 @@ function WorkflowEditorContent() {
                     ) : (
                         <WorkflowRunDetail
                             detail={currentRun.data}
-                            stopping={stopRun.isPending}
-                            retryingKey={retryOutput.isPending && retryOutput.variables ? workflowOutputKey(retryOutput.variables.nodeId, retryOutput.variables.slotId) : undefined}
-                            confirmingRetryKeys={
-                                new Set(
-                                    Object.values(pendingRetryRequests)
-                                        .filter((request) => request.runId === currentRun.data?.run.id)
-                                        .map((request) => workflowOutputKey(request.nodeId, request.slotId)),
-                                )
-                            }
-                            onStop={currentRun.data ? () => stopRun.mutate(currentRun.data.run.id) : undefined}
-                            onRetry={currentRun.data ? startOutputRetry : undefined}
+                            stopping={Boolean(currentRun.data && stoppingRuns.has(currentRun.data.run.id))}
+                            retryingKey={currentRun.data?.outputs.filter((output) => retryingKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId))[0]}
+                            confirmingRetryKeys={new Set(currentRun.data?.outputs.filter((output) => runs.pendingRetryKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId)))}
+                            onStop={currentRun.data ? () => void stopRun(currentRun.data!.run.id) : undefined}
+                            onRetry={currentRun.data ? (nodeId, slotId) => void startOutputRetry(currentRun.data!.run.id, nodeId, slotId) : undefined}
                         />
                     )}
                 </Drawer>

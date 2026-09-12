@@ -56,6 +56,9 @@ func DB() (*gorm.DB, error) {
 		if dbErr == nil {
 			dbErr = migrateExplicitAspectRatios(db)
 		}
+		if dbErr == nil {
+			dbErr = migrateWorkflowFrameSchema(db)
+		}
 	})
 	return db, dbErr
 }

@@ -501,7 +501,7 @@ func TestRetryWorkflowOutputKeepsSuccessfulSiblingsAndReevaluatesDependents(t *t
 		{RunID: run.ID, NodeID: "source", SlotID: "success-slot", Status: "succeeded", Attempt: 1, MediaID: "successful-sibling", UpdatedAt: current},
 		{RunID: run.ID, NodeID: "downstream", SlotID: "video-slot", Status: "blocked", Attempt: 1, Error: "上游输出失败", UpdatedAt: current},
 	}
-	if _, _, err := repository.CreateWorkflowRun(run, steps, outputs, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, steps, outputs, nil); err != nil {
 		t.Fatal(err)
 	}
 	user := PortalUser{UID: run.OwnerUID}
@@ -595,7 +595,7 @@ func seedWorkflowImageRun(t *testing.T, id, owner string) model.WorkflowRun {
 	run := model.WorkflowRun{ID: id, OwnerUID: owner, RequestID: id + "-request", Snapshot: string(snapshot), Status: "pending", CreatedAt: current, UpdatedAt: current}
 	steps := []model.WorkflowStepExecution{{RunID: id, NodeID: "generate", Status: "waiting"}}
 	outputs := []model.WorkflowOutputExecution{{RunID: id, NodeID: "generate", SlotID: "output", Status: "waiting", Attempt: 1, UpdatedAt: current}}
-	if _, _, err := repository.CreateWorkflowRun(run, steps, outputs, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, steps, outputs, nil); err != nil {
 		t.Fatal(err)
 	}
 	return run
@@ -643,7 +643,7 @@ func seedWorkflowRunGraph(t *testing.T, id, owner string, graph model.WorkflowGr
 			outputs = append(outputs, model.WorkflowOutputExecution{RunID: id, NodeID: node.ID, SlotID: slot.ID, Status: "waiting", Attempt: 1, UpdatedAt: current})
 		}
 	}
-	if _, _, err := repository.CreateWorkflowRun(run, steps, outputs, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, steps, outputs, nil); err != nil {
 		t.Fatal(err)
 	}
 	return run
@@ -665,6 +665,39 @@ func clearWorkflowRuntimeTables(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+}
+
+func createWorkflowRunFixture(run model.WorkflowRun, steps []model.WorkflowStepExecution, outputs []model.WorkflowOutputExecution, _ []string) (model.WorkflowRun, bool, error) {
+	database, err := repository.DB()
+	if err != nil {
+		return model.WorkflowRun{}, false, err
+	}
+	if run.WorkflowID == "" {
+		run.WorkflowID = "fixture-workflow-" + run.ID
+		run.Revision = 1
+		graph := model.WorkflowGraph{}
+		_ = json.Unmarshal([]byte(run.Snapshot), &graph)
+		stamp := run.CreatedAt.UTC().Format(time.RFC3339Nano)
+		definition := model.Workflow{ID: run.WorkflowID, OwnerUID: run.OwnerUID, Name: "Fixture", Graph: graph, Revision: run.Revision, CreatedAt: stamp, UpdatedAt: stamp}
+		if err := database.Create(&definition).Error; err != nil {
+			return model.WorkflowRun{}, false, err
+		}
+	}
+	err = database.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&run).Error; err != nil {
+			return err
+		}
+		if len(steps) > 0 {
+			if err := tx.Create(&steps).Error; err != nil {
+				return err
+			}
+		}
+		if len(outputs) > 0 {
+			return tx.Create(&outputs).Error
+		}
+		return nil
+	})
+	return run, err == nil, err
 }
 
 func TestWorkflowSchedulerStopsMissingReferenceWithoutCreatingTask(t *testing.T) {

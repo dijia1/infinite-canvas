@@ -1,3 +1,4 @@
+import { canvasFrameRectsOverlap, MAX_CANVAS_FRAMES } from "@/lib/canvas-frame";
 import { nanoid } from "nanoid";
 
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/app/(user)/canvas/types";
@@ -108,13 +109,40 @@ export function copyWorkflowSelection(graph: WorkflowGraph, selectedIds: Readonl
     return structuredClone({ version: 1, nodes: graph.nodes.filter((node) => nodeIds.has(node.id)), connections: graph.connections.filter((connection) => nodeIds.has(connection.sourceNodeId) && nodeIds.has(connection.targetNodeId)) });
 }
 
-export function pasteWorkflowSelection(graph: WorkflowGraph, clipboard: WorkflowGraph, offset: WorkflowPosition = { x: 48, y: 48 }, createId: () => string = nanoid): { graph: WorkflowGraph; selectedNodeIds: Set<string> } {
+export function copyWorkflowFrameSelection(graph: WorkflowGraph, frameId: string): WorkflowGraph {
+    const frame = graph.frames?.find((item) => item.id === frameId);
+    if (!frame) return { version: 1, nodes: [], connections: [] };
+    const copied = copyWorkflowSelection(graph, new Set(frame.nodeIds.map(workflowVisualNodeId)));
+    const ports = new Set(copied.connections.map((edge) => JSON.stringify([edge.targetNodeId, edge.targetPortId])));
+    return { ...copied,
+        nodes: copied.nodes.map((node) => ({ ...node, ...(node.inputPorts ? { inputPorts: node.inputPorts.filter((port) => ports.has(JSON.stringify([node.id, port.id]))) } : {}) })),
+        frames: [structuredClone(frame)],
+    };
+}
+
+export function pasteWorkflowSelection(graph: WorkflowGraph, clipboard: WorkflowGraph, offset: WorkflowPosition = { x: 48, y: 48 }, createId: () => string = nanoid): { graph: WorkflowGraph; selectedNodeIds: Set<string>; selectedFrameId?: string } {
+    if ((graph.frames?.length || 0) + (clipboard.frames?.length || 0) > MAX_CANVAS_FRAMES) throw new Error(`最多支持 ${MAX_CANVAS_FRAMES} 个包裹框`);
+    const placementOffset = nonOverlappingFramePasteOffset(graph.frames || [], clipboard.frames || [], offset);
     const nodeIds = new Map(clipboard.nodes.map((node) => [node.id, createId()]));
     const slotIds = new Map(clipboard.nodes.flatMap((node) => (node.outputs || []).map((slot) => [workflowVisualOutputId(node.id, slot.id), createId()] as const)));
     const portIds = new Map(clipboard.nodes.flatMap((node) => (node.inputPorts || []).map((port) => [JSON.stringify([node.id, port.id]), createId()] as const)));
-    const move = (position: WorkflowPosition) => ({ x: position.x + offset.x, y: position.y + offset.y });
+    const move = (position: WorkflowPosition) => ({ x: position.x + placementOffset.x, y: position.y + placementOffset.y });
     const connections = clipboard.connections.map((connection) => ({ ...connection, sourceNodeId: nodeIds.get(connection.sourceNodeId)!, targetNodeId: nodeIds.get(connection.targetNodeId)!, sourceSlotId: slotIds.get(workflowVisualOutputId(connection.sourceNodeId, connection.sourceSlotId)) || connection.sourceSlotId, targetPortId: portIds.get(JSON.stringify([connection.targetNodeId, connection.targetPortId]))! }));
     const usedPorts = new Set(connections.map((connection) => connection.targetPortId));
     const nodes = structuredClone(clipboard.nodes).map((node) => ({ ...node, id: nodeIds.get(node.id)!, position: move(node.position), ...(node.outputs ? { outputs: node.outputs.map((slot) => ({ ...slot, id: slotIds.get(workflowVisualOutputId(node.id, slot.id))!, position: move(slot.position || node.position) })) } : {}), ...(node.inputPorts ? { inputPorts: node.inputPorts.map((port) => ({ ...port, id: portIds.get(JSON.stringify([node.id, port.id]))! })).filter((port) => usedPorts.has(port.id)) } : {}) }));
-    return { graph: { ...graph, nodes: [...graph.nodes, ...nodes], connections: [...graph.connections, ...connections] }, selectedNodeIds: new Set(nodes.flatMap((node) => [workflowVisualNodeId(node.id), ...(node.outputs || []).map((slot) => workflowVisualOutputId(node.id, slot.id))])) };
+    const frames = clipboard.frames?.map((frame) => ({ ...structuredClone(frame), id: createId(), position: move(frame.position), nodeIds: frame.nodeIds.flatMap((id) => nodeIds.has(id) ? [nodeIds.get(id)!] : []) }));
+    return {
+        graph: { ...graph, nodes: [...graph.nodes, ...nodes], connections: [...graph.connections, ...connections], ...(frames?.length ? { frames: [...(graph.frames || []), ...frames] } : {}) },
+        selectedFrameId: frames?.[0]?.id,
+        selectedNodeIds: new Set(frames?.length ? [] : nodes.flatMap((node) => [workflowVisualNodeId(node.id), ...(node.outputs || []).map((slot) => workflowVisualOutputId(node.id, slot.id))])),
+    };
+}
+
+function nonOverlappingFramePasteOffset(existing: NonNullable<WorkflowGraph["frames"]>, copied: NonNullable<WorkflowGraph["frames"]>, requested: WorkflowPosition): WorkflowPosition {
+    if (!existing.length || !copied.length) return requested;
+    const moved = copied.map((frame) => ({ ...frame, position: { x: frame.position.x + requested.x, y: frame.position.y + requested.y } }));
+    if (!moved.some((frame) => existing.some((current) => canvasFrameRectsOverlap(frame, current)))) return requested;
+    const right = Math.max(...existing.map((frame) => frame.position.x + frame.width));
+    const left = Math.min(...moved.map((frame) => frame.position.x));
+    return { x: requested.x + right + 48 - left, y: requested.y };
 }

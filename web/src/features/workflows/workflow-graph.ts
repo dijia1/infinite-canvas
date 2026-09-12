@@ -138,6 +138,7 @@ export function removeWorkflowNode(graph: WorkflowGraph, nodeId: string): Workfl
                 return { ...node, inputPorts: node.inputPorts?.filter((port) => usedPortIds.has(port.id)) };
             }),
         connections,
+        ...(graph.frames ? { frames: graph.frames.map((frame) => frame.nodeIds.includes(nodeId) ? { ...frame, nodeIds: frame.nodeIds.filter((id) => id !== nodeId) } : frame) } : {}),
     };
 }
 

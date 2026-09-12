@@ -13,15 +13,15 @@ func TestCreateWorkflowRunIsOwnerRequestIdempotent(t *testing.T) {
 	useRepositoryTestDB(t, newRepositoryTestConfig(t, "workflow_run_idempotent"))
 	current := time.Now().UTC().Truncate(time.Microsecond)
 	first := model.WorkflowRun{ID: "run-first", OwnerUID: "run-owner", RequestID: "start-request", Snapshot: `{"version":1,"nodes":[],"connections":[]}`, Status: "pending", CreatedAt: current, UpdatedAt: current}
-	created, inserted, err := CreateWorkflowRun(first, nil, []model.WorkflowOutputExecution{{RunID: first.ID, NodeID: "node", SlotID: "slot", Status: "waiting", Attempt: 1, UpdatedAt: current}}, nil)
+	created, inserted, err := createWorkflowRunFixture(first, nil, []model.WorkflowOutputExecution{{RunID: first.ID, NodeID: "node", SlotID: "slot", Status: "waiting", Attempt: 1, UpdatedAt: current}}, nil)
 	if err != nil || !inserted || created.ID != first.ID {
-		t.Fatalf("first CreateWorkflowRun() = %#v, %v, %v", created, inserted, err)
+		t.Fatalf("first createWorkflowRunFixture() = %#v, %v, %v", created, inserted, err)
 	}
 	duplicate := first
 	duplicate.ID = "run-second"
-	created, inserted, err = CreateWorkflowRun(duplicate, nil, []model.WorkflowOutputExecution{{RunID: duplicate.ID, NodeID: "node", SlotID: "slot", Status: "waiting", Attempt: 1, UpdatedAt: current}}, nil)
+	created, inserted, err = createWorkflowRunFixture(duplicate, nil, []model.WorkflowOutputExecution{{RunID: duplicate.ID, NodeID: "node", SlotID: "slot", Status: "waiting", Attempt: 1, UpdatedAt: current}}, nil)
 	if err != nil || inserted || created.ID != first.ID {
-		t.Fatalf("duplicate CreateWorkflowRun() = %#v, %v, %v", created, inserted, err)
+		t.Fatalf("duplicate createWorkflowRunFixture() = %#v, %v, %v", created, inserted, err)
 	}
 	database, _ := DB()
 	var count int64
@@ -40,7 +40,7 @@ func TestClaimWorkflowAttemptAtomicallyEnforcesGlobalAndRunCapacity(t *testing.T
 		for slotIndex := 1; slotIndex <= 2; slotIndex++ {
 			outputs = append(outputs, model.WorkflowOutputExecution{RunID: runID, NodeID: "node", SlotID: fmt.Sprintf("slot-%d", slotIndex), Status: "ready", Attempt: 1, UpdatedAt: current})
 		}
-		if _, _, err := CreateWorkflowRun(run, nil, outputs, nil); err != nil {
+		if _, _, err := createWorkflowRunFixture(run, nil, outputs, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -74,7 +74,7 @@ func TestWorkflowAttemptLeaseFencesAnExpiredWorker(t *testing.T) {
 	current := time.Now().UTC()
 	run := model.WorkflowRun{ID: "fence-run", OwnerUID: "fence-owner", RequestID: "fence-request", Snapshot: `{}`, Status: "running", CreatedAt: current, UpdatedAt: current}
 	output := model.WorkflowOutputExecution{RunID: run.ID, NodeID: "node", SlotID: "slot", Status: "ready", Attempt: 1, UpdatedAt: current}
-	if _, _, err := CreateWorkflowRun(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
 		t.Fatal(err)
 	}
 	oldClaim, found, err := ClaimWorkflowAttempt(4, 2, true, current, time.Millisecond)
@@ -108,7 +108,7 @@ func TestWorkflowEvaluationRejectsAConcurrentStopSnapshot(t *testing.T) {
 	current := time.Now().UTC()
 	run := model.WorkflowRun{ID: "stale-run", OwnerUID: "stale-owner", RequestID: "stale-request", Snapshot: `{}`, Status: "running", CreatedAt: current, UpdatedAt: current}
 	output := model.WorkflowOutputExecution{RunID: run.ID, NodeID: "node", SlotID: "slot", Status: "waiting", Attempt: 1, UpdatedAt: current}
-	if _, _, err := CreateWorkflowRun(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
 		t.Fatal(err)
 	}
 	record, found, err := GetWorkflowRun(run.OwnerUID, run.ID)
@@ -131,9 +131,10 @@ func TestWorkflowEvaluationRejectsAConcurrentStopSnapshot(t *testing.T) {
 func TestRetryWorkflowOutputIsIdempotentPerClientRequest(t *testing.T) {
 	useRepositoryTestDB(t, newRepositoryTestConfig(t, "workflow_retry_idempotent"))
 	current := time.Now().UTC()
-	run := model.WorkflowRun{ID: "retry-run", OwnerUID: "retry-owner", RequestID: "run-request", Snapshot: `{}`, Status: "failed", StateVersion: 1, CreatedAt: current, UpdatedAt: current}
+	seedAdmissionWorkflow(t, "retry-owner", "retry-workflow")
+	run := model.WorkflowRun{ID: "retry-run", OwnerUID: "retry-owner", RequestID: "run-request", WorkflowID: "retry-workflow", Revision: 1, Snapshot: `{}`, Status: "failed", StateVersion: 1, CreatedAt: current, UpdatedAt: current}
 	output := model.WorkflowOutputExecution{RunID: run.ID, NodeID: "node", SlotID: "slot", Status: "failed", Attempt: 1, Error: "first failure", UpdatedAt: current}
-	if _, _, err := CreateWorkflowRun(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
+	if _, _, err := createWorkflowRunFixture(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
 		t.Fatal(err)
 	}
 	first, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", current.Add(time.Second))

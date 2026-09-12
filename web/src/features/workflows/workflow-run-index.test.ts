@@ -100,3 +100,20 @@ test("download count visits results linearly instead of scanning once per snapsh
     assert.equal(runState.workflowDownloadImageCount(detail), outputs.length);
     assert.ok(visits.outputs <= outputs.length * 2, `output reads: ${visits.outputs}`);
 });
+
+test("multi-node source indexing scans each unique run snapshot once", () => {
+    const { current, detail, nodes, outputs, visits } = largeFixture();
+    const runDetail = {
+        ...detail,
+        run: { id: "run-1", requestId: "request", workflowId: "workflow", revision: 1, title: "Workflow", scopeType: "workflow" as const, frameId: "", frameName: "", status: "completed" as const, stopRequested: false, createdAt: "now", updatedAt: "now" },
+        steps: [],
+        attempts: [],
+    };
+    const detailByNode = new Map(nodes.map((item) => [item.id, runDetail]));
+    const index = runState.indexWorkflowRunOutputsByNode(detailByNode, current);
+    for (const item of nodes) for (const slot of item.outputs) assert.equal(index.get(runState.workflowOutputKey(item.id, slot.id))?.mediaId, `run-1-${item.id}-${slot.id}`);
+    assert.equal(index.size, outputs.length);
+    assert.ok(visits.outputs <= outputs.length * 2, `output reads: ${visits.outputs}`);
+    assert.ok(visits.snapshotNodes + visits.currentNodes <= nodes.length * 4, `node reads: ${visits.snapshotNodes + visits.currentNodes}`);
+    assert.ok(visits.slots <= outputs.length * 5, `slot reads: ${visits.slots}`);
+});

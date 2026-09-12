@@ -14,7 +14,16 @@ function imageNode(id: string, x: number, y: number, metadata?: CanvasNodeData["
     return { id, type: CanvasNodeType.Image, title: id, position: { x, y }, width: 100, height: 100, metadata };
 }
 
-function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnection[] = [], options: { deferConnectionUpdates?: boolean } = {}) {
+function setup(
+    initialNodes: CanvasNodeData[],
+    initialConnections: CanvasConnection[] = [],
+    options: {
+        deferConnectionUpdates?: boolean;
+        onNodeDragStart?: (event: { nodeIds: ReadonlySet<string>; altKey: boolean }) => void;
+        onNodeDragEnd?: (event: { nodeIds: ReadonlySet<string>; altKey: boolean; cancelled: boolean }) => void;
+        constrainNodeDrag?: (event: { delta: { x: number; y: number }; altKey: boolean }) => { x: number; y: number };
+    } = {},
+) {
     const nodesRef = ref(initialNodes);
     const connectionsRef = ref(initialConnections);
     const selectedNodeIdsRef = ref(new Set<string>());
@@ -58,6 +67,9 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
         cancelAnimationFrame: () => {
             frame = null;
         },
+        onNodeDragStart: options.onNodeDragStart,
+        onNodeDragEnd: options.onNodeDragEnd,
+        constrainNodeDrag: options.constrainNodeDrag,
     });
 
     return {
@@ -72,6 +84,102 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
         },
     };
 }
+
+test("node drag lifecycle latches Alt, starts after movement, and finishes before history resumes", () => {
+    const events: string[] = [];
+    const { controller, calls, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        onNodeDragStart: ({ nodeIds, altKey }) => events.push(`start:${[...nodeIds].join(",")}:${altKey}`),
+        onNodeDragEnd: ({ nodeIds, altKey, cancelled }) => events.push(`end:${[...nodeIds].join(",")}:${altKey}:${cancelled}`),
+    });
+
+    controller.handleNodeMouseDown({ clientX: 10, clientY: 10, altKey: true }, "first");
+    assert.deepEqual(events, []);
+    controller.handleGlobalMouseMove({ clientX: 20, clientY: 10, altKey: false });
+    flushFrame();
+    controller.finishNodeDrag(20, 10);
+
+    assert.deepEqual(events, ["start:first:true", "end:first:true:false"]);
+    assert.deepEqual(calls, ["pause", "resume"]);
+});
+
+test("cancelled node drag reports cancellation before history resumes", () => {
+    const order: string[] = [];
+    const { controller, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        onNodeDragStart: () => order.push("start"),
+        onNodeDragEnd: ({ cancelled }) => order.push(cancelled ? "cancel" : "finish"),
+    });
+
+    controller.handleNodeMouseDown({ clientX: 10, clientY: 10, altKey: true }, "first");
+    controller.handleGlobalMouseMove({ clientX: 20, clientY: 10 });
+    flushFrame();
+    controller.cancelNodeDrag();
+
+    assert.deepEqual(order, ["start", "cancel"]);
+});
+
+test("disposing an active node drag reports cancellation before clearing interaction state", () => {
+    const order: string[] = [];
+    const { controller, calls, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        onNodeDragStart: () => order.push("start"),
+        onNodeDragEnd: ({ cancelled }) => order.push(cancelled ? "cancel" : "finish"),
+    });
+
+    controller.handleNodeMouseDown({ clientX: 10, clientY: 10, altKey: true }, "first");
+    controller.handleGlobalMouseMove({ clientX: 20, clientY: 10 });
+    flushFrame();
+    controller.dispose();
+
+    assert.deepEqual(order, ["start", "cancel"]);
+    assert.deepEqual(calls, ["pause", "resume"]);
+    assert.equal(controller.isNodeDragging, false);
+});
+
+test("a drag completion callback failure cannot strand history or dragging state", () => {
+    const { controller, calls, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        onNodeDragEnd: () => {
+            throw new Error("completion failed");
+        },
+    });
+
+    controller.handleNodeMouseDown({ clientX: 0, clientY: 0 }, "first");
+    controller.handleGlobalMouseMove({ clientX: 20, clientY: 0 });
+    flushFrame();
+
+    assert.throws(() => controller.finishNodeDrag(20, 0), /completion failed/);
+    assert.deepEqual(calls, ["pause", "resume"]);
+    assert.equal(controller.isNodeDragging, false);
+});
+
+test("node drag applies the caller constraint to live and committed positions", () => {
+    const { controller, nodesRef, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        constrainNodeDrag: ({ delta, altKey }) => (altKey ? delta : { x: Math.min(delta.x, 5), y: delta.y }),
+    });
+
+    controller.handleNodeMouseDown({ clientX: 0, clientY: 0 }, "first");
+    controller.handleGlobalMouseMove({ clientX: 20, clientY: 10 });
+    flushFrame();
+    assert.deepEqual(nodesRef.current[0]?.position, { x: 5, y: 10 });
+
+    controller.finishNodeDrag(30, 20);
+    assert.deepEqual(nodesRef.current[0]?.position, { x: 5, y: 20 });
+});
+
+test("pointer jitter below the drag threshold does not move a node or start its lifecycle", () => {
+    let starts = 0;
+    const { controller, nodesRef, flushFrame } = setup([imageNode("first", 0, 0)], [], {
+        onNodeDragStart: () => {
+            starts += 1;
+        },
+    });
+
+    controller.handleNodeMouseDown({ clientX: 10, clientY: 10 }, "first");
+    controller.handleGlobalMouseMove({ clientX: 12, clientY: 12 });
+    flushFrame();
+    controller.finishNodeDrag(12, 12);
+
+    assert.deepEqual(nodesRef.current[0]?.position, { x: 0, y: 0 });
+    assert.equal(starts, 0);
+});
 
 test("node drag moves selected batch children and commits only after pointer release", () => {
     const root = imageNode("root", 0, 0, { batchChildIds: ["child"] });

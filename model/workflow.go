@@ -73,10 +73,20 @@ type WorkflowConnection struct {
 	Order        int    `json:"order"`
 }
 
+type WorkflowFrame struct {
+	ID       string        `json:"id"`
+	Name     string        `json:"name"`
+	Position WorkflowPoint `json:"position"`
+	Width    float64       `json:"width"`
+	Height   float64       `json:"height"`
+	NodeIDs  []string      `json:"nodeIds"`
+}
+
 type WorkflowGraph struct {
 	Version     int                  `json:"version"`
 	Nodes       []WorkflowNode       `json:"nodes"`
 	Connections []WorkflowConnection `json:"connections"`
+	Frames      []WorkflowFrame      `json:"frames,omitempty"`
 }
 
 // Workflow stores one owner-scoped, reusable graph definition. Runs keep
