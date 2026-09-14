@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -139,7 +140,7 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 	if err != nil {
 		return model.CanvasProject{}, false, err
 	}
-	document, err := sanitizeCanvasDocument(input.Document)
+	document, err := sanitizeCanvasDocumentBase(input.Document)
 	if err != nil {
 		return model.CanvasProject{}, false, err
 	}
@@ -148,26 +149,67 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 		if _, err := uuid.Parse(requestID); err != nil {
 			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识无效"}
 		}
-		updated, accepted, deduplicated, err := repository.UpdateCanvasProjectIdempotently(user.UID, id, input.Revision, title, document, now(), requestID, canvasProjectPayloadHash(title, input.Revision, document))
-		if errors.Is(err, repository.ErrCanvasSaveRequestMismatch) {
-			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识与原请求不一致"}
-		}
-		if err != nil {
-			return model.CanvasProject{}, false, canvasMediaSaveError(err)
-		}
-		if accepted {
-			return updated, deduplicated, nil
-		}
-	} else {
-		updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
-		if err != nil {
-			return model.CanvasProject{}, false, canvasMediaSaveError(err)
-		}
-		if accepted {
-			return updated, false, nil
+		payloadHash := canvasProjectPayloadHash(title, input.Revision, document)
+		if receipt, found, err := repository.GetCanvasSaveRequest(requestID); err != nil {
+			return model.CanvasProject{}, false, err
+		} else if found {
+			if receipt.ProjectID != id || receipt.UserUID != user.UID || receipt.BaseRevision != input.Revision || receipt.PayloadHash != payloadHash {
+				return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识与原请求不一致"}
+			}
+			return model.CanvasProject{
+				ID:        id,
+				OwnerUID:  user.UID,
+				Title:     title,
+				Document:  model.CanvasProjectDocument(append([]byte(nil), document...)),
+				Revision:  receipt.ResultRevision,
+				CreatedAt: receipt.ResultCreatedAt,
+				UpdatedAt: receipt.ResultUpdatedAt,
+			}, true, nil
 		}
 	}
+	existing, found, err := repository.GetCanvasProject(user.UID, id)
+	if err != nil {
+		return model.CanvasProject{}, false, err
+	}
+	if !found {
+		return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
+	}
+	if existing.Revision != input.Revision {
+		return model.CanvasProject{}, false, ErrCanvasProjectConflict
+	}
+	if err := validateCanvasGraphAgainstBaseline(document, json.RawMessage(existing.Document)); err != nil {
+		return model.CanvasProject{}, false, err
+	}
+	if requestID != "" {
+		return updateCanvasProjectIdempotently(user.UID, id, input.Revision, title, document, requestID, canvasProjectPayloadHash(title, input.Revision, document))
+	}
+	updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
+	if err != nil {
+		return model.CanvasProject{}, false, canvasMediaSaveError(err)
+	}
+	if accepted {
+		return updated, false, nil
+	}
 	if _, found, err := repository.GetCanvasProject(user.UID, id); err != nil {
+		return model.CanvasProject{}, false, err
+	} else if !found {
+		return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
+	}
+	return model.CanvasProject{}, false, ErrCanvasProjectConflict
+}
+
+func updateCanvasProjectIdempotently(ownerUID, id string, revision int, title string, document []byte, requestID, payloadHash string) (model.CanvasProject, bool, error) {
+	updated, accepted, deduplicated, err := repository.UpdateCanvasProjectIdempotently(ownerUID, id, revision, title, document, now(), requestID, payloadHash)
+	if errors.Is(err, repository.ErrCanvasSaveRequestMismatch) {
+		return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识与原请求不一致"}
+	}
+	if err != nil {
+		return model.CanvasProject{}, false, canvasMediaSaveError(err)
+	}
+	if accepted {
+		return updated, deduplicated, nil
+	}
+	if _, found, err := repository.GetCanvasProject(ownerUID, id); err != nil {
 		return model.CanvasProject{}, false, err
 	} else if !found {
 		return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
@@ -243,12 +285,52 @@ func normalizeCanvasProjectTitle(value string) (string, error) {
 }
 
 func sanitizeCanvasDocument(document json.RawMessage) (json.RawMessage, error) {
+	encoded, object, err := sanitizeCanvasDocumentValue(document)
+	if err != nil {
+		return nil, err
+	}
+	if len(canvasGraphViolations(object)) != 0 {
+		return nil, canvasProjectValidationError{message: "画布节点或连线关系无效"}
+	}
+	return encoded, nil
+}
+
+func sanitizeCanvasDocumentBase(document json.RawMessage) (json.RawMessage, error) {
+	encoded, _, err := sanitizeCanvasDocumentValue(document)
+	return encoded, err
+}
+
+func sanitizeCanvasDocumentAgainstBaseline(document, baseline json.RawMessage) (json.RawMessage, error) {
+	encoded, _, err := sanitizeCanvasDocumentValue(document)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCanvasGraphAgainstBaseline(encoded, baseline); err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func sanitizeCanvasDocumentValue(document json.RawMessage) (json.RawMessage, map[string]any, error) {
 	if len(document) > maxCanvasDocumentBytes {
-		return nil, ErrCanvasProjectDocumentTooLarge
+		return nil, nil, ErrCanvasProjectDocumentTooLarge
 	}
 	if len(document) == 0 {
-		return nil, canvasProjectValidationError{message: "画布内容大小无效"}
+		return nil, nil, canvasProjectValidationError{message: "画布内容大小无效"}
 	}
+	documentObject, err := decodeCanvasDocument(document)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleaned := sanitizeCanvasValue(documentObject)
+	encoded, err := json.Marshal(cleaned)
+	if err != nil {
+		return nil, nil, err
+	}
+	return encoded, documentObject, nil
+}
+
+func decodeCanvasDocument(document json.RawMessage) (map[string]any, error) {
 	decoder := json.NewDecoder(bytes.NewReader(document))
 	decoder.UseNumber()
 	var value any
@@ -265,12 +347,75 @@ func sanitizeCanvasDocument(document json.RawMessage) (json.RawMessage, error) {
 	if err := validateCanvasDocument(documentObject); err != nil {
 		return nil, err
 	}
-	cleaned := sanitizeCanvasValue(documentObject)
-	encoded, err := json.Marshal(cleaned)
+	return documentObject, nil
+}
+
+type canvasGraphViolation struct {
+	kind      string
+	primaryID string
+	detail    string
+}
+
+func validateCanvasGraphAgainstBaseline(document, baseline json.RawMessage) error {
+	candidate, err := decodeCanvasDocument(document)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return encoded, nil
+	baselineDocument, err := decodeCanvasDocument(baseline)
+	if err != nil {
+		return err
+	}
+	allowed := canvasGraphViolations(baselineDocument)
+	for violation, count := range canvasGraphViolations(candidate) {
+		if count > allowed[violation] {
+			return canvasProjectValidationError{message: "画布节点或连线关系无效"}
+		}
+	}
+	return nil
+}
+
+func canvasGraphViolations(document map[string]any) map[canvasGraphViolation]int {
+	violations := make(map[canvasGraphViolation]int)
+	nodeIDs := make(map[string]int)
+	for _, value := range document["nodes"].([]any) {
+		node := value.(map[string]any)
+		id := node["id"].(string)
+		nodeIDs[id]++
+		for _, dimension := range []string{"width", "height"} {
+			if !canvasPositiveNumber(node[dimension]) {
+				number := node[dimension].(json.Number)
+				parsed, _ := number.Float64()
+				detail := strconv.FormatFloat(parsed, 'g', -1, 64)
+				if parsed == 0 {
+					detail = "0"
+				}
+				violations[canvasGraphViolation{kind: "node_" + dimension, primaryID: id, detail: detail}]++
+			}
+		}
+	}
+	for id, count := range nodeIDs {
+		if count > 1 {
+			violations[canvasGraphViolation{kind: "duplicate_node_id", primaryID: id}] += count - 1
+		}
+	}
+	connectionIDs := make(map[string]int)
+	for _, value := range document["connections"].([]any) {
+		connection := value.(map[string]any)
+		id := connection["id"].(string)
+		connectionIDs[id]++
+		for _, endpoint := range []string{"fromNodeId", "toNodeId"} {
+			nodeID := connection[endpoint].(string)
+			if nodeIDs[nodeID] == 0 {
+				violations[canvasGraphViolation{kind: "missing_" + endpoint, primaryID: id, detail: nodeID}]++
+			}
+		}
+	}
+	for id, count := range connectionIDs {
+		if count > 1 {
+			violations[canvasGraphViolation{kind: "duplicate_connection_id", primaryID: id}] += count - 1
+		}
+	}
+	return violations
 }
 
 func validateCanvasDocument(document map[string]any) error {

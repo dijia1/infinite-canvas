@@ -238,7 +238,7 @@ func copyCanvasShareProject(ctx context.Context, store imageStore, source model.
 		cleanupCanvasShareMedia(ctx, store, created)
 		return model.CanvasProject{}, err
 	}
-	encoded, err = sanitizeCanvasDocument(encoded)
+	encoded, err = sanitizeCanvasDocumentAgainstBaseline(encoded, json.RawMessage(source.Document))
 	if err != nil {
 		cleanupCanvasShareMedia(ctx, store, created)
 		return model.CanvasProject{}, err

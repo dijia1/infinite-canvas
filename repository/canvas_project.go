@@ -111,6 +111,16 @@ func GetCanvasProject(ownerUID, id string) (model.CanvasProject, bool, error) {
 	return item, err == nil, err
 }
 
+func GetCanvasSaveRequest(requestID string) (model.CanvasSaveRequest, bool, error) {
+	database, err := DB()
+	if err != nil {
+		return model.CanvasSaveRequest{}, false, err
+	}
+	item := model.CanvasSaveRequest{}
+	result := database.Where("request_id = ?", requestID).Limit(1).Find(&item)
+	return item, result.RowsAffected != 0, result.Error
+}
+
 func ListCanvasProjects(ownerUID string) ([]model.CanvasSummary, error) {
 	database, err := DB()
 	if err != nil {
