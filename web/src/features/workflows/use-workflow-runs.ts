@@ -5,6 +5,7 @@ import { nanoid } from "nanoid";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiRequestError } from "@/services/api/request";
+import { resumeVideoTask } from "@/services/api/video";
 import { createWorkflowRun, fetchWorkflowRun, fetchWorkflowRunState, retryWorkflowOutput, stopWorkflowRun } from "@/services/api/workflows";
 import {
     clearPendingWorkflowRetryRequest,
@@ -380,6 +381,21 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
         [assertCurrent, ownerUID, updateCachedDetail, withOperation, workflowId],
     );
 
+    const resumeVideo = useCallback(
+        (taskID: string) => {
+            const startedIdentity = identityRef.current;
+            return withOperation(startedIdentity, async () => {
+                if (!ownerUID || !workflowId) throw new Error("流程尚未加载");
+                const task = await resumeVideoTask(taskID);
+                assertCurrent(startedIdentity);
+                void queryClient.invalidateQueries({ queryKey: workflowRunOverviewQueryKey(ownerUID, workflowId) });
+                void queryClient.invalidateQueries({ queryKey: ["workflow-run", ownerUID, workflowId] });
+                return task;
+            });
+        },
+        [assertCurrent, ownerUID, queryClient, withOperation, workflowId],
+    );
+
     const refresh = useCallback(async () => {
         await overviewQuery.refetch();
         await Promise.all(detailQueries.map((query) => query.refetch()));
@@ -398,6 +414,7 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
         start,
         retry,
         stop,
+        resumeVideo,
         pendingByScope,
         pendingRetryKeys,
         loading: overviewQuery.isPending || detailQueries.some((query) => query.isPending) || operationCount > 0,

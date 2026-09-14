@@ -4,7 +4,7 @@ const runStatusText: Record<WorkflowRunStatus, string> = {
     pending: "等待调度",
     running: "运行中",
     stopping: "正在停止",
-    attention_required: "待确认，正在恢复原任务",
+    attention_required: "需要确认，请恢复原任务",
     completed: "已完成",
     partially_completed: "部分完成",
     failed: "运行失败",
@@ -20,7 +20,7 @@ const outputStatusText: Record<WorkflowOutputExecution["status"], string> = {
     succeeded: "已完成",
     failed: "生成失败",
     blocked: "上游失败",
-    uncertain: "待确认，正在恢复原任务",
+    uncertain: "需要确认，请恢复原任务",
     stopped: "未执行即停止",
 };
 
@@ -145,6 +145,15 @@ export function latestWorkflowRun(items: WorkflowRun[] | undefined, workflowId: 
 
 export function isRetryableImageOutput(slot: WorkflowOutputSlot, output: WorkflowOutputExecution | undefined, run: WorkflowRun | undefined) {
     return slot.type === "image" && output?.status === "failed" && Boolean(run && !run.stopRequested && run.status !== "stopped");
+}
+
+export function workflowVideoResumeTaskID(detail: WorkflowRunDetail, output: WorkflowOutputExecution) {
+    if (detail.run.status !== "attention_required" || output.status !== "uncertain") return undefined;
+    const node = detail.graph.nodes.find((item) => item.id === output.nodeId);
+    const slot = node?.outputs?.find((item) => item.id === output.slotId);
+    if (node?.type !== "video_generation" || slot?.type !== "video") return undefined;
+    const attempt = detail.attempts.find((item) => item.nodeId === output.nodeId && item.slotId === output.slotId && item.attempt === output.attempt && item.status === "uncertain" && item.taskType === "video");
+    return attempt?.taskId?.trim() || undefined;
 }
 
 

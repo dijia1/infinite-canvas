@@ -430,6 +430,108 @@ func TestWorkflowVideoUncertainStateOnlyQueriesTheOriginalTask(t *testing.T) {
 	}
 }
 
+func TestWorkflowSchedulerDoesNotResetPausedVideoRetryBudget(t *testing.T) {
+	for _, testCase := range []struct {
+		name            string
+		persistedTaskID bool
+	}{
+		{name: "attempt already has task ID", persistedTaskID: true},
+		{name: "deterministic request lookup", persistedTaskID: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			clearWorkflowRuntimeTables(t)
+			previousConfig := config.Cfg
+			config.Cfg.WorkflowEnabled = true
+			config.Cfg.WorkflowGlobalConcurrency = 4
+			config.Cfg.WorkflowRunConcurrency = 2
+			config.Cfg.AIVideoTaskTimeout = "30m"
+			t.Cleanup(func() { config.Cfg = previousConfig })
+
+			ownerUID := newID("paused-workflow-owner")
+			seedWorkflowMember(t, ownerUID, true)
+			run := seedWorkflowVideoRun(t, newID("paused-workflow-run"), ownerUID)
+			if err := reevaluateWorkflowRun(run.OwnerUID, run.ID); err != nil {
+				t.Fatal(err)
+			}
+			attempt, found, err := repository.ClaimWorkflowAttempt(4, 2, true, time.Now().UTC(), time.Minute)
+			if err != nil || !found || attempt.RunID != run.ID {
+				t.Fatalf("claim = %#v, %v, %v", attempt, found, err)
+			}
+			authorized, err := repository.AuthorizeWorkflowAttemptSubmission(attempt, true, time.Now().UTC())
+			if err != nil || !authorized {
+				t.Fatalf("authorize = %v, %v", authorized, err)
+			}
+
+			task, provider := pauseVideoAfterFivePollFailures(t, newID("paused-workflow-video"), ownerUID, attempt.RequestID)
+			attempt.Status = "uncertain"
+			attempt.TaskType = "video"
+			if testCase.persistedTaskID {
+				attempt.TaskID = task.ID
+			}
+			attempt.Error = "视频任务已暂停，请恢复原任务"
+			if err := repository.UpdateClaimedWorkflowAttempt(attempt, "uncertain", time.Now().UTC().Add(-time.Second), false); err != nil {
+				t.Fatal(err)
+			}
+			if err := reevaluateWorkflowRun(run.OwnerUID, run.ID); err != nil {
+				t.Fatal(err)
+			}
+
+			beforeDeadline := task.Deadline
+			previousCreate := workflowCreateVideoTask
+			createCalls := 0
+			workflowCreateVideoTask = func(context.Context, CreateVideoTaskRequest) (VideoTaskView, error) {
+				createCalls++
+				return VideoTaskView{}, errors.New("must not create a replacement task")
+			}
+			t.Cleanup(func() { workflowCreateVideoTask = previousCreate })
+
+			for pass := 1; pass <= 3; pass++ {
+				if pass > 1 {
+					database, _ := repository.DB()
+					if err := database.Model(&model.WorkflowOutputAttempt{}).Where("run_id = ?", run.ID).Update("next_poll_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+						t.Fatal(err)
+					}
+				}
+				processed, err := RunWorkflowSchedulerOnce(context.Background())
+				if err != nil || !processed {
+					t.Fatalf("scheduler pass %d = %v, %v", pass, processed, err)
+				}
+			}
+
+			stored := readWorkerVideo(t, task)
+			record, found, err := repository.GetWorkflowRun(run.OwnerUID, run.ID)
+			if err != nil || !found {
+				t.Fatalf("workflow record = %#v, %v, %v", record, found, err)
+			}
+			if stored.Status != "paused" || stored.Attempts != 5 || !stored.Deadline.Equal(beforeDeadline) {
+				t.Fatalf("scheduler reset paused retry budget: %#v", stored)
+			}
+			if createCalls != 0 || provider.createCalls != 0 || provider.getCalls != 5 {
+				t.Fatalf("scheduler provider activity: workflow create=%d provider create=%d get=%d", createCalls, provider.createCalls, provider.getCalls)
+			}
+			if record.Run.Status != "attention_required" || len(record.Outputs) != 1 || record.Outputs[0].Status != "uncertain" || len(record.Attempts) != 1 || record.Attempts[0].Status != "uncertain" || record.Attempts[0].TaskID != task.ID {
+				t.Fatalf("paused workflow record = %#v", record)
+			}
+
+			if _, err := ResumeVideoGenerationTask(WithPortalUser(context.Background(), PortalUser{UID: ownerUID}), task.ID); err != nil {
+				t.Fatal(err)
+			}
+			database, _ := repository.DB()
+			if err := database.Model(&model.WorkflowOutputAttempt{}).Where("run_id = ?", run.ID).Update("next_poll_at", time.Now().UTC().Add(-time.Second)).Error; err != nil {
+				t.Fatal(err)
+			}
+			processed, err := RunWorkflowSchedulerOnce(context.Background())
+			if err != nil || !processed {
+				t.Fatalf("post-resume scheduler pass = %v, %v", processed, err)
+			}
+			record, found, err = repository.GetWorkflowRun(run.OwnerUID, run.ID)
+			if err != nil || !found || record.Run.Status != "running" || record.Outputs[0].Status != "running" || record.Attempts[0].Status != "running" || record.Attempts[0].TaskID != task.ID || createCalls != 0 || provider.createCalls != 0 {
+				t.Fatalf("resumed workflow record = %#v found=%v err=%v workflow-create=%d provider-create=%d", record, found, err, createCalls, provider.createCalls)
+			}
+		})
+	}
+}
+
 func TestWorkflowVideoRetryCreatesOneNewAttemptWithANewDeterministicRequest(t *testing.T) {
 	clearWorkflowRuntimeTables(t)
 	previousConfig := config.Cfg

@@ -10,20 +10,22 @@ import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import { getRemoteImageAccess } from "@/services/image-storage";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
 import { workflowConnectionKey } from "./workflow-graph";
-import { isRetryableImageOutput, isWorkflowRunActive, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunStatusText } from "./workflow-run-state";
+import { isRetryableImageOutput, isWorkflowRunActive, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunStatusText, workflowVideoResumeTaskID } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowNode, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRunDetail as WorkflowRunDetailRecord } from "./types";
 
 type Preview = { nodeId: string; mediaId: string; type: "image" | "video" };
 
-export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, confirmingRetryKeys, onStop, onDelete, onRetry }: {
+export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, resumingVideoTaskIDs, confirmingRetryKeys, onStop, onDelete, onRetry, onResumeVideo }: {
     detail?: WorkflowRunDetailRecord;
     stopping?: boolean;
     deleting?: boolean;
     retryingKey?: string;
+    resumingVideoTaskIDs?: ReadonlySet<string>;
     confirmingRetryKeys?: ReadonlySet<string>;
     onStop?: () => void;
     onDelete?: () => void;
     onRetry?: (nodeId: string, slotId: string) => void;
+    onResumeVideo?: (taskId: string) => void;
 }) {
     const [preview, setPreview] = useState<Preview>();
     const previewTarget = useMemo(() => {
@@ -38,6 +40,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, con
     const active = isWorkflowRunActive(detail.run.status);
     const slotByKey = new Map<string, WorkflowOutputSlot>();
     detail.graph.nodes.forEach((node) => node.outputs?.forEach((slot) => slotByKey.set(workflowOutputKey(node.id, slot.id), slot)));
+    const hasResumableVideo = detail.outputs.some((output) => Boolean(workflowVideoResumeTaskID(detail, output)));
 
     const openOutput = (output: WorkflowOutputExecution) => {
         const slot = slotByKey.get(workflowOutputKey(output.nodeId, output.slotId));
@@ -64,7 +67,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, con
                 {detail.run.status === "attention_required" ? (
                     <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                         <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                        服务端正在用原任务 ID 恢复查询，页面会持续刷新状态，不会创建新的生成任务。
+                        {hasResumableVideo ? "视频任务需要确认。请恢复原任务，页面会继续刷新同一任务的状态，不会创建新的生成任务。" : "生成任务需要确认。页面会继续刷新原任务状态，不会创建新的生成任务。"}
                     </div>
                 ) : null}
 
@@ -83,6 +86,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, con
                             {detail.outputs.map((output) => {
                                 const slot = slotByKey.get(workflowOutputKey(output.nodeId, output.slotId));
                                 const retryable = Boolean(slot && isRetryableImageOutput(slot, output, detail.run));
+                                const videoTaskID = workflowVideoResumeTaskID(detail, output);
                                 const key = workflowOutputKey(output.nodeId, output.slotId);
                                 return (
                                     <div key={key} className="rounded-xl border border-stone-200 p-3 dark:border-stone-800">
@@ -98,6 +102,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, con
                                             <div className="flex shrink-0 items-center gap-1">
                                                 {output.status === "succeeded" && output.mediaId ? <Button type="text" size="small" onClick={() => openOutput(output)}>查看</Button> : null}
                                                 {retryable && onRetry ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={retryingKey === key} onClick={() => onRetry(output.nodeId, output.slotId)}>{confirmingRetryKeys?.has(key) ? "确认重试" : "重试"}</Button> : null}
+                                                {videoTaskID && onResumeVideo ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={resumingVideoTaskIDs?.has(videoTaskID)} onClick={() => onResumeVideo(videoTaskID)}>恢复原任务</Button> : null}
                                             </div>
                                         </div>
                                     </div>

@@ -29,7 +29,6 @@ var (
 	workflowGetImageTask    = GetImageTaskByClientRequest
 	workflowCreateVideoTask = CreateVideoGenerationTask
 	workflowGetVideoTask    = GetVideoGenerationTaskByClient
-	workflowResumeVideoTask = ResumeVideoGenerationTask
 	workflowRunScan         struct {
 		sync.Mutex
 		afterID string
@@ -377,10 +376,6 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 			if err != nil {
 				return deferWorkflowAttempt(attempt)
 			}
-			view, err = resumeWorkflowVideoTaskIfPaused(userContext, view)
-			if err != nil {
-				return deferWorkflowAttempt(attempt)
-			}
 			return applyWorkflowVideoView(attempt, view)
 		}
 		if attempt.Error != "" && workflowTaskCreationExpired(attempt, time.Now().UTC()) {
@@ -425,18 +420,7 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 			return deferWorkflowAttempt(attempt)
 		}
 	}
-	view, err = resumeWorkflowVideoTaskIfPaused(userContext, view)
-	if err != nil {
-		return deferWorkflowAttempt(attempt)
-	}
 	return applyWorkflowVideoView(attempt, view)
-}
-
-func resumeWorkflowVideoTaskIfPaused(ctx context.Context, view VideoTaskView) (VideoTaskView, error) {
-	if view.Status != "paused" || strings.TrimSpace(view.ID) == "" {
-		return view, nil
-	}
-	return workflowResumeVideoTask(ctx, view.ID)
 }
 
 func deferWorkflowAttempt(attempt model.WorkflowOutputAttempt) error {

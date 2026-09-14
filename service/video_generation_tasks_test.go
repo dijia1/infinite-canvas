@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/basketikun/infinite-canvas/ai"
+	"github.com/basketikun/infinite-canvas/config"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 	"github.com/shopspring/decimal"
@@ -103,6 +104,88 @@ type workerVideoProvider struct {
 	calls *int
 }
 
+type retryBudgetVideoProvider struct {
+	createCalls int
+	getCalls    int
+}
+
+func (p *retryBudgetVideoProvider) CreateVideo(context.Context, ai.VideoRequest) (ai.VideoTask, error) {
+	p.createCalls++
+	return ai.VideoTask{}, errors.New("must not create a replacement video task")
+}
+
+func (p *retryBudgetVideoProvider) GetVideo(context.Context, string) (ai.VideoTask, error) {
+	p.getCalls++
+	return ai.VideoTask{}, errors.New("transient provider poll failure")
+}
+
+func (p *retryBudgetVideoProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
+	return ai.VideoContent{}, errors.New("not used")
+}
+
+func pauseVideoAfterFivePollFailures(t *testing.T, id string, ownerUID string, clientRequestID string) (model.VideoGenerationTask, *retryBudgetVideoProvider) {
+	t.Helper()
+	current := time.Now().UTC().Truncate(time.Microsecond)
+	provider := &retryBudgetVideoProvider{}
+	providerType := id + "-provider"
+	if err := ai.Register(ai.ProviderType{
+		ID:           providerType,
+		Name:         providerType,
+		Capabilities: []ai.Capability{ai.CapabilityVideoGenerate},
+		New: func(json.RawMessage) (ai.Provider, error) {
+			return provider, nil
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	item := model.VideoGenerationTask{
+		ID:                 id,
+		OwnerUID:           ownerUID,
+		ClientRequestID:    clientRequestID,
+		Status:             "running",
+		ProviderType:       providerType,
+		ProviderTaskID:     "upstream-" + id,
+		InputMediaIDsJSON:  "[]",
+		ResultMediaIDsJSON: "[]",
+		ResultURLsJSON:     "[]",
+		OperationLogID:     id + "-operation",
+		NextPollAt:         current,
+		Deadline:           current.Add(time.Hour),
+	}
+	operation := model.OperationLog{
+		ID:        item.OperationLogID,
+		ActorUID:  ownerUID,
+		Status:    model.OperationStatusSubmitted,
+		CreatedAt: current,
+	}
+	if _, err := repository.CreateVideoGenerationTask(item, operation, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		database, _ := repository.DB()
+		database.Delete(&model.VideoGenerationTask{}, "id = ?", item.ID)
+		database.Delete(&model.OperationLog{}, "id = ?", item.OperationLogID)
+	})
+
+	for attempt := 1; attempt <= 5; attempt++ {
+		claimed, found, err := repository.ClaimNextVideoGenerationTask(current)
+		if err != nil || !found || claimed.ID != item.ID {
+			t.Fatalf("claim attempt %d = %#v, %v, %v", attempt, claimed, found, err)
+		}
+		if err := processVideoTaskStep(context.Background(), claimed, current); err != nil {
+			t.Fatalf("process attempt %d: %v", attempt, err)
+		}
+		item = readWorkerVideo(t, item)
+		if attempt < 5 {
+			current = item.NextPollAt.Add(time.Millisecond)
+		}
+	}
+	if item.Status != "paused" || item.Attempts != 5 || provider.createCalls != 0 || provider.getCalls != 5 {
+		t.Fatalf("paused task = %#v, create=%d get=%d", item, provider.createCalls, provider.getCalls)
+	}
+	return item, provider
+}
+
 func (p workerVideoProvider) CreateVideo(context.Context, ai.VideoRequest) (ai.VideoTask, error) {
 	*p.calls++
 	return p.task, p.err
@@ -187,6 +270,47 @@ func TestVideoWorkerDownloadFailurePausesAndResumesOriginalTask(t *testing.T) {
 	got = readWorkerVideo(t, item)
 	if got.ProviderTaskID != "upstream" || got.Attempts != 0 {
 		t.Fatal("resume lost upstream identity")
+	}
+}
+
+func TestResumeVideoTaskPreservesIdentityAndContinuesPollingWithoutProviderCreate(t *testing.T) {
+	previousConfig := config.Cfg
+	config.Cfg.AIVideoTaskTimeout = "30m"
+	t.Cleanup(func() { config.Cfg = previousConfig })
+
+	item, provider := pauseVideoAfterFivePollFailures(t, newID("resume-original-video"), "resume-original-owner", newID("resume-original-request"))
+	beforeDeadline := item.Deadline
+	beforeProviderTaskID := item.ProviderTaskID
+	beforeOperationLogID := item.OperationLogID
+	ctx := WithPortalUser(context.Background(), PortalUser{UID: item.OwnerUID})
+	view, err := ResumeVideoGenerationTask(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := readWorkerVideo(t, item)
+	if view.ID != item.ID || resumed.ID != item.ID || resumed.ProviderTaskID != beforeProviderTaskID || resumed.OperationLogID != beforeOperationLogID || resumed.Attempts != 0 || resumed.Status != "running" || resumed.Deadline.Equal(beforeDeadline) || !resumed.Deadline.After(time.Now().UTC()) {
+		t.Fatalf("resumed task = %#v view=%#v", resumed, view)
+	}
+	if provider.createCalls != 0 {
+		t.Fatalf("resume called provider CreateVideo %d times", provider.createCalls)
+	}
+	if _, err := ResumeVideoGenerationTask(ctx, item.ID); err == nil {
+		t.Fatal("second resume unexpectedly reset the running task")
+	}
+	afterDuplicate := readWorkerVideo(t, item)
+	if afterDuplicate.ID != item.ID || afterDuplicate.ProviderTaskID != beforeProviderTaskID || afterDuplicate.OperationLogID != beforeOperationLogID || afterDuplicate.Attempts != 0 || !afterDuplicate.Deadline.Equal(resumed.Deadline) || provider.createCalls != 0 {
+		t.Fatalf("duplicate resume changed task identity or budget: %#v", afterDuplicate)
+	}
+
+	claimed, found, err := repository.ClaimNextVideoGenerationTask(time.Now().UTC().Add(time.Second))
+	if err != nil || !found || claimed.ID != item.ID {
+		t.Fatalf("claim resumed task = %#v, %v, %v", claimed, found, err)
+	}
+	if err := processVideoTaskStep(context.Background(), claimed, time.Now().UTC().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if provider.createCalls != 0 || provider.getCalls != 6 {
+		t.Fatalf("resumed polling create=%d get=%d", provider.createCalls, provider.getCalls)
 	}
 }
 func TestVideoWorkerCompletionPersistsSavingBeforeDownload(t *testing.T) {

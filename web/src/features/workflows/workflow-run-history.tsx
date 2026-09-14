@@ -10,6 +10,7 @@ import { nanoid } from "nanoid";
 import { appPath } from "@/lib/app-path";
 import { ApiRequestError } from "@/services/api/request";
 import { portalSessionQuery } from "@/services/api/session";
+import { resumeVideoTask } from "@/services/api/video";
 import { deleteWorkflowRun, fetchWorkflowRun, fetchWorkflowRuns, retryWorkflowOutput, stopWorkflowRun } from "@/services/api/workflows";
 import { WorkflowRunDetail } from "./workflow-run-detail";
 import { clearPendingWorkflowRetryRequest, ensureWorkflowRetryRequest, pendingWorkflowRetryKey, readPendingWorkflowRetryRequests, workflowRetryWasAccepted, writePendingWorkflowRetryRequest, type PendingWorkflowRetryRequest } from "./workflow-run-requests";
@@ -94,6 +95,16 @@ function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
             message.warning("重试请求结果待确认，可再次点击并使用同一请求确认");
         },
     });
+    const resumeVideo = useMutation({
+        retry: false,
+        mutationFn: (taskID: string) => resumeVideoTask(taskID),
+        onSuccess: () => {
+            void detail.refetch();
+            void queryClient.invalidateQueries({ queryKey: ["workflow-runs"] });
+            message.success("已恢复原视频任务");
+        },
+        onError: (error) => message.error(error instanceof Error ? error.message : "恢复视频任务失败"),
+    });
     const remove = useMutation({
         mutationFn: (id: string) => deleteWorkflowRun(id),
         onSuccess: () => {
@@ -170,10 +181,12 @@ function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
                         stopping={stop.isPending}
                         deleting={remove.isPending}
                         retryingKey={retry.isPending ? workflowOutputKey(retry.variables.nodeId, retry.variables.slotId) : undefined}
+                        resumingVideoTaskIDs={new Set(resumeVideo.isPending && resumeVideo.variables ? [resumeVideo.variables] : [])}
                         confirmingRetryKeys={new Set(Object.values(pendingRetryRequests).filter((request) => request.runId === detail.data?.run.id).map((request) => workflowOutputKey(request.nodeId, request.slotId)))}
                         onStop={detail.data ? () => stop.mutate(detail.data.run.id) : undefined}
                         onDelete={detail.data ? confirmDelete : undefined}
                         onRetry={detail.data && ownerUID ? startRetry : undefined}
+                        onResumeVideo={detail.data && ownerUID ? (taskID) => resumeVideo.mutate(taskID) : undefined}
                     />
                 )}
             </Drawer>

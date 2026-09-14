@@ -119,6 +119,8 @@ function WorkflowEditorContent() {
     const [startingScopes, setStartingScopes] = useState<ReadonlySet<string>>(new Set());
     const [stoppingRuns, setStoppingRuns] = useState<ReadonlySet<string>>(new Set());
     const [retryingKeys, setRetryingKeys] = useState<ReadonlySet<string>>(new Set());
+    const resumingVideoTaskIDsRef = useRef(new Set<string>());
+    const [resumingVideoTaskIDs, setResumingVideoTaskIDs] = useState<ReadonlySet<string>>(new Set());
     const [draftRecoveryPending, setDraftRecoveryPending] = useState(false);
     const draftRecoveryKey = useRef("");
     const [saveState, setSaveState] = useState<WorkflowAutosaveState>({ revision: 0, dirty: false, status: "idle", error: undefined });
@@ -337,6 +339,20 @@ function WorkflowEditorContent() {
         try { await runs.retry(runId, nodeId, slotId); message.success("已重新提交失败输出"); }
         catch (error) { message.error(error instanceof Error ? error.message : "重试请求结果待确认，可再次点击确认"); }
         finally { setRetryingKeys((current) => new Set([...current].filter((item) => item !== key))); }
+    };
+    const resumeWorkflowVideo = async (taskID: string) => {
+        if (resumingVideoTaskIDsRef.current.has(taskID)) return;
+        resumingVideoTaskIDsRef.current.add(taskID);
+        setResumingVideoTaskIDs(new Set(resumingVideoTaskIDsRef.current));
+        try {
+            await runs.resumeVideo(taskID);
+            message.success("已恢复原视频任务");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "恢复视频任务失败");
+        } finally {
+            resumingVideoTaskIDsRef.current.delete(taskID);
+            setResumingVideoTaskIDs(new Set(resumingVideoTaskIDsRef.current));
+        }
     };
 
     const updateNode = useCallback(
@@ -1319,9 +1335,11 @@ function WorkflowEditorContent() {
                             detail={currentRun.data}
                             stopping={Boolean(currentRun.data && stoppingRuns.has(currentRun.data.run.id))}
                             retryingKey={currentRun.data?.outputs.filter((output) => retryingKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId))[0]}
+                            resumingVideoTaskIDs={resumingVideoTaskIDs}
                             confirmingRetryKeys={new Set(currentRun.data?.outputs.filter((output) => runs.pendingRetryKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId)))}
                             onStop={currentRun.data ? () => void stopRun(currentRun.data!.run.id) : undefined}
                             onRetry={currentRun.data ? (nodeId, slotId) => void startOutputRetry(currentRun.data!.run.id, nodeId, slotId) : undefined}
+                            onResumeVideo={currentRun.data ? (taskID) => void resumeWorkflowVideo(taskID) : undefined}
                         />
                     )}
                 </Drawer>
