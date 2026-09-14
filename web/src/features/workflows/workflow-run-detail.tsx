@@ -10,7 +10,7 @@ import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
 import { getRemoteImageAccess } from "@/services/image-storage";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
 import { workflowConnectionKey } from "./workflow-graph";
-import { isRetryableImageOutput, isWorkflowRunActive, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunStatusText, workflowVideoResumeTaskID } from "./workflow-run-state";
+import { isRetryableImageOutput, isWorkflowRunActive, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunStatusText, workflowVideoResumeTaskID } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowNode, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRunDetail as WorkflowRunDetailRecord } from "./types";
 
 type Preview = { nodeId: string; mediaId: string; type: "image" | "video" };
@@ -40,7 +40,6 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, res
     const active = isWorkflowRunActive(detail.run.status);
     const slotByKey = new Map<string, WorkflowOutputSlot>();
     detail.graph.nodes.forEach((node) => node.outputs?.forEach((slot) => slotByKey.set(workflowOutputKey(node.id, slot.id), slot)));
-    const hasResumableVideo = detail.outputs.some((output) => Boolean(workflowVideoResumeTaskID(detail, output)));
 
     const openOutput = (output: WorkflowOutputExecution) => {
         const slot = slotByKey.get(workflowOutputKey(output.nodeId, output.slotId));
@@ -67,7 +66,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, res
                 {detail.run.status === "attention_required" ? (
                     <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                         <CircleAlert className="mt-0.5 size-4 shrink-0" />
-                        {hasResumableVideo ? "视频任务需要确认。请恢复原任务，页面会继续刷新同一任务的状态，不会创建新的生成任务。" : "生成任务需要确认。页面会继续刷新原任务状态，不会创建新的生成任务。"}
+                        {workflowRunAttentionText(detail)}
                     </div>
                 ) : null}
 

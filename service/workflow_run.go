@@ -321,6 +321,21 @@ func GetWorkflowRun(_ context.Context, user PortalUser, id string) (WorkflowRunD
 	if err := json.Unmarshal([]byte(record.Run.Snapshot), &graph); err != nil {
 		return WorkflowRunDetail{}, err
 	}
+	videoTaskIDs := make([]string, 0)
+	for _, attempt := range record.Attempts {
+		if attempt.Status == "uncertain" && attempt.TaskType == "video" && strings.TrimSpace(attempt.TaskID) != "" {
+			videoTaskIDs = append(videoTaskIDs, attempt.TaskID)
+		}
+	}
+	resumableVideoTaskIDs, err := repository.ListResumableVideoGenerationTaskIDs(user.UID, videoTaskIDs)
+	if err != nil {
+		return WorkflowRunDetail{}, err
+	}
+	for index := range record.Attempts {
+		if _, resumable := resumableVideoTaskIDs[record.Attempts[index].TaskID]; resumable {
+			record.Attempts[index].ResumeTaskID = record.Attempts[index].TaskID
+		}
+	}
 	return WorkflowRunDetail{Run: record.Run, Graph: graph, Steps: record.Steps, Outputs: record.Outputs, Attempts: record.Attempts}, nil
 }
 

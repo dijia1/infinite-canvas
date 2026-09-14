@@ -126,6 +126,7 @@ export type WorkflowOutputAttempt = {
     requestId: string;
     taskType: "image" | "video" | string;
     taskId?: string;
+    resumeTaskId?: string;
     status: WorkflowExecutionStatus;
     error?: string;
     mediaId?: string;

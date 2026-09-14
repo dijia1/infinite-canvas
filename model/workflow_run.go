@@ -64,6 +64,7 @@ type WorkflowOutputAttempt struct {
 	RetryRequestID string     `json:"-" gorm:"size:128;index:idx_workflow_attempt_retry"`
 	TaskType       string     `json:"taskType"`
 	TaskID         string     `json:"taskId,omitempty" gorm:"index"`
+	ResumeTaskID   string     `json:"resumeTaskId,omitempty" gorm:"-"`
 	Status         string     `json:"status" gorm:"index"`
 	Error          string     `json:"error,omitempty"`
 	MediaID        string     `json:"mediaId,omitempty"`

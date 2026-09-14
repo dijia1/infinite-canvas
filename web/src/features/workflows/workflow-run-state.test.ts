@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowRunScopeLabel, workflowRunStatusText, workflowVideoResumeTaskID } from "./workflow-run-state";
+import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunScopeLabel, workflowRunStatusText, workflowVideoResumeTaskID } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun, WorkflowRunDetail } from "./types";
 
 const run = (id: string, workflowId: string, status: WorkflowRun["status"], createdAt: string): WorkflowRun => ({ id, workflowId, status, createdAt, updatedAt: createdAt, requestId: `${id}-request`, revision: 1, title: id, scopeType: "workflow", frameId: "", frameName: "", stopRequested: false });
@@ -10,10 +10,11 @@ const output = (status: WorkflowOutputExecution["status"]): WorkflowOutputExecut
 test("classifies open runs and explains uncertain recovery", () => {
     for (const status of ["pending", "running", "stopping", "attention_required"] as const) assert.equal(isWorkflowRunActive(status), true);
     for (const status of ["completed", "partially_completed", "failed", "stopped"] as const) assert.equal(isWorkflowRunActive(status), false);
-    assert.match(workflowRunStatusText("attention_required"), /需要确认/);
+    assert.equal(workflowRunStatusText("attention_required"), "需要确认");
+    assert.equal(workflowOutputStatusText("uncertain"), "需要确认");
 });
 
-test("offers original-task resume only for an uncertain video output with its persisted task ID", () => {
+test("offers original-task resume only when the backend marks an uncertain video attempt recoverable", () => {
     const detail = {
         run: run("run-1", "workflow-1", "attention_required", "2026-09-09T00:00:00Z"),
         graph: {
@@ -31,15 +32,19 @@ test("offers original-task resume only for an uncertain video output with its pe
         ],
         attempts: [
             { id: "attempt-video-old", runId: "run-1", nodeId: "video", slotId: "output", attempt: 1, requestId: "request-old", taskType: "video", taskId: "old-video-task", status: "failed", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:00Z" },
-            { id: "attempt-video", runId: "run-1", nodeId: "video", slotId: "output", attempt: 2, requestId: "request-video", taskType: "video", taskId: "original-video-task", status: "uncertain", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:01Z" },
-            { id: "attempt-image", runId: "run-1", nodeId: "image", slotId: "output", attempt: 1, requestId: "request-image", taskType: "image", taskId: "image-task", status: "uncertain", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:01Z" },
+            { id: "attempt-video", runId: "run-1", nodeId: "video", slotId: "output", attempt: 2, requestId: "request-video", taskType: "video", taskId: "uncertain-video-task", status: "uncertain", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:01Z" },
+            { id: "attempt-image", runId: "run-1", nodeId: "image", slotId: "output", attempt: 1, requestId: "request-image", taskType: "image", taskId: "image-task", resumeTaskId: "image-task", status: "uncertain", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:01Z" },
         ],
     } satisfies WorkflowRunDetail;
 
-    assert.equal(workflowVideoResumeTaskID(detail, detail.outputs[0]), "original-video-task");
+    assert.equal(workflowVideoResumeTaskID(detail, detail.outputs[0]), undefined);
+    const resumable = { ...detail, attempts: detail.attempts.map((attempt) => attempt.id === "attempt-video" ? { ...attempt, taskId: "original-video-task", resumeTaskId: "original-video-task" } : attempt) } satisfies WorkflowRunDetail;
+    assert.equal(workflowVideoResumeTaskID(resumable, resumable.outputs[0]), "original-video-task");
     assert.equal(workflowVideoResumeTaskID(detail, detail.outputs[1]), undefined);
-    assert.equal(workflowVideoResumeTaskID({ ...detail, run: { ...detail.run, status: "running" } }, detail.outputs[0]), undefined);
-    assert.equal(workflowVideoResumeTaskID({ ...detail, attempts: detail.attempts.filter((attempt) => attempt.attempt === 1) }, detail.outputs[0]), undefined);
+    assert.equal(workflowVideoResumeTaskID({ ...resumable, run: { ...resumable.run, status: "running" } }, resumable.outputs[0]), undefined);
+    assert.equal(workflowVideoResumeTaskID({ ...resumable, attempts: resumable.attempts.filter((attempt) => attempt.attempt === 1) }, resumable.outputs[0]), undefined);
+    assert.doesNotMatch(workflowRunAttentionText(detail), /恢复原任务/);
+    assert.match(workflowRunAttentionText(resumable), /请恢复原任务/);
 });
 
 test("labels run history from its immutable scope snapshot", () => {

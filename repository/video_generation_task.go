@@ -37,6 +37,27 @@ func GetVideoGenerationTaskByClient(owner, client string) (model.VideoGeneration
 	return item, err == nil, err
 }
 
+func ListResumableVideoGenerationTaskIDs(owner string, taskIDs []string) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+	db, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := db.Model(&model.VideoGenerationTask{}).
+		Where("owner_uid = ? AND id IN ? AND status = ? AND provider_task_id <> ''", owner, taskIDs, "paused").
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = struct{}{}
+	}
+	return result, nil
+}
+
 func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.OperationLog, inputs []string) (model.VideoGenerationTask, error) {
 	db, err := DB()
 	if err != nil {

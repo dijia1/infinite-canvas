@@ -532,6 +532,76 @@ func TestWorkflowSchedulerDoesNotResetPausedVideoRetryBudget(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowRunProjectsOnlyResumablePausedVideoTasks(t *testing.T) {
+	clearWorkflowRuntimeTables(t)
+	ownerUID := newID("workflow-resume-projection-owner")
+	current := time.Now().UTC()
+	resumableTaskID := newID("video-paused")
+	cases := []struct {
+		slotID         string
+		taskType       string
+		taskID         string
+		taskStatus     string
+		providerTaskID string
+		wantResumeID   string
+	}{
+		{slotID: "video-uncertain", taskType: "video", taskID: newID("video-uncertain"), taskStatus: "uncertain"},
+		{slotID: "video-paused", taskType: "video", taskID: resumableTaskID, taskStatus: "paused", providerTaskID: "upstream-paused", wantResumeID: resumableTaskID},
+		{slotID: "video-paused-without-provider", taskType: "video", taskID: newID("video-paused-without-provider"), taskStatus: "paused"},
+		{slotID: "image-uncertain", taskType: "image", taskID: newID("image-uncertain")},
+		{slotID: "missing-video-task", taskType: "video", taskID: newID("missing-video-task")},
+	}
+	graph := model.WorkflowGraph{Version: 1}
+	outputs := make([]model.WorkflowOutputExecution, 0, len(cases))
+	attempts := make([]model.WorkflowOutputAttempt, 0, len(cases))
+	videoTasks := make([]model.VideoGenerationTask, 0, 3)
+	for _, testCase := range cases {
+		nodeType := model.WorkflowNodeVideoGeneration
+		slotType := model.WorkflowPortVideo
+		if testCase.taskType == "image" {
+			nodeType = model.WorkflowNodeImageGeneration
+			slotType = model.WorkflowPortImage
+		}
+		graph.Nodes = append(graph.Nodes, model.WorkflowNode{ID: "node-" + testCase.slotID, Type: nodeType, Outputs: []model.WorkflowOutputSlot{{ID: testCase.slotID, Type: slotType}}})
+		outputs = append(outputs, model.WorkflowOutputExecution{RunID: "workflow-resume-projection", NodeID: "node-" + testCase.slotID, SlotID: testCase.slotID, Status: "uncertain", Attempt: 1, UpdatedAt: current})
+		attempts = append(attempts, model.WorkflowOutputAttempt{ID: "attempt-" + testCase.slotID, RunID: "workflow-resume-projection", NodeID: "node-" + testCase.slotID, SlotID: testCase.slotID, Attempt: 1, OwnerUID: ownerUID, RequestID: "request-" + testCase.slotID, TaskType: testCase.taskType, TaskID: testCase.taskID, Status: "uncertain", CreatedAt: current, UpdatedAt: current})
+		if testCase.taskStatus != "" {
+			videoTasks = append(videoTasks, model.VideoGenerationTask{ID: testCase.taskID, OwnerUID: ownerUID, ClientRequestID: "video-request-" + testCase.slotID, Status: testCase.taskStatus, ProviderTaskID: testCase.providerTaskID, InputMediaIDsJSON: "[]", ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]", CreatedAt: current, UpdatedAt: current})
+		}
+	}
+	snapshot, _ := json.Marshal(graph)
+	run := model.WorkflowRun{ID: "workflow-resume-projection", OwnerUID: ownerUID, RequestID: newID("workflow-resume-projection-request"), Snapshot: string(snapshot), Status: "attention_required", StateVersion: 1, CreatedAt: current, UpdatedAt: current}
+	if _, _, err := createWorkflowRunFixture(run, nil, outputs, nil); err != nil {
+		t.Fatal(err)
+	}
+	database, _ := repository.DB()
+	if err := database.Create(&attempts).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&videoTasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { database.Delete(&model.VideoGenerationTask{}, "owner_uid = ?", ownerUID) })
+
+	detail, err := GetWorkflowRun(context.Background(), PortalUser{UID: ownerUID}, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bySlot := make(map[string]model.WorkflowOutputAttempt, len(detail.Attempts))
+	for _, attempt := range detail.Attempts {
+		bySlot[attempt.SlotID] = attempt
+	}
+	for _, testCase := range cases {
+		if got := bySlot[testCase.slotID].ResumeTaskID; got != testCase.wantResumeID {
+			t.Errorf("%s resumeTaskId = %q, want %q", testCase.slotID, got, testCase.wantResumeID)
+		}
+	}
+	payload, err := json.Marshal(detail)
+	if err != nil || strings.Count(string(payload), `"resumeTaskId"`) != 1 || !strings.Contains(string(payload), `"resumeTaskId":"`+resumableTaskID+`"`) {
+		t.Fatalf("workflow detail recoverability JSON = %s, %v", payload, err)
+	}
+}
+
 func TestWorkflowVideoRetryCreatesOneNewAttemptWithANewDeterministicRequest(t *testing.T) {
 	clearWorkflowRuntimeTables(t)
 	previousConfig := config.Cfg

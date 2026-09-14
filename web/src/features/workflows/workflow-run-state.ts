@@ -4,7 +4,7 @@ const runStatusText: Record<WorkflowRunStatus, string> = {
     pending: "等待调度",
     running: "运行中",
     stopping: "正在停止",
-    attention_required: "需要确认，请恢复原任务",
+    attention_required: "需要确认",
     completed: "已完成",
     partially_completed: "部分完成",
     failed: "运行失败",
@@ -20,7 +20,7 @@ const outputStatusText: Record<WorkflowOutputExecution["status"], string> = {
     succeeded: "已完成",
     failed: "生成失败",
     blocked: "上游失败",
-    uncertain: "需要确认，请恢复原任务",
+    uncertain: "需要确认",
     stopped: "未执行即停止",
 };
 
@@ -153,7 +153,13 @@ export function workflowVideoResumeTaskID(detail: WorkflowRunDetail, output: Wor
     const slot = node?.outputs?.find((item) => item.id === output.slotId);
     if (node?.type !== "video_generation" || slot?.type !== "video") return undefined;
     const attempt = detail.attempts.find((item) => item.nodeId === output.nodeId && item.slotId === output.slotId && item.attempt === output.attempt && item.status === "uncertain" && item.taskType === "video");
-    return attempt?.taskId?.trim() || undefined;
+    return attempt?.resumeTaskId?.trim() || undefined;
+}
+
+export function workflowRunAttentionText(detail: WorkflowRunDetail) {
+    return detail.outputs.some((output) => Boolean(workflowVideoResumeTaskID(detail, output)))
+        ? "视频任务需要确认。请恢复原任务，页面会继续刷新同一任务的状态，不会创建新的生成任务。"
+        : "生成任务需要确认。页面会继续刷新原任务状态，不会创建新的生成任务。";
 }
 
 
