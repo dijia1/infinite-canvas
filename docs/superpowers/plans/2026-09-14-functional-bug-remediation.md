@@ -105,8 +105,10 @@
 **Files:**
 - Modify: `service/workflow_scheduler.go`
 - Modify only if needed for an explicit same-task resume: `service/video_generation_tasks.go`
+- Modify: Workflow run/output API client and UI files that expose the existing same-task resume endpoint
 - Test: `service/workflow_scheduler_test.go`
 - Test: `service/video_generation_tasks_test.go`
+- Test: relevant Workflow run-state and output-action frontend tests
 
 **Interfaces:**
 - Consumes: existing `paused` and `uncertain` video task states and `ResumeVideoGenerationTask`.
@@ -115,7 +117,8 @@
 - [ ] Trace automatic scheduler polling, user retry actions, task resume, output retry, and run aggregation. Confirm which action is intended to leave `attention_required`.
 - [ ] Add a test that drives five failures into `paused`, runs multiple scheduler passes, and proves attempts/deadline are not silently reset.
 - [ ] Add a recovery test asserting an explicit resume/retry keeps the same task ID and upstream ID and records zero additional create calls.
-- [ ] Remove unconditional scheduler resume or gate it behind the explicit recovery path already exposed by the application. Do not create a replacement task for an ambiguous or paused upstream task.
+- [ ] Remove unconditional scheduler resume. Expose an explicit Workflow action that calls the existing same-task resume endpoint; it must retain the local task, operation log, and upstream task IDs and must not route through ordinary output retry/new-task creation.
+- [ ] Update the attention-required copy so it asks the user to resume the original task instead of claiming that recovery is already in progress.
 - [ ] Run Workflow scheduler, video task, stop/retry, and run-state tests.
 - [ ] Commit as `fix: preserve workflow video retry exhaustion`.
 
@@ -126,7 +129,10 @@
 - Modify: `service/operation_log.go`
 - Modify: `repository/operation_log.go`
 - Modify only if the existing enum cannot represent the view: `model/operation_log.go`
+- Modify: `web/src/services/api/operation-logs.ts`
+- Modify: `web/src/app/(admin)/admin/operations/page.tsx`
 - Test: image worker and operation-log repository/service tests
+- Test: admin operations API/page tests
 
 **Interfaces:**
 - Produces: operation listings and status filters that report the current derived state for both image and video tasks.
@@ -134,7 +140,7 @@
 - [ ] Trace every image terminal/uncertain transition and the admin operation-list status projection/filter.
 - [ ] Add tests showing an uncertain image task is visible under the uncertain filter and is not displayed as submitted.
 - [ ] Confirm the tests fail because only video tasks participate in derived-state filtering.
-- [ ] Update image uncertain transitions and list/filter projection using the existing safe error channel. Avoid storing raw provider responses, prompts beyond current audit policy, or credentials.
+- [ ] Update image uncertain transitions and list/filter projection using the existing safe error channel. Preserve the operation row's coarse submitted/success/failure audit status when possible and expose the linked task's derived status separately, matching the video projection. Avoid storing raw provider responses, prompts beyond current audit policy, or credentials.
 - [ ] Preserve historical operation rows that have no linked task.
 - [ ] Run image worker, operation-log, and admin operations tests.
 - [ ] Commit as `fix: synchronize image task audit states`.
@@ -168,8 +174,10 @@
 
 **Files:**
 - Modify: `service/canvas_projects.go`
+- Modify: `service/canvas_share.go`
 - Modify only if create/update need different compatibility input: Canvas service/repository call sites
 - Test: `service/canvas_projects_test.go` and router Canvas tests
+- Test: Canvas share service/router tests
 
 **Interfaces:**
 - Produces: strict validation for newly introduced invalid geometry/IDs while retaining a compatible update path for pre-existing documents.
@@ -180,6 +188,8 @@
 - [ ] Add compatibility tests for every legitimate historical shape found during tracing, including old optional metadata and output-node forms.
 - [ ] Confirm invalid-input tests fail against the current validator.
 - [ ] Add uniqueness, endpoint, and positive-dimension validation using the broadest legitimate historical bounds. If an existing stored document contains a formerly accepted invalid fragment, compare against the stored baseline so an unrelated edit is not trapped; reject newly introduced or worsened violations.
+- [ ] Use the same baseline-compatible validation when sharing a historical Canvas. Sharing may rewrite media metadata but must not make a legacy board unshareable or introduce/worsen graph violations.
+- [ ] Preserve successful idempotent update replays after the project has advanced beyond the replayed request's base revision; baseline lookup must not turn an already-recorded replay into a conflict.
 - [ ] Preserve revision, media validation, cleanup, and idempotency behavior.
 - [ ] Run Canvas service/router tests and frontend document/bootstrap/autosave regressions.
 - [ ] Commit as `fix: validate canvas graph invariants safely`.
