@@ -373,6 +373,12 @@ func markImageTaskUncertain(item model.ImageGenerationTask, message string) {
 		"status": model.ImageTaskUncertain, "error_message": message, "claim_id": "", "lease_until": nil, "updated_at": now(),
 	}); err != nil {
 		log.Printf("image task %s uncertain update failed: %v", item.ID, err)
+		return
+	}
+	if strings.TrimSpace(item.OperationLogID) != "" {
+		if err := repository.UpdateOperationLog(item.OperationLogID, map[string]any{"error_message": safeAuditError(message)}); err != nil {
+			log.Printf("image task %s operation log error update failed: %v", item.ID, err)
+		}
 	}
 }
 

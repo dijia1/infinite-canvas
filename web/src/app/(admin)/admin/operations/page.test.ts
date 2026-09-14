@@ -16,13 +16,6 @@ test("operation records initialize their actor filter from a selected member", a
     assert.doesNotMatch(source, /getRemoteImageAccess/);
 });
 
-test("operation records include uncertain video results in the shared filter and status labels", async () => {
-    const source = await readFile(sourceURL, "utf8");
-    assert.match(source, /uncertain:\s*"结果不确定"/);
-    assert.match(source, /Object\.entries\(videoStatusLabels\)\.map/);
-    assert.match(source, /videoStatusLabels\[item\.video\.status\]/);
-});
-
 test("media lifecycle records expose resource filtering without fetching deleted images", async () => {
     const source = await readFile(sourceURL, "utf8");
     assert.match(source, /mediaId: deferredMediaId/);

@@ -28,7 +28,22 @@ type VideoOperationDetails struct {
 	Amount         decimal.Decimal `json:"amount"`
 }
 
+type ImageOperationDetails struct {
+	TaskID         string          `json:"taskId"`
+	Status         string          `json:"status"`
+	ProviderID     string          `json:"providerId"`
+	ProviderName   string          `json:"providerName"`
+	ProviderTaskID string          `json:"providerTaskId"`
+	Quality        string          `json:"quality"`
+	Size           string          `json:"size"`
+	Resolution     string          `json:"resolution"`
+	OutputFormat   string          `json:"outputFormat"`
+	Background     string          `json:"background"`
+	Amount         decimal.Decimal `json:"amount"`
+}
+
 type OperationLog struct {
+	Image          *ImageOperationDetails `json:"image,omitempty" gorm:"-"`
 	Video          *VideoOperationDetails `json:"video,omitempty" gorm:"-"`
 	ID             string                 `json:"id" gorm:"primaryKey"`
 	ActorUID       string                 `json:"actorUid" gorm:"index"`

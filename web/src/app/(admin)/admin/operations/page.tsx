@@ -8,8 +8,9 @@ import { Suspense, useDeferredValue, useEffect, useState } from "react";
 import { formatCNYAmount } from "@/lib/money";
 import { fetchOperationLogs, type OperationLog } from "@/services/api/operation-logs";
 
+import { generationStatusOptions, operationStatusPresentation } from "./operation-status";
+
 const PAGE_SIZE = 20;
-const videoStatusLabels: Record<string, string> = { queued: "排队中", submitting: "提交中", running: "生成中", saving: "保存中", paused: "已暂停", uncertain: "结果不确定", succeeded: "已完成", failed: "任务失败" };
 
 const actionLabels: Record<string, string> = {
     media_created: "资源创建",
@@ -57,7 +58,11 @@ function AdminOperationsContent() {
     const deferredActor = useDeferredValue(actor);
     const [mediaId, setMediaId] = useState(searchParams.get("mediaId") || "");
     const deferredMediaId = useDeferredValue(mediaId);
-    const query = useQuery({ queryKey: ["operation-logs", page, action, status, deferredActor, deferredMediaId], queryFn: () => fetchOperationLogs({ page, pageSize: PAGE_SIZE, action, status, actor: deferredActor, mediaId: deferredMediaId }), refetchInterval: 5000 });
+    const query = useQuery({
+        queryKey: ["operation-logs", page, action, status, deferredActor, deferredMediaId],
+        queryFn: () => fetchOperationLogs({ page, pageSize: PAGE_SIZE, action, status, actor: deferredActor, mediaId: deferredMediaId }),
+        refetchInterval: 5000,
+    });
 
     useEffect(() => {
         setPage(1);
@@ -87,7 +92,7 @@ function AdminOperationsContent() {
                     className="w-32"
                     placeholder="全部状态"
                     onChange={(value) => updateFilter(setStatus, value || "")}
-                    options={[{ value: "submitted", label: "已提交" }, { value: "success", label: "成功" }, { value: "failure", label: "失败" }, ...Object.entries(videoStatusLabels).map(([value, label]) => ({ value, label: `视频 · ${label}` }))]}
+                    options={[{ value: "submitted", label: "已提交" }, { value: "success", label: "成功" }, { value: "failure", label: "失败" }, ...generationStatusOptions]}
                 />
             </div>
             {query.isLoading ? (
@@ -116,12 +121,21 @@ function OperationLogItem({ item }: { item: OperationLog }) {
                     <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">{item.actorName}</span>
                         <span className="text-sm text-stone-500 dark:text-stone-400">{actionLabels[item.action] || item.action}</span>
-                        <OperationStatusTag status={item.status} />
-                        {item.video ? <Tag>{videoStatusLabels[item.video.status] || item.video.status}</Tag> : null}
+                        <OperationStatusTag item={item} />
                     </div>
                     {item.targetType === "media_lifecycle" ? <p className="mt-1 break-all font-mono text-xs text-stone-500">资源 ID：{item.targetId}</p> : null}
                     {item.targetName ? <p className="mt-1 text-sm text-stone-500 dark:text-stone-400">{item.targetName}</p> : null}
                     {item.providerTaskId ? <p className="mt-1 break-all font-mono text-xs text-stone-500 dark:text-stone-400">上游任务 ID：{item.providerTaskId}</p> : null}
+                    {item.image ? (
+                        <div className="mt-2 space-y-1 text-xs text-stone-500 dark:text-stone-400">
+                            <p>
+                                {item.image.providerName || item.image.providerId} · {item.image.resolution} · {item.image.size} · {item.image.quality} · {item.image.outputFormat} / {item.image.background} · 费用快照 {formatCNYAmount(item.image.amount)}
+                            </p>
+                            <p className="break-all font-mono">
+                                模型 ID：{item.image.providerId} · 本地任务 ID：{item.image.taskId}
+                            </p>
+                        </div>
+                    ) : null}
                     {item.video ? (
                         <div className="mt-2 space-y-1 text-xs text-stone-500 dark:text-stone-400">
                             <p>
@@ -147,10 +161,9 @@ function OperationLogItem({ item }: { item: OperationLog }) {
     );
 }
 
-function OperationStatusTag({ status }: { status: OperationLog["status"] }) {
-    if (status === "submitted") return <Tag color="blue">已提交</Tag>;
-    if (status === "success") return <Tag color="green">成功</Tag>;
-    return <Tag color="red">失败</Tag>;
+function OperationStatusTag({ item }: { item: OperationLog }) {
+    const presentation = operationStatusPresentation(item);
+    return <Tag color={presentation.color}>{presentation.label}</Tag>;
 }
 
 function OperationRequestSummary({ summary, lifecycle = false }: { summary: string; lifecycle?: boolean }) {

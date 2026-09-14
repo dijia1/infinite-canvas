@@ -101,3 +101,32 @@ func TestSetImageGenerationTaskProviderTaskIDUpdatesLinkedOperationLog(t *testin
 		t.Fatalf("updated operation log = %#v, err %v", items, err)
 	}
 }
+
+func TestOperationStatusFilterMatchesLinkedImageTaskStateAndKeepsCoarseStatus(t *testing.T) {
+	database := useImageTaskTestDB(t)
+	createdAt := time.Now().UTC()
+	task := model.ImageGenerationTask{
+		ID: "uncertain-image-task", OwnerUID: "image-audit-owner", ClientRequestID: "uncertain-image-request",
+		Status: model.ImageTaskUncertain, OperationLogID: "uncertain-image-operation",
+		CreatedAt: createdAt.Format(time.RFC3339), UpdatedAt: createdAt.Format(time.RFC3339),
+	}
+	operation := model.OperationLog{
+		ID: task.OperationLogID, ActorUID: task.OwnerUID, Action: "image_generate",
+		Status: model.OperationStatusSubmitted, TargetType: "image_generation", TargetID: task.ID, CreatedAt: createdAt,
+	}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Create(&operation).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	items, total, err := ListOperationLogs(model.OperationLogQuery{Status: string(model.ImageTaskUncertain)})
+	if err != nil || total != 1 || len(items) != 1 || items[0].ID != operation.ID {
+		t.Fatalf("uncertain image filter = %#v, total=%d, err=%v", items, total, err)
+	}
+	items, total, err = ListOperationLogs(model.OperationLogQuery{Status: string(model.OperationStatusSubmitted)})
+	if err != nil || total != 1 || len(items) != 1 || items[0].Status != model.OperationStatusSubmitted {
+		t.Fatalf("coarse submitted filter = %#v, total=%d, err=%v", items, total, err)
+	}
+}

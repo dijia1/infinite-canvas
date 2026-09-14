@@ -291,6 +291,21 @@ func ListSucceededImageGenerationTasksFinishedBetween(start, end string) ([]mode
 	return items, err
 }
 
+// Only select audit-safe columns; provider configuration and saved request data never leave persistence.
+func ListImageTasksForOperations(operationIDs []string) ([]model.ImageGenerationTask, error) {
+	database, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	items := make([]model.ImageGenerationTask, 0)
+	if len(operationIDs) == 0 {
+		return items, nil
+	}
+	err = database.Select("id", "operation_log_id", "status", "provider_id", "provider_name", "provider_task_id", "quality", "size", "resolution", "output_format", "background", "amount", "error_message").
+		Where("operation_log_id IN ?", operationIDs).Find(&items).Error
+	return items, err
+}
+
 func DeleteImageGenerationTask(id string) error {
 	database, err := DB()
 	if err != nil {

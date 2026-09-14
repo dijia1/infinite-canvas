@@ -55,7 +55,7 @@ func ListOperationLogs(q model.OperationLogQuery) ([]model.OperationLog, int64, 
 	if status := strings.TrimSpace(q.Status); status != "" {
 		switch status {
 		case "queued", "submitting", "running", "saving", "paused", "uncertain", "succeeded", "failed":
-			tx = tx.Where("EXISTS (SELECT 1 FROM video_generation_tasks v WHERE v.operation_log_id = operation_logs.id AND v.status = ?)", status)
+			tx = tx.Where("(EXISTS (SELECT 1 FROM image_generation_tasks i WHERE i.operation_log_id = operation_logs.id AND i.status = ?) OR EXISTS (SELECT 1 FROM video_generation_tasks v WHERE v.operation_log_id = operation_logs.id AND v.status = ?))", status, status)
 		default:
 			tx = tx.Where("status = ?", status)
 		}

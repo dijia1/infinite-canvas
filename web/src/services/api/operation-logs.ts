@@ -1,8 +1,24 @@
 import { apiGet, apiPost, compactApiParams } from "@/services/api/request";
 
+export type GenerationTaskStatus = "queued" | "submitting" | "running" | "saving" | "paused" | "uncertain" | "succeeded" | "failed";
+
+export type ImageOperationDetails = {
+    taskId: string;
+    status: Exclude<GenerationTaskStatus, "saving" | "paused">;
+    providerId: string;
+    providerName: string;
+    providerTaskId: string;
+    quality: string;
+    size: string;
+    resolution: string;
+    outputFormat: string;
+    background: string;
+    amount: string;
+};
+
 export type VideoOperationDetails = {
     taskId: string;
-    status: "queued" | "submitting" | "running" | "saving" | "paused" | "uncertain" | "succeeded" | "failed";
+    status: GenerationTaskStatus;
     providerId: string;
     providerName: string;
     providerTaskId: string;
@@ -14,6 +30,7 @@ export type VideoOperationDetails = {
 };
 
 export type OperationLog = {
+    image?: ImageOperationDetails;
     video?: VideoOperationDetails;
     id: string;
     actorUid: string;

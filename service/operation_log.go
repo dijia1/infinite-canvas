@@ -63,11 +63,17 @@ func ListOperationLogs(query model.OperationLogQuery) (model.OperationLogList, e
 	if err != nil {
 		return model.OperationLogList{}, err
 	}
-	operationIDs := make([]string, 0)
+	operationIDs := make([]string, 0, len(items))
 	for _, item := range items {
-		if item.Action == "video_generate" {
-			operationIDs = append(operationIDs, item.ID)
-		}
+		operationIDs = append(operationIDs, item.ID)
+	}
+	imageTasks, err := repository.ListImageTasksForOperations(operationIDs)
+	if err != nil {
+		return model.OperationLogList{}, err
+	}
+	imagesByOperation := make(map[string]model.ImageGenerationTask, len(imageTasks))
+	for _, task := range imageTasks {
+		imagesByOperation[task.OperationLogID] = task
 	}
 	tasks, err := repository.ListVideoTasksForOperations(operationIDs)
 	if err != nil {
@@ -78,13 +84,19 @@ func ListOperationLogs(query model.OperationLogQuery) (model.OperationLogList, e
 		byOperation[task.OperationLogID] = task
 	}
 	for index := range items {
-		if items[index].Action == "video_generate" {
+		if task, ok := imagesByOperation[items[index].ID]; ok {
+			items[index].RequestSummary = ""
+			items[index].Image = imageOperationDetails(task)
+			items[index].ProviderTaskID = task.ProviderTaskID
+			if strings.TrimSpace(task.ErrorMessage) != "" {
+				items[index].ErrorMessage = safeAuditError(task.ErrorMessage)
+			}
+		}
+		if task, ok := byOperation[items[index].ID]; ok {
 			// Replace the historical raw request with the explicit safe DTO.
 			items[index].RequestSummary = ""
-			if task, ok := byOperation[items[index].ID]; ok {
-				items[index].Video = videoOperationDetails(task)
-				items[index].ProviderTaskID = task.ProviderTaskID
-			}
+			items[index].Video = videoOperationDetails(task)
+			items[index].ProviderTaskID = task.ProviderTaskID
 		}
 		if items[index].ActorRoles == nil {
 			items[index].ActorRoles = []string{}
@@ -94,6 +106,14 @@ func ListOperationLogs(query model.OperationLogQuery) (model.OperationLogList, e
 		}
 	}
 	return model.OperationLogList{Items: items, Total: int(total)}, nil
+}
+
+func imageOperationDetails(task model.ImageGenerationTask) *model.ImageOperationDetails {
+	return &model.ImageOperationDetails{
+		TaskID: task.ID, Status: string(task.Status), ProviderID: task.ProviderID, ProviderName: task.ProviderName,
+		ProviderTaskID: task.ProviderTaskID, Quality: task.Quality, Size: task.Size, Resolution: task.Resolution,
+		OutputFormat: task.OutputFormat, Background: task.Background, Amount: task.Amount,
+	}
 }
 
 func CleanupExpiredOperationLogs(now time.Time) error {

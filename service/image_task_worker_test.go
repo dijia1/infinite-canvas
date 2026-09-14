@@ -183,12 +183,13 @@ func TestImageTaskWorkerPersistsReturnedProviderIDBeforeTerminalHandling(t *test
 		errorMessage        string
 		wantTaskStatus      model.ImageGenerationTaskStatus
 		wantOperationStatus model.OperationStatus
+		wantOperationError  string
 	}{
 		{name: "completed with provider ID", providerTaskID: "upstream-completed", status: ai.ImageTaskStatusCompleted, wantTaskStatus: model.ImageTaskSucceeded, wantOperationStatus: model.OperationStatusSuccess},
-		{name: "failed with provider ID", providerTaskID: "upstream-failed", status: ai.ImageTaskStatusFailed, errorMessage: "上游拒绝", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure},
-		{name: "uncertain with provider ID", providerTaskID: "upstream-uncertain", status: ai.ImageTaskStatusUncertain, wantTaskStatus: model.ImageTaskUncertain, wantOperationStatus: model.OperationStatusSubmitted},
+		{name: "failed with provider ID", providerTaskID: "upstream-failed", status: ai.ImageTaskStatusFailed, errorMessage: "上游拒绝", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure, wantOperationError: "上游拒绝"},
+		{name: "uncertain with provider ID", providerTaskID: "upstream-uncertain", status: ai.ImageTaskStatusUncertain, wantTaskStatus: model.ImageTaskUncertain, wantOperationStatus: model.OperationStatusSubmitted, wantOperationError: "供应商图片任务结果不完整，请核对任务，系统不会自动重复生成"},
 		{name: "completed without provider ID", status: ai.ImageTaskStatusCompleted, wantTaskStatus: model.ImageTaskSucceeded, wantOperationStatus: model.OperationStatusSuccess},
-		{name: "failed without provider ID", status: ai.ImageTaskStatusFailed, errorMessage: "同步生成失败", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure},
+		{name: "failed without provider ID", status: ai.ImageTaskStatusFailed, errorMessage: "同步生成失败", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure, wantOperationError: "同步生成失败"},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			resultURLs := []string(nil)
@@ -246,8 +247,8 @@ func TestImageTaskWorkerPersistsReturnedProviderIDBeforeTerminalHandling(t *test
 			if err := fixtureDB.First(&storedOperation, "id = ?", operation.ID).Error; err != nil {
 				t.Fatalf("load operation: %v", err)
 			}
-			if storedOperation.Status != fixture.wantOperationStatus || storedOperation.ProviderTaskID != fixture.providerTaskID {
-				t.Fatalf("terminal operation = %#v, want status %q provider task ID %q", storedOperation, fixture.wantOperationStatus, fixture.providerTaskID)
+			if storedOperation.Status != fixture.wantOperationStatus || storedOperation.ProviderTaskID != fixture.providerTaskID || storedOperation.ErrorMessage != fixture.wantOperationError {
+				t.Fatalf("terminal operation = %#v, want status %q provider task ID %q error %q", storedOperation, fixture.wantOperationStatus, fixture.providerTaskID, fixture.wantOperationError)
 			}
 			if provider.createCalls != 1 || provider.pollCalls != 0 {
 				t.Fatalf("provider calls = create %d poll %d, want create 1 poll 0", provider.createCalls, provider.pollCalls)
