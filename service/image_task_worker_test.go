@@ -26,6 +26,24 @@ type transientPollingImageProvider struct {
 	pollCalls   int
 }
 
+type terminalPollingImageProvider struct {
+	pollCalls int
+	task      ai.ImageTask
+}
+
+func (provider *terminalPollingImageProvider) CreateImageTask(context.Context, ai.ImageTaskRequest) (ai.ImageTask, error) {
+	return ai.ImageTask{}, errors.New("must not create a replacement task")
+}
+
+func (provider *terminalPollingImageProvider) GetImageTask(context.Context, string) (ai.ImageTask, error) {
+	provider.pollCalls++
+	return provider.task, nil
+}
+
+func (provider *terminalPollingImageProvider) SummarizeImageTaskRequest(ai.ImageTaskRequest) (ai.ImageTaskRequestSummary, error) {
+	return ai.ImageTaskRequestSummary{}, nil
+}
+
 func (provider *transientPollingImageProvider) CreateImageTask(context.Context, ai.ImageTaskRequest) (ai.ImageTask, error) {
 	provider.createCalls++
 	return ai.ImageTask{}, errors.New("must not create a replacement task")
@@ -116,16 +134,98 @@ func TestImageTaskTerminalResultHandlesDirectURLsAndProviderFailures(t *testing.
 		t.Fatalf("completed direct result = %#v, %v, %t", urls, failure, terminal)
 	}
 
-	for _, status := range []string{"failed", "violated", "rejected"} {
+	for _, status := range []string{ai.ImageTaskStatusFailed} {
 		urls, failure, terminal = imageTaskTerminalResult(ai.ImageTask{Status: status, Error: "上游拒绝"})
 		if !terminal || failure == nil || len(urls) != 0 {
 			t.Errorf("%s result = %#v, %v, %t", status, urls, failure, terminal)
 		}
 	}
 
-	urls, failure, terminal = imageTaskTerminalResult(ai.ImageTask{Status: "processing"})
+	urls, failure, terminal = imageTaskTerminalResult(ai.ImageTask{Status: ai.ImageTaskStatusRunning})
 	if terminal || failure != nil || len(urls) != 0 {
-		t.Fatalf("processing result = %#v, %v, %t", urls, failure, terminal)
+		t.Fatalf("running result = %#v, %v, %t", urls, failure, terminal)
+	}
+}
+
+func TestImageTaskWorkerPersistsNormalizedProviderFailure(t *testing.T) {
+	provider := &terminalPollingImageProvider{task: ai.ImageTask{Status: ai.ImageTaskStatusFailed, Error: "提交内容违反平台政策"}}
+	providerType := newID("terminal-image-provider")
+	if err := ai.Register(ai.ProviderType{
+		ID: providerType, Name: providerType, Capabilities: []ai.Capability{ai.CapabilityImageGenerate},
+		New: func(json.RawMessage) (ai.Provider, error) { return provider, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leaseUntil := time.Now().UTC().Add(time.Minute)
+	item := model.ImageGenerationTask{
+		ID: newID("terminal-image-task"), OwnerUID: newID("terminal-owner"), ClientRequestID: newID("terminal-request"),
+		Mode: ImageTaskModeGeneration, Status: model.ImageTaskRunning, ProviderType: providerType, ProviderTaskID: "original-upstream-task",
+		ReferencesJSON: "[]", OperationLogID: newID("terminal-operation"), ClaimID: "terminal-claim", LeaseUntil: &leaseUntil,
+		CreatedAt: now(), UpdatedAt: now(),
+	}
+	fixtureDB, fixtureErr := repository.DB()
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
+	}
+	operation := model.OperationLog{ID: item.OperationLogID, ActorUID: item.OwnerUID, Status: model.OperationStatusSubmitted, TargetType: "image_generation", TargetID: item.ID, CreatedAt: time.Now().UTC()}
+	if err := fixtureDB.Create(&item).Error; err != nil {
+		t.Fatalf("create image task fixture: %v", err)
+	}
+	if err := fixtureDB.Create(&operation).Error; err != nil {
+		t.Fatalf("create operation fixture: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = repository.DeleteImageGenerationTask(item.ID)
+		_ = fixtureDB.Delete(&model.OperationLog{}, "id = ?", operation.ID).Error
+	})
+
+	executeImageTask(context.Background(), item)
+
+	stored, found, err := repository.GetImageGenerationTask(item.ID)
+	if err != nil || !found {
+		t.Fatalf("GetImageGenerationTask() = %#v, %t, %v", stored, found, err)
+	}
+	if provider.pollCalls != 1 || stored.Status != model.ImageTaskFailed || stored.ErrorMessage != "提交内容违反平台政策" || stored.FinishedAt == "" || stored.ClaimID != "" || stored.LeaseUntil != nil {
+		t.Fatalf("failed task = %#v, poll calls = %d", stored, provider.pollCalls)
+	}
+	var storedOperation model.OperationLog
+	if err := fixtureDB.First(&storedOperation, "id = ?", operation.ID).Error; err != nil {
+		t.Fatalf("load operation: %v", err)
+	}
+	if storedOperation.Status != model.OperationStatusFailure || storedOperation.ErrorMessage != "提交内容违反平台政策" {
+		t.Fatalf("failed operation = %#v", storedOperation)
+	}
+}
+
+func TestImageTaskWorkerStopsPollingUnknownNormalizedStatus(t *testing.T) {
+	provider := &terminalPollingImageProvider{task: ai.ImageTask{Status: ai.ImageTaskStatusUncertain}}
+	providerType := newID("uncertain-image-provider")
+	if err := ai.Register(ai.ProviderType{
+		ID: providerType, Name: providerType, Capabilities: []ai.Capability{ai.CapabilityImageGenerate},
+		New: func(json.RawMessage) (ai.Provider, error) { return provider, nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	leaseUntil := time.Now().UTC().Add(time.Minute)
+	item := model.ImageGenerationTask{
+		ID: newID("uncertain-image-task"), OwnerUID: newID("uncertain-owner"), ClientRequestID: newID("uncertain-request"),
+		Mode: ImageTaskModeGeneration, Status: model.ImageTaskRunning, ProviderType: providerType, ProviderTaskID: "original-upstream-task",
+		ReferencesJSON: "[]", ClaimID: "uncertain-claim", LeaseUntil: &leaseUntil, CreatedAt: now(), UpdatedAt: now(),
+	}
+	fixtureDB, fixtureErr := repository.DB()
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
+	}
+	if err := fixtureDB.Create(&item).Error; err != nil {
+		t.Fatalf("create image task fixture: %v", err)
+	}
+	t.Cleanup(func() { _ = repository.DeleteImageGenerationTask(item.ID) })
+
+	executeImageTask(context.Background(), item)
+
+	stored, found, err := repository.GetImageGenerationTask(item.ID)
+	if err != nil || !found || provider.pollCalls != 1 || stored.Status != model.ImageTaskUncertain || stored.ProviderTaskID != item.ProviderTaskID || stored.ClaimID != "" || stored.LeaseUntil != nil {
+		t.Fatalf("uncertain task = %#v, found = %t, poll calls = %d, err = %v", stored, found, provider.pollCalls, err)
 	}
 }
 

@@ -228,7 +228,7 @@ func parseDoubaoSeedreamResponse(status int, data []byte) (ai.ImageTask, error) 
 	if len(urls) == 0 {
 		return ai.ImageTask{}, doubaoSeedreamError{message: "Doubao Seedream 未返回图片 URL"}
 	}
-	return ai.ImageTask{Status: "completed", Progress: 100, ResultURLs: urls}, nil
+	return ai.ImageTask{Status: ai.ImageTaskStatusCompleted, Progress: 100, ResultURLs: urls}, nil
 }
 
 func doubaoSeedreamResponseError(raw json.RawMessage) string {

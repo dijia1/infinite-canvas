@@ -143,6 +143,14 @@ type ImageTask struct {
 	Error      string
 }
 
+const (
+	ImageTaskStatusPending   = "pending"
+	ImageTaskStatusRunning   = "running"
+	ImageTaskStatusCompleted = "completed"
+	ImageTaskStatusFailed    = "failed"
+	ImageTaskStatusUncertain = "uncertain"
+)
+
 type ImageTaskProvider interface {
 	CreateImageTask(context.Context, ImageTaskRequest) (ImageTask, error)
 	GetImageTask(context.Context, string) (ImageTask, error)

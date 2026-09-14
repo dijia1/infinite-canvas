@@ -171,7 +171,8 @@ func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.
 	if err := provider.doJSON(ctx, http.MethodGet, maiziBaseURL+"/tasks/"+id, nil, &result); err != nil {
 		return ai.ImageTask{}, err
 	}
-	return ai.ImageTask{ID: firstNonEmpty(result.ID, id), Status: strings.ToLower(strings.TrimSpace(result.Status)), Progress: result.Progress, ResultURLs: result.ResultURLs, Error: strings.TrimSpace(result.Error)}, nil
+	status, message := normalizeMaiziImageTaskStatus(result.Status, result.Error)
+	return ai.ImageTask{ID: firstNonEmpty(result.ID, id), Status: status, Progress: result.Progress, ResultURLs: result.ResultURLs, Error: message}, nil
 }
 
 func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference, mask *ai.ImageReference) (ai.ImageTask, error) {
@@ -189,7 +190,27 @@ func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.I
 	if len(result.Data) == 0 || result.Data[0].TaskID == "" {
 		return ai.ImageTask{}, maiziError{message: "MaiziAI 未返回任务 ID"}
 	}
-	return ai.ImageTask{ID: result.Data[0].TaskID, Status: strings.ToLower(strings.TrimSpace(result.Data[0].Status))}, nil
+	status, message := normalizeMaiziImageTaskStatus(result.Data[0].Status, "")
+	return ai.ImageTask{ID: result.Data[0].TaskID, Status: status, Error: message}, nil
+}
+
+func normalizeMaiziImageTaskStatus(rawStatus, errorMessage string) (string, string) {
+	message := strings.TrimSpace(errorMessage)
+	if message != "" {
+		return ai.ImageTaskStatusFailed, message
+	}
+	switch strings.ToLower(strings.TrimSpace(rawStatus)) {
+	case "pending", "queued", "submitted":
+		return ai.ImageTaskStatusPending, ""
+	case "processing", "running":
+		return ai.ImageTaskStatusRunning, ""
+	case "completed", "succeeded", "success":
+		return ai.ImageTaskStatusCompleted, ""
+	case "failed", "error", "cancelled", "canceled", "violation", "violated", "rejected":
+		return ai.ImageTaskStatusFailed, ""
+	default:
+		return ai.ImageTaskStatusUncertain, ""
+	}
 }
 
 func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, references []ai.ImageReference, redacted bool) map[string]any {
@@ -294,7 +315,8 @@ func (provider *maiziProvider) createMaskedEdit(ctx context.Context, request ai.
 		if err := json.Unmarshal(data, &pending); err != nil || strings.TrimSpace(pending.TaskID) == "" {
 			return ai.ImageTask{}, maiziError{message: "MaiziAI 响应无效"}
 		}
-		return ai.ImageTask{ID: strings.TrimSpace(pending.TaskID), Status: strings.ToLower(strings.TrimSpace(pending.Status))}, nil
+		status, message := normalizeMaiziImageTaskStatus(pending.Status, "")
+		return ai.ImageTask{ID: strings.TrimSpace(pending.TaskID), Status: status, Error: message}, nil
 	default:
 		return ai.ImageTask{}, maiziUpstreamError(response.StatusCode, data)
 	}
@@ -370,7 +392,7 @@ func parseMaiziV2CompletedEdit(data []byte) (ai.ImageTask, error) {
 	urls := make([]string, 0, len(response.Data))
 	for _, item := range response.Data {
 		if message := strings.TrimSpace(item.Error); message != "" {
-			return ai.ImageTask{Status: "failed", Error: message}, nil
+			return ai.ImageTask{Status: ai.ImageTaskStatusFailed, Error: message}, nil
 		}
 		if url := strings.TrimSpace(item.URL); url != "" {
 			urls = append(urls, url)
@@ -379,7 +401,7 @@ func parseMaiziV2CompletedEdit(data []byte) (ai.ImageTask, error) {
 	if len(urls) == 0 {
 		return ai.ImageTask{}, maiziError{message: "MaiziAI 响应无效"}
 	}
-	return ai.ImageTask{Status: "completed", Progress: 100, ResultURLs: urls}, nil
+	return ai.ImageTask{Status: ai.ImageTaskStatusCompleted, Progress: 100, ResultURLs: urls}, nil
 }
 
 func maiziImageOutput(request ai.ImageRequest) (string, string) {

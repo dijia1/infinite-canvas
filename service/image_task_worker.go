@@ -254,6 +254,8 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			if failure != nil {
 				if imageTaskProviderFailed(remote) {
 					failImageTask(ctx, item, failure)
+				} else if strings.ToLower(strings.TrimSpace(remote.Status)) == ai.ImageTaskStatusUncertain {
+					markImageTaskUncertain(item, imageTaskFailureMessage(failure))
 				} else {
 					releaseImageTaskForRetry(item, "供应商图片结果不完整，系统将继续查询原任务")
 				}
@@ -273,18 +275,13 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 }
 
 func imageTaskProviderFailed(task ai.ImageTask) bool {
-	switch strings.ToLower(strings.TrimSpace(task.Status)) {
-	case "failed", "error", "cancelled", "canceled", "violated", "rejected":
-		return true
-	default:
-		return false
-	}
+	return strings.ToLower(strings.TrimSpace(task.Status)) == ai.ImageTaskStatusFailed
 }
 
 func imageTaskTerminalResult(task ai.ImageTask) ([]string, error, bool) {
 	status := strings.ToLower(strings.TrimSpace(task.Status))
 	switch status {
-	case "completed", "succeeded", "success":
+	case ai.ImageTaskStatusCompleted:
 		urls := make([]string, 0, len(task.ResultURLs))
 		for _, url := range task.ResultURLs {
 			if url = strings.TrimSpace(url); url != "" {
@@ -295,14 +292,18 @@ func imageTaskTerminalResult(task ai.ImageTask) ([]string, error, bool) {
 			return nil, errors.New("供应商任务完成但未返回图片"), true
 		}
 		return urls, nil, true
-	case "failed", "error", "cancelled", "canceled", "violated", "rejected":
+	case ai.ImageTaskStatusFailed:
 		message := strings.TrimSpace(task.Error)
 		if message == "" {
 			message = "供应商任务失败"
 		}
 		return nil, safeMessageError{message: message}, true
-	default:
+	case ai.ImageTaskStatusPending, ai.ImageTaskStatusRunning:
 		return nil, nil, false
+	case ai.ImageTaskStatusUncertain:
+		return nil, safeMessageError{message: "供应商返回未知任务状态，请核对原任务"}, true
+	default:
+		return nil, safeMessageError{message: "供应商返回不支持的任务状态，请核对原任务"}, true
 	}
 }
 

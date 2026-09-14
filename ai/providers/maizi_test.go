@@ -287,7 +287,7 @@ func TestMaiziProviderStartsPollingForMaskedV2EditAcceptedResponse(t *testing.T)
 	if err != nil {
 		t.Fatalf("CreateImageTask() error = %v", err)
 	}
-	if task.ID != "task-v2-pending" || task.Status != "processing" || len(task.ResultURLs) != 0 {
+	if task.ID != "task-v2-pending" || task.Status != ai.ImageTaskStatusRunning || len(task.ResultURLs) != 0 {
 		t.Fatalf("CreateImageTask() = %#v", task)
 	}
 }
@@ -360,6 +360,61 @@ func TestMaiziProviderGetsAsyncTaskStatus(t *testing.T) {
 	}
 	if task.Status != "completed" || task.Progress != 100 || len(task.ResultURLs) != 1 {
 		t.Fatalf("GetImageTask() = %#v", task)
+	}
+}
+
+func TestMaiziProviderNormalizesAsyncTaskStatuses(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+
+	typeInfo, _ := ai.Type("maizi-image")
+	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`))
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	tasks := provider.(ai.ImageTaskProvider)
+	for _, fixture := range []struct {
+		name       string
+		status     string
+		errorMsg   string
+		wantStatus string
+		wantError  string
+	}{
+		{name: "pending", status: "pending", wantStatus: ai.ImageTaskStatusPending},
+		{name: "queued", status: "queued", wantStatus: ai.ImageTaskStatusPending},
+		{name: "submitted", status: "submitted", wantStatus: ai.ImageTaskStatusPending},
+		{name: "processing", status: "processing", wantStatus: ai.ImageTaskStatusRunning},
+		{name: "running", status: "running", wantStatus: ai.ImageTaskStatusRunning},
+		{name: "completed", status: "completed", wantStatus: ai.ImageTaskStatusCompleted},
+		{name: "succeeded", status: "succeeded", wantStatus: ai.ImageTaskStatusCompleted},
+		{name: "success", status: "success", wantStatus: ai.ImageTaskStatusCompleted},
+		{name: "failed", status: "failed", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "error", status: "error", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "cancelled", status: "cancelled", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "canceled", status: "canceled", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "violation", status: "violation", errorMsg: "提交内容违反平台政策", wantStatus: ai.ImageTaskStatusFailed, wantError: "提交内容违反平台政策"},
+		{name: "violated", status: "violated", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "rejected", status: "rejected", wantStatus: ai.ImageTaskStatusFailed},
+		{name: "future failure with error", status: "content_blocked", errorMsg: "内容被拒绝", wantStatus: ai.ImageTaskStatusFailed, wantError: "内容被拒绝"},
+		{name: "unknown without error", status: "future_state", wantStatus: ai.ImageTaskStatusUncertain},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			body, marshalErr := json.Marshal(map[string]any{"id": "task-1", "status": fixture.status, "progress": 50, "error_msg": fixture.errorMsg})
+			if marshalErr != nil {
+				t.Fatal(marshalErr)
+			}
+			http.DefaultTransport = roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return jsonResponse(string(body)), nil
+			})
+
+			task, getErr := tasks.GetImageTask(context.Background(), "task-1")
+			if getErr != nil {
+				t.Fatalf("GetImageTask() error = %v", getErr)
+			}
+			if task.Status != fixture.wantStatus || task.Error != fixture.wantError {
+				t.Fatalf("GetImageTask() = %#v, want status %q error %q", task, fixture.wantStatus, fixture.wantError)
+			}
+		})
 	}
 }
 
