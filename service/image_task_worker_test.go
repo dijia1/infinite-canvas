@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -29,6 +31,26 @@ type transientPollingImageProvider struct {
 type terminalPollingImageProvider struct {
 	pollCalls int
 	task      ai.ImageTask
+}
+
+type synchronousImageProvider struct {
+	createCalls int
+	pollCalls   int
+	task        ai.ImageTask
+}
+
+func (provider *synchronousImageProvider) CreateImageTask(context.Context, ai.ImageTaskRequest) (ai.ImageTask, error) {
+	provider.createCalls++
+	return provider.task, nil
+}
+
+func (provider *synchronousImageProvider) GetImageTask(context.Context, string) (ai.ImageTask, error) {
+	provider.pollCalls++
+	return ai.ImageTask{}, errors.New("must not poll a synchronous terminal result")
+}
+
+func (provider *synchronousImageProvider) SummarizeImageTaskRequest(ai.ImageTaskRequest) (ai.ImageTaskRequestSummary, error) {
+	return ai.ImageTaskRequestSummary{}, nil
 }
 
 func (provider *terminalPollingImageProvider) CreateImageTask(context.Context, ai.ImageTaskRequest) (ai.ImageTask, error) {
@@ -144,6 +166,93 @@ func TestImageTaskTerminalResultHandlesDirectURLsAndProviderFailures(t *testing.
 	urls, failure, terminal = imageTaskTerminalResult(ai.ImageTask{Status: ai.ImageTaskStatusRunning})
 	if terminal || failure != nil || len(urls) != 0 {
 		t.Fatalf("running result = %#v, %v, %t", urls, failure, terminal)
+	}
+}
+
+func TestImageTaskWorkerPersistsReturnedProviderIDBeforeTerminalHandling(t *testing.T) {
+	imageServer := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "image/png")
+		_, _ = response.Write(tinyPNG)
+	}))
+	t.Cleanup(imageServer.Close)
+
+	for _, fixture := range []struct {
+		name                string
+		providerTaskID      string
+		status              string
+		errorMessage        string
+		wantTaskStatus      model.ImageGenerationTaskStatus
+		wantOperationStatus model.OperationStatus
+	}{
+		{name: "completed with provider ID", providerTaskID: "upstream-completed", status: ai.ImageTaskStatusCompleted, wantTaskStatus: model.ImageTaskSucceeded, wantOperationStatus: model.OperationStatusSuccess},
+		{name: "failed with provider ID", providerTaskID: "upstream-failed", status: ai.ImageTaskStatusFailed, errorMessage: "上游拒绝", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure},
+		{name: "uncertain with provider ID", providerTaskID: "upstream-uncertain", status: ai.ImageTaskStatusUncertain, wantTaskStatus: model.ImageTaskUncertain, wantOperationStatus: model.OperationStatusSubmitted},
+		{name: "completed without provider ID", status: ai.ImageTaskStatusCompleted, wantTaskStatus: model.ImageTaskSucceeded, wantOperationStatus: model.OperationStatusSuccess},
+		{name: "failed without provider ID", status: ai.ImageTaskStatusFailed, errorMessage: "同步生成失败", wantTaskStatus: model.ImageTaskFailed, wantOperationStatus: model.OperationStatusFailure},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			resultURLs := []string(nil)
+			if fixture.status == ai.ImageTaskStatusCompleted {
+				resultURLs = []string{imageServer.URL + "/result.png"}
+			}
+			provider := &synchronousImageProvider{task: ai.ImageTask{
+				ID: fixture.providerTaskID, Status: fixture.status, Progress: 100,
+				ResultURLs: resultURLs, Error: fixture.errorMessage,
+			}}
+			providerType := newID("synchronous-image-provider")
+			if err := ai.Register(ai.ProviderType{
+				ID: providerType, Name: providerType, Capabilities: []ai.Capability{ai.CapabilityImageGenerate},
+				New: func(json.RawMessage) (ai.Provider, error) { return provider, nil },
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			leaseUntil := time.Now().UTC().Add(time.Minute)
+			item := model.ImageGenerationTask{
+				ID: newID("synchronous-image-task"), OwnerUID: newID("synchronous-owner"), ClientRequestID: newID("synchronous-request"),
+				Mode: ImageTaskModeGeneration, Status: model.ImageTaskQueued, ProviderType: providerType,
+				ReferencesJSON: "[]", RequestSummary: "{}", OperationLogID: newID("synchronous-operation"),
+				ClaimID: newID("synchronous-claim"), LeaseUntil: &leaseUntil, CreatedAt: now(), UpdatedAt: now(),
+			}
+			operation := model.OperationLog{
+				ID: item.OperationLogID, ActorUID: item.OwnerUID, Action: "image_generate", Status: model.OperationStatusSubmitted,
+				TargetType: "image_generation", TargetID: item.ID, CreatedAt: time.Now().UTC(),
+			}
+			fixtureDB, fixtureErr := repository.DB()
+			if fixtureErr != nil {
+				t.Fatal(fixtureErr)
+			}
+			if err := fixtureDB.Create(&item).Error; err != nil {
+				t.Fatalf("create image task fixture: %v", err)
+			}
+			if err := fixtureDB.Create(&operation).Error; err != nil {
+				t.Fatalf("create operation fixture: %v", err)
+			}
+			t.Cleanup(func() {
+				_ = repository.DeleteImageGenerationTask(item.ID)
+				_ = fixtureDB.Delete(&model.OperationLog{}, "id = ?", operation.ID).Error
+			})
+
+			executeImageTask(context.Background(), item)
+
+			stored, found, err := repository.GetImageGenerationTask(item.ID)
+			if err != nil || !found {
+				t.Fatalf("GetImageGenerationTask() = %#v, %t, %v", stored, found, err)
+			}
+			if stored.Status != fixture.wantTaskStatus || stored.ProviderTaskID != fixture.providerTaskID {
+				t.Fatalf("terminal task = %#v, want status %q provider task ID %q", stored, fixture.wantTaskStatus, fixture.providerTaskID)
+			}
+			var storedOperation model.OperationLog
+			if err := fixtureDB.First(&storedOperation, "id = ?", operation.ID).Error; err != nil {
+				t.Fatalf("load operation: %v", err)
+			}
+			if storedOperation.Status != fixture.wantOperationStatus || storedOperation.ProviderTaskID != fixture.providerTaskID {
+				t.Fatalf("terminal operation = %#v, want status %q provider task ID %q", storedOperation, fixture.wantOperationStatus, fixture.providerTaskID)
+			}
+			if provider.createCalls != 1 || provider.pollCalls != 0 {
+				t.Fatalf("provider calls = create %d poll %d, want create 1 poll 0", provider.createCalls, provider.pollCalls)
+			}
+		})
 	}
 }
 
