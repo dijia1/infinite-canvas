@@ -414,10 +414,35 @@ func canvasGraphViolations(document map[string]any) map[canvasGraphViolation]int
 }
 
 func canvasGraphNumberIdentity(number json.Number) string {
+	if canvasJSONNumberCoefficientIsZero(number.String()) {
+		return "0"
+	}
 	if rational, ok := new(big.Rat).SetString(number.String()); ok {
 		return rational.RatString()
 	}
 	return "raw:" + number.String()
+}
+
+func canvasJSONNumberCoefficientIsZero(value string) bool {
+	if exponent := strings.IndexAny(value, "eE"); exponent >= 0 {
+		value = value[:exponent]
+	}
+	if strings.HasPrefix(value, "-") {
+		value = value[1:]
+	}
+	sawDigit := false
+	for _, character := range value {
+		switch {
+		case character == '.':
+		case character == '0':
+			sawDigit = true
+		case character >= '1' && character <= '9':
+			return false
+		default:
+			return false
+		}
+	}
+	return sawDigit
 }
 
 func validateCanvasDocument(document map[string]any) error {

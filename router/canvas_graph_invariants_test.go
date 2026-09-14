@@ -117,6 +117,24 @@ func TestCanvasGraphInvariantBaselineCanBePreservedReducedButNotChangedOrWorsene
 	}
 }
 
+func TestCanvasGraphInvariantBaselineTreatsLongExponentZeroAsZero(t *testing.T) {
+	for index, zero := range []string{"0e999999999999999999999", "-0e999999999999999999999"} {
+		t.Run(zero, func(t *testing.T) {
+			suffix := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
+			owner := "graph-long-zero-owner-" + suffix
+			id := "graph-long-zero-" + suffix
+			baseline := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":` + zero + `,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+			candidate := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":1,"y":2,"k":1}}`
+			seedCanvasGraphProject(t, id, owner, baseline)
+
+			response := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":1,"title":"preserved","document":`+candidate+`}`)
+			if response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
+				t.Fatalf("long exponent zero must preserve the same violation = %d/%s", response.Code, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	owner := "graph-replay-owner-" + suffix
