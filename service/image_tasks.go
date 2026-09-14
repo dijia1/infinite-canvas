@@ -58,6 +58,29 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	if existingFound && existing.RequestHash == "" {
 		return imageTaskView(ctx, user, existing)
 	}
+	if existingFound {
+		if request.ProviderID == "" {
+			request.ProviderID = existing.ProviderID
+		}
+		requestHash, err := imageTaskRequestHash(request)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		if existing.RequestHash != requestHash {
+			return ImageTaskView{}, ErrGenerationRequestConflict
+		}
+		return imageTaskView(ctx, user, existing)
+	}
+
+	provider, err := selectedImageTaskProvider(request.Mode, request.ProviderID)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	request.ProviderID = provider.ID
+	requestHash, err := imageTaskRequestHash(request)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
 	if len(request.ReferenceMediaIDs) > 0 {
 		references, err := resolveImageTaskMediaReferences(ctx, user, request.ReferenceMediaIDs)
 		if err != nil {
@@ -66,24 +89,9 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		request.References = references
 	}
 
-	provider, err := selectedImageTaskProvider(request.Mode, request.ProviderID)
-	if err != nil {
-		return ImageTaskView{}, err
-	}
-	request.ProviderID = provider.ID
 	request, err = normalizeImageTaskRequestForProvider(provider, request)
 	if err != nil {
 		return ImageTaskView{}, err
-	}
-	requestHash, err := imageTaskRequestHash(request)
-	if err != nil {
-		return ImageTaskView{}, err
-	}
-	if existingFound {
-		if existing.RequestHash != requestHash {
-			return ImageTaskView{}, ErrGenerationRequestConflict
-		}
-		return imageTaskView(ctx, user, existing)
 	}
 	amount, err := imageTaskAmount(provider, request.Request.Resolution)
 	if err != nil {
@@ -178,6 +186,9 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 	if request.Request.Prompt == "" {
 		return CreateImageTaskRequest{}, safeMessageError{message: "提示词不能为空"}
 	}
+	request.Request.Quality = strings.TrimSpace(request.Request.Quality)
+	request.Request.Size = strings.TrimSpace(request.Request.Size)
+	request.Request.Resolution = strings.TrimSpace(request.Request.Resolution)
 	if request.Request.Count < 1 {
 		request.Request.Count = 1
 	}

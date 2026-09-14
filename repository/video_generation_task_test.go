@@ -106,7 +106,7 @@ func TestConcurrentVideoGenerationHashConflictWaitsForUniqueKeyWinner(t *testing
 	loser := winner
 	loser.ID, loser.OperationLogID, loser.RequestHash = "video-loser", "video-loser-operation", strings.Repeat("b", 64)
 	go func() {
-		_, err := CreateVideoGenerationTask(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID}, nil)
+		_, err := CreateVideoGenerationTask(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID}, []string{"missing-loser-media"})
 		result <- err
 	}()
 	waitForTransactionIDLock(t, database, holderXID)
@@ -148,6 +148,17 @@ func TestVideoTaskCannotReferenceDeletingMedia(t *testing.T) {
 	}
 	if _, found, _ := GetVideoGenerationTask(item.ID, "owner"); found {
 		t.Fatal("failed task insert leaked")
+	}
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var operations int64
+	if err := database.Model(&model.OperationLog{}).Where("id = ?", item.OperationLogID).Count(&operations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if operations != 0 {
+		t.Fatalf("failed media validation leaked %d operation logs", operations)
 	}
 }
 func TestVideoTaskWorkersClaimOnceAndFenceOldLease(t *testing.T) {

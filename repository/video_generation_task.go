@@ -43,7 +43,25 @@ func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.O
 		return item, err
 	}
 	err = db.Transaction(func(tx *gorm.DB) error {
-		// Share sorted media locks with Canvas and retention before publishing task references.
+		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "client_request_id"}}, DoNothing: true}).Create(&item)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			owner, client := item.OwnerUID, item.ClientRequestID
+			requestHash := item.RequestHash
+			item = model.VideoGenerationTask{}
+			if err := tx.Where("owner_uid = ? AND client_request_id = ?", owner, client).First(&item).Error; err != nil {
+				return err
+			}
+			if !generationRequestHashMatches(item.RequestHash, requestHash) {
+				return ErrGenerationRequestConflict
+			}
+			return nil
+		}
+
+		// Only the unique-key winner locks and validates media before the task
+		// and operation become visible at commit.
 		var media []model.Media
 		if len(inputs) > 0 {
 			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", inputs).Order("id").Find(&media).Error; err != nil {
@@ -68,22 +86,6 @@ func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.O
 					}
 				}
 			}
-		}
-		result := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "client_request_id"}}, DoNothing: true}).Create(&item)
-		if result.Error != nil {
-			return result.Error
-		}
-		if result.RowsAffected == 0 {
-			owner, client := item.OwnerUID, item.ClientRequestID
-			requestHash := item.RequestHash
-			item = model.VideoGenerationTask{}
-			if err := tx.Where("owner_uid = ? AND client_request_id = ?", owner, client).First(&item).Error; err != nil {
-				return err
-			}
-			if !generationRequestHashMatches(item.RequestHash, requestHash) {
-				return ErrGenerationRequestConflict
-			}
-			return nil
 		}
 		return tx.Create(&operation).Error
 	})

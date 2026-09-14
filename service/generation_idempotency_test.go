@@ -76,6 +76,8 @@ func (*generationIdempotencyInputStore) ReadPrefix(context.Context, string, int6
 }
 
 func (generationIdempotencyProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
+	request.Request.Quality = "provider-default"
+	request.Request.Options = ai.ImageRequestOptions{"providerDefault": json.RawMessage(`true`)}
 	return request, nil
 }
 
@@ -152,6 +154,19 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 	image, err := CreateImageTask(ctx, imageRequest)
 	if err != nil {
 		t.Fatal(err)
+	}
+	hashRequest, err := normalizeImageTaskRequest(imageRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashRequest.ProviderID = provider.ID
+	expectedImageHash, err := imageTaskRequestHash(hashRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedImage, found, err := repository.GetImageGenerationTaskByClientRequest("generation-idempotency-owner", imageRequest.ClientRequestID)
+	if err != nil || !found || persistedImage.RequestHash != expectedImageHash || persistedImage.Quality != "provider-default" {
+		t.Fatalf("persisted image identity = %#v, found=%t, err=%v, expected hash=%s", persistedImage, found, err, expectedImageHash)
 	}
 	replayedImage, err := CreateImageTask(ctx, imageRequest)
 	if err != nil || replayedImage.ID != image.ID {
@@ -261,5 +276,95 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 	}
 	if imageTasks != 2 || videoTasks != 1 || operations != 3 {
 		t.Fatalf("service replays persisted image tasks=%d video tasks=%d operations=%d", imageTasks, videoTasks, operations)
+	}
+}
+
+func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidation(t *testing.T) {
+	const owner = "retired-generation-owner"
+	previous, err := repository.GetSettings()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.SaveSettings(model.Settings{}, now()); err != nil {
+		t.Fatal(err)
+	}
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = database.Where("owner_uid = ?", owner).Delete(&model.ImageGenerationTask{}).Error
+		_ = database.Where("owner_uid = ?", owner).Delete(&model.VideoGenerationTask{}).Error
+		_ = database.Where("actor_uid = ?", owner).Delete(&model.OperationLog{}).Error
+		_, _ = repository.SaveSettings(previous, now())
+	})
+	ctx := WithPortalUser(context.Background(), PortalUser{UID: owner})
+
+	imageRequest, err := normalizeImageTaskRequest(CreateImageTaskRequest{
+		ClientRequestID: "retired-image-request", Mode: ImageTaskModeEdit,
+		Request:           ai.ImageRequest{Prompt: "restore exact image", Count: 1, Resolution: "1k"},
+		ReferenceMediaIDs: []string{"missing-retired-image"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageHashRequest := imageRequest
+	imageHashRequest.ProviderID = "retired-image-provider"
+	imageHash, err := imageTaskRequestHash(imageHashRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageItem := model.ImageGenerationTask{
+		ID: "retired-image-task", OwnerUID: owner, ClientRequestID: imageRequest.ClientRequestID,
+		RequestHash: imageHash, Mode: imageRequest.Mode, Status: model.ImageTaskQueued,
+		ProviderID: "retired-image-provider", ReferencesJSON: "[]", OperationLogID: "retired-image-operation",
+	}
+	if _, inserted, err := repository.CreateImageGenerationTaskWithOperationLog(imageItem, model.OperationLog{
+		ID: imageItem.OperationLogID, ActorUID: owner, Status: model.OperationStatusSubmitted,
+	}); err != nil || !inserted {
+		t.Fatalf("seed retired image task inserted=%t, err=%v", inserted, err)
+	}
+	image, err := CreateImageTask(ctx, imageRequest)
+	if err != nil || image.ID != imageItem.ID {
+		t.Fatalf("retired image exact replay = %#v, err=%v", image, err)
+	}
+	changedImage := imageRequest
+	changedImage.Request.Prompt = "changed image"
+	if _, err := CreateImageTask(ctx, changedImage); !errors.Is(err, ErrGenerationRequestConflict) {
+		t.Fatalf("retired image changed replay err=%v", err)
+	}
+
+	videoRequest, err := normalizeVideoTaskRequest(CreateVideoTaskRequest{
+		ClientRequestID: "retired-video-request", Prompt: "restore exact video",
+		Seconds: 5, Size: "16:9", Resolution: "720p", ImageMediaIDs: []string{"missing-retired-video-image"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoHashRequest := videoRequest
+	videoHashRequest.ProviderID = "retired-video-provider"
+	videoHash, err := videoTaskRequestHash(videoHashRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	videoItem := model.VideoGenerationTask{
+		ID: "retired-video-task", OwnerUID: owner, ClientRequestID: videoRequest.ClientRequestID,
+		RequestHash: videoHash, Status: "queued", ProviderID: "retired-video-provider",
+		InputMediaIDsJSON: `["missing-retired-video-image"]`, ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]",
+		OperationLogID: "retired-video-operation",
+	}
+	if _, err := repository.CreateVideoGenerationTask(videoItem, model.OperationLog{
+		ID: videoItem.OperationLogID, ActorUID: owner, Status: model.OperationStatusSubmitted,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	video, err := CreateVideoGenerationTask(ctx, videoRequest)
+	if err != nil || video.ID != videoItem.ID {
+		t.Fatalf("retired video exact replay = %#v, err=%v", video, err)
+	}
+	changedVideo := videoRequest
+	changedVideo.GenerateAudio = true
+	if _, err := CreateVideoGenerationTask(ctx, changedVideo); !errors.Is(err, ErrGenerationRequestConflict) {
+		t.Fatalf("retired video changed replay err=%v", err)
 	}
 }

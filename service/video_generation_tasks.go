@@ -101,6 +101,19 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	if previousFound && previous.RequestHash == "" {
 		return videoGenerationTaskView(ctx, user, previous)
 	}
+	if previousFound {
+		if request.ProviderID == "" {
+			request.ProviderID = previous.ProviderID
+		}
+		requestHash, err := videoTaskRequestHash(request)
+		if err != nil {
+			return VideoTaskView{}, err
+		}
+		if previous.RequestHash != requestHash {
+			return VideoTaskView{}, ErrGenerationRequestConflict
+		}
+		return videoGenerationTaskView(ctx, user, previous)
+	}
 	settings, err := AdminSettings()
 	if err != nil {
 		return VideoTaskView{}, err
@@ -116,12 +129,6 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	requestHash, err := videoTaskRequestHash(request)
 	if err != nil {
 		return VideoTaskView{}, err
-	}
-	if previousFound {
-		if previous.RequestHash != requestHash {
-			return VideoTaskView{}, ErrGenerationRequestConflict
-		}
-		return videoGenerationTaskView(ctx, user, previous)
 	}
 	amount, err := videoTaskAmount(provider, request)
 	if err != nil {
