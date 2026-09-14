@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -51,7 +52,7 @@ func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 		Request:         ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution, OutputFormat: payload.OutputFormat, Background: payload.Background, Options: options},
 	})
 	if err != nil {
-		FailError(w, err)
+		failGenerationTaskError(w, err)
 		return
 	}
 	OK(w, task)
@@ -91,7 +92,7 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 		Mask:              mask,
 	})
 	if err != nil {
-		FailError(w, err)
+		failGenerationTaskError(w, err)
 		return
 	}
 	OK(w, task)
@@ -162,10 +163,18 @@ func AIVideos(w http.ResponseWriter, r *http.Request) {
 	}
 	task, err := service.CreateVideoGenerationTask(r.Context(), request)
 	if err != nil {
-		FailError(w, err)
+		failGenerationTaskError(w, err)
 		return
 	}
 	OK(w, task)
+}
+
+func failGenerationTaskError(w http.ResponseWriter, err error) {
+	if errors.Is(err, service.ErrGenerationRequestConflict) {
+		FailStatus(w, http.StatusConflict, "客户端请求 ID 已用于不同生成请求")
+		return
+	}
+	FailError(w, err)
 }
 
 func rejectReservedWorkflowRequestID(w http.ResponseWriter, requestID string) bool {

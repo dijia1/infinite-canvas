@@ -53,7 +53,7 @@ func TestListSucceededImageGenerationTasksFinishedBetweenReturnsOnlyCompletedTas
 
 func TestCreateImageGenerationTaskWithOperationLogIsIdempotentPerOwnerAndClientRequest(t *testing.T) {
 	database := useImageTaskTestDB(t)
-	item := model.ImageGenerationTask{ID: "task-1", OwnerUID: "user-1", ClientRequestID: "client-1", Status: model.ImageTaskQueued, OperationLogID: "operation-1", CreatedAt: "2026-08-24T10:00:00Z", UpdatedAt: "2026-08-24T10:00:00Z"}
+	item := model.ImageGenerationTask{ID: "task-1", OwnerUID: "user-1", ClientRequestID: "client-1", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskQueued, OperationLogID: "operation-1", CreatedAt: "2026-08-24T10:00:00Z", UpdatedAt: "2026-08-24T10:00:00Z"}
 	operation := model.OperationLog{ID: item.OperationLogID, ActorUID: item.OwnerUID, TargetID: item.ID, Status: model.OperationStatusSubmitted, CreatedAt: time.Now().UTC()}
 	created, inserted, err := CreateImageGenerationTaskWithOperationLog(item, operation)
 	if err != nil || !inserted || created.ID != item.ID || created.OperationLogID != operation.ID {
@@ -77,6 +77,113 @@ func TestCreateImageGenerationTaskWithOperationLogIsIdempotentPerOwnerAndClientR
 	if err := database.Order("id").Find(&operations).Error; err != nil || len(operations) != 2 || operations[1].ActorUID != other.OwnerUID || operations[1].TargetID != other.ID {
 		t.Fatalf("owner-scoped audit records = %#v, err=%v", operations, err)
 	}
+}
+
+func TestCreateImageGenerationTaskRejectsDifferentOrMissingHashForHashedTask(t *testing.T) {
+	useImageTaskTestDB(t)
+	item := model.ImageGenerationTask{ID: "hashed-image", OwnerUID: "owner", ClientRequestID: "client", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskQueued, OperationLogID: "hashed-image-operation"}
+	if _, inserted, err := CreateImageGenerationTaskWithOperationLog(item, model.OperationLog{ID: item.OperationLogID}); err != nil || !inserted {
+		t.Fatalf("create hashed image = inserted %t, err=%v", inserted, err)
+	}
+	for _, hash := range []string{strings.Repeat("b", 64), ""} {
+		duplicate := item
+		duplicate.ID, duplicate.OperationLogID, duplicate.RequestHash = "duplicate-"+hash, "duplicate-operation-"+hash, hash
+		if _, inserted, err := CreateImageGenerationTaskWithOperationLog(duplicate, model.OperationLog{ID: duplicate.OperationLogID}); !errors.Is(err, ErrGenerationRequestConflict) || inserted {
+			t.Fatalf("duplicate hash %q = inserted %t, err=%v", hash, inserted, err)
+		}
+	}
+}
+
+func TestCreateImageGenerationTaskKeepsLegacyHashlessReplayBehavior(t *testing.T) {
+	useImageTaskTestDB(t)
+	legacy := model.ImageGenerationTask{ID: "legacy-image", OwnerUID: "owner", ClientRequestID: "legacy-client", Status: model.ImageTaskQueued, OperationLogID: "legacy-operation"}
+	if _, inserted, err := CreateImageGenerationTaskWithOperationLog(legacy, model.OperationLog{ID: legacy.OperationLogID}); err != nil || !inserted {
+		t.Fatalf("create legacy image = inserted %t, err=%v", inserted, err)
+	}
+	duplicate := legacy
+	duplicate.ID, duplicate.OperationLogID, duplicate.RequestHash = "duplicate-image", "duplicate-operation", strings.Repeat("b", 64)
+	got, inserted, err := CreateImageGenerationTaskWithOperationLog(duplicate, model.OperationLog{ID: duplicate.OperationLogID})
+	if err != nil || inserted || got.ID != legacy.ID {
+		t.Fatalf("legacy replay = %#v, inserted=%t, err=%v", got, inserted, err)
+	}
+}
+
+func TestConcurrentImageGenerationHashConflictWaitsForUniqueKeyWinner(t *testing.T) {
+	database := useImageTaskTestDB(t)
+	winner := model.ImageGenerationTask{ID: "image-winner", OwnerUID: "image-race-owner", ClientRequestID: "image-race-client", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskQueued, OperationLogID: "image-winner-operation", CreatedAt: "2026-09-14T08:00:00Z", UpdatedAt: "2026-09-14T08:00:00Z"}
+	holder := database.Begin()
+	if holder.Error != nil {
+		t.Fatal(holder.Error)
+	}
+	t.Cleanup(func() { _ = holder.Rollback().Error })
+	if err := holder.Create(&winner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Create(&model.OperationLog{ID: winner.OperationLogID, ActorUID: winner.OwnerUID, TargetID: winner.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var holderXID string
+	if err := holder.Raw("SELECT txid_current()::text").Scan(&holderXID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	type createResult struct {
+		inserted bool
+		err      error
+	}
+	result := make(chan createResult, 1)
+	loser := winner
+	loser.ID, loser.OperationLogID, loser.RequestHash = "image-loser", "image-loser-operation", strings.Repeat("b", 64)
+	go func() {
+		_, inserted, err := CreateImageGenerationTaskWithOperationLog(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID})
+		result <- createResult{inserted: inserted, err: err}
+	}()
+	waitForTransactionIDLock(t, database, holderXID)
+	select {
+	case completed := <-result:
+		t.Fatalf("loser returned before winner committed: %+v", completed)
+	default:
+	}
+	if err := holder.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+	completed := <-result
+	if completed.inserted || !errors.Is(completed.err, ErrGenerationRequestConflict) {
+		t.Fatalf("loser = inserted %t, err=%v", completed.inserted, completed.err)
+	}
+	var tasks, operations int64
+	if err := database.Model(&model.ImageGenerationTask{}).Where("owner_uid = ? AND client_request_id = ?", winner.OwnerUID, winner.ClientRequestID).Count(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&model.OperationLog{}).Where("id IN ?", []string{winner.OperationLogID, loser.OperationLogID}).Count(&operations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tasks != 1 || operations != 1 {
+		t.Fatalf("race persisted tasks=%d operations=%d", tasks, operations)
+	}
+	current := time.Now().UTC()
+	if _, found, err := ClaimNextImageGenerationTask(current, time.Minute); err != nil || !found {
+		t.Fatalf("first claim = found %t, err=%v", found, err)
+	}
+	if _, found, err := ClaimNextImageGenerationTask(current, time.Minute); err != nil || found {
+		t.Fatalf("second claim = found %t, err=%v", found, err)
+	}
+}
+
+func waitForTransactionIDLock(t *testing.T, database *gorm.DB, transactionID string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		var waiting int64
+		if err := database.Raw("SELECT count(*) FROM pg_locks WHERE locktype = 'transactionid' AND NOT granted AND transactionid::text = ?", transactionID).Scan(&waiting).Error; err != nil {
+			t.Fatal(err)
+		}
+		if waiting > 0 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("contending insert never waited on the winner transaction")
 }
 
 func TestCreateImageGenerationTaskWithOperationLogRollsBackWhenAuditInsertFails(t *testing.T) {

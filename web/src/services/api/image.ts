@@ -33,6 +33,8 @@ export type ImageGenerationTask = {
     images: GeneratedImage[];
 };
 
+export class ImageRequestRejectedError extends Error {}
+
 type UserImageUploadData = {
     mediaId?: string;
     url?: string;
@@ -178,6 +180,14 @@ function aiHeaders(contentType?: string) {
     return contentType ? { "Content-Type": contentType } : undefined;
 }
 
+function imageCreateError(error: unknown, fallback: string): never {
+    if (error instanceof ImageRequestRejectedError) throw error;
+    if (axios.isAxiosError(error) && error.response && error.response.status >= 400 && error.response.status < 500 && ![408, 499].includes(error.response.status)) {
+        throw new ImageRequestRejectedError(apiRequestError(error, fallback));
+    }
+    throw new Error(apiRequestError(error, fallback));
+}
+
 export async function requestGeneration(config: AiConfig, prompt: string, clientRequestId: string): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
@@ -206,7 +216,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
         });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(apiRequestError(error, "请求失败"));
+        imageCreateError(error, "请求失败");
     }
 }
 
@@ -266,7 +276,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         const response = await axios.post<ImageApiResponse>(aiApiPath("/images/edits"), formData, { headers: aiHeaders() });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(apiRequestError(error, "请求失败"));
+        imageCreateError(error, "请求失败");
     }
 }
 

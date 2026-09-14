@@ -552,6 +552,29 @@ test("recovers a task by client request ID when the create response is lost", as
     assert.equal(image?.metadata?.mediaId, "media-recovered-create");
 });
 
+test("does not recover an old image task after an explicit create conflict", async () => {
+    const { ImageRequestRejectedError } = await import("@/services/api/image");
+    const source = node("source", CanvasNodeType.Config);
+    let lookups = 0;
+    const { controller, nodesRef } = setup([source], [], {
+        requestGeneration: async () => {
+            throw new ImageRequestRejectedError("客户端请求 ID 已用于不同生成请求");
+        },
+        getImageTaskByClientRequest: async () => {
+            lookups++;
+            return completedTask("wrong-old-task", "wrong-old-media");
+        },
+    });
+
+    await controller.generateNode("source", "image", "a forest");
+
+    const image = nodesRef.current.find((item) => item.type === CanvasNodeType.Image);
+    assert.equal(lookups, 0);
+    assert.equal(image?.metadata?.status, "error");
+    assert.equal(image?.metadata?.imageTaskClientRequestId, undefined);
+    assert.equal(image?.metadata?.mediaId, undefined);
+});
+
 test("routes video generation through the video service", async () => {
     const source = node("source", CanvasNodeType.Config, { generationMode: "video" });
     const { controller, nodesRef, calls } = setup([source]);

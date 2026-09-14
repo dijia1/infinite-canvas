@@ -39,6 +39,9 @@ func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, o
 		if err := transaction.Where("owner_uid = ? AND client_request_id = ?", item.OwnerUID, item.ClientRequestID).First(&created).Error; err != nil {
 			return err
 		}
+		if !generationRequestHashMatches(created.RequestHash, item.RequestHash) {
+			return ErrGenerationRequestConflict
+		}
 		return nil
 	})
 	if err != nil {

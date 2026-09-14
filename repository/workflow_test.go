@@ -96,7 +96,17 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
  VALUES ('legacy-image-task', 'legacy-owner', 'legacy-request', 'running', '2026-09-08T01:00:00Z', '2026-09-08T01:00:01Z')`).Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"claim_id", "lease_until"} {
+	if err := legacy.Exec(`CREATE TABLE video_generation_tasks (
+ id TEXT PRIMARY KEY, owner_uid TEXT, client_request_id TEXT,
+ status TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+ )`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := legacy.Exec(`INSERT INTO video_generation_tasks (id, owner_uid, client_request_id, status, created_at, updated_at)
+ VALUES ('legacy-video-task', 'legacy-owner', 'legacy-video-request', 'running', '2026-09-08T01:00:00Z', '2026-09-08T01:00:01Z')`).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, column := range []string{"claim_id", "lease_until", "request_hash"} {
 		if legacy.Migrator().HasColumn("image_generation_tasks", column) {
 			t.Fatalf("legacy fixture already has %s", column)
 		}
@@ -105,7 +115,7 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate legacy image task: %v", err)
 	}
-	for _, column := range []string{"claim_id", "lease_until"} {
+	for _, column := range []string{"claim_id", "lease_until", "request_hash"} {
 		if !database.Migrator().HasColumn(&model.ImageGenerationTask{}, column) {
 			t.Errorf("migration omitted %s", column)
 		}
@@ -116,5 +126,19 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 	}
 	if item.OwnerUID != "legacy-owner" || item.ClientRequestID != "legacy-request" || item.Status != model.ImageTaskRunning || item.ClaimID != "" || item.LeaseUntil != nil {
 		t.Fatalf("legacy image task changed during migration: %#v", item)
+	}
+	var hashMissing bool
+	if err := database.Raw("SELECT request_hash IS NULL FROM image_generation_tasks WHERE id = ?", item.ID).Scan(&hashMissing).Error; err != nil || !hashMissing {
+		t.Fatalf("legacy image request hash = null %t, err=%v", hashMissing, err)
+	}
+	var video model.VideoGenerationTask
+	if err := database.First(&video, "id = ?", "legacy-video-task").Error; err != nil {
+		t.Fatal(err)
+	}
+	if video.OwnerUID != "legacy-owner" || video.ClientRequestID != "legacy-video-request" || video.Status != "running" || video.RequestHash != "" {
+		t.Fatalf("legacy video task changed during migration: %#v", video)
+	}
+	if err := database.Raw("SELECT request_hash IS NULL FROM video_generation_tasks WHERE id = ?", video.ID).Scan(&hashMissing).Error; err != nil || !hashMissing {
+		t.Fatalf("legacy video request hash = null %t, err=%v", hashMissing, err)
 	}
 }

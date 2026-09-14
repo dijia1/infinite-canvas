@@ -21,6 +21,7 @@ type ImageGenerationTask struct {
 	ID                  string                    `json:"id" gorm:"primaryKey"`
 	OwnerUID            string                    `json:"-" gorm:"uniqueIndex:idx_image_task_owner_client;index"`
 	ClientRequestID     string                    `json:"clientRequestId" gorm:"uniqueIndex:idx_image_task_owner_client"`
+	RequestHash         string                    `json:"-" gorm:"size:64"`
 	Mode                string                    `json:"mode"`
 	Status              ImageGenerationTaskStatus `json:"status" gorm:"index"`
 	ProviderID          string                    `json:"-"`

@@ -34,24 +34,39 @@ type VideoTaskView struct {
 }
 
 func validateVideoTaskRequest(request CreateVideoTaskRequest) error {
-	if strings.TrimSpace(request.ClientRequestID) == "" || len(request.ClientRequestID) > 128 {
-		return safeMessageError{message: "视频请求 ID 无效"}
+	_, err := normalizeVideoTaskRequest(request)
+	return err
+}
+
+func normalizeVideoTaskRequest(request CreateVideoTaskRequest) (CreateVideoTaskRequest, error) {
+	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
+	request.ProviderID = strings.TrimSpace(request.ProviderID)
+	request.Prompt = strings.TrimSpace(request.Prompt)
+	request.Size = strings.TrimSpace(request.Size)
+	request.Resolution = strings.TrimSpace(request.Resolution)
+	request.ImageMediaIDs = append([]string{}, request.ImageMediaIDs...)
+	request.VideoMediaIDs = append([]string{}, request.VideoMediaIDs...)
+	if request.ClientRequestID == "" || len(request.ClientRequestID) > 128 {
+		return CreateVideoTaskRequest{}, safeMessageError{message: "视频请求 ID 无效"}
 	}
-	if strings.TrimSpace(request.Prompt) == "" || len(request.Prompt) > 20000 {
-		return safeMessageError{message: "请填写有效的视频提示词"}
+	if request.Prompt == "" || len(request.Prompt) > 20000 {
+		return CreateVideoTaskRequest{}, safeMessageError{message: "请填写有效的视频提示词"}
 	}
 	if request.Seconds < 4 || request.Seconds > 15 {
-		return safeMessageError{message: "生成视频时长必须为 4–15 秒"}
+		return CreateVideoTaskRequest{}, safeMessageError{message: "生成视频时长必须为 4–15 秒"}
 	}
 	if len(request.ImageMediaIDs) > 9 || len(request.VideoMediaIDs) > 3 {
-		return safeMessageError{message: "最多支持 9 张参考图片和 3 个参考视频"}
+		return CreateVideoTaskRequest{}, safeMessageError{message: "最多支持 9 张参考图片和 3 个参考视频"}
 	}
-	for _, id := range append(append([]string{}, request.ImageMediaIDs...), request.VideoMediaIDs...) {
-		if strings.TrimSpace(id) == "" || len(id) > 128 {
-			return safeMessageError{message: "参考素材无效"}
+	for _, ids := range [][]string{request.ImageMediaIDs, request.VideoMediaIDs} {
+		for index, id := range ids {
+			ids[index] = strings.TrimSpace(id)
+			if ids[index] == "" || len(ids[index]) > 128 {
+				return CreateVideoTaskRequest{}, safeMessageError{message: "参考素材无效"}
+			}
 		}
 	}
-	return nil
+	return request, nil
 }
 func videoTaskAmount(provider model.AIProvider, request CreateVideoTaskRequest) (decimal.Decimal, error) {
 	validRatio := false
@@ -75,12 +90,15 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	if !ok || user.UID == "" {
 		return VideoTaskView{}, safeMessageError{message: "未登录"}
 	}
-	if err := validateVideoTaskRequest(request); err != nil {
+	request, err := normalizeVideoTaskRequest(request)
+	if err != nil {
 		return VideoTaskView{}, err
 	}
-	if previous, found, err := repository.GetVideoGenerationTaskByClient(user.UID, request.ClientRequestID); err != nil {
+	previous, previousFound, err := repository.GetVideoGenerationTaskByClient(user.UID, request.ClientRequestID)
+	if err != nil {
 		return VideoTaskView{}, err
-	} else if found {
+	}
+	if previousFound && previous.RequestHash == "" {
 		return videoGenerationTaskView(ctx, user, previous)
 	}
 	settings, err := AdminSettings()
@@ -93,6 +111,17 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	provider, found := findProvider(settings.AI, request.ProviderID)
 	if !found || !providerAvailable(settings.AI, request.ProviderID, ai.CapabilityVideoGenerate) {
 		return VideoTaskView{}, safeMessageError{message: "视频模型不可用"}
+	}
+	request.ProviderID = provider.ID
+	requestHash, err := videoTaskRequestHash(request)
+	if err != nil {
+		return VideoTaskView{}, err
+	}
+	if previousFound {
+		if previous.RequestHash != requestHash {
+			return VideoTaskView{}, ErrGenerationRequestConflict
+		}
+		return videoGenerationTaskView(ctx, user, previous)
 	}
 	amount, err := videoTaskAmount(provider, request)
 	if err != nil {
@@ -109,7 +138,7 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	body, _ := json.Marshal(request)
 	inputs := append(append([]string{}, request.ImageMediaIDs...), request.VideoMediaIDs...)
 	inputJSON, _ := json.Marshal(inputs)
-	item := model.VideoGenerationTask{ID: newID("video-task"), OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Status: "queued", ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config), RequestJSON: string(body), InputMediaIDsJSON: string(inputJSON), ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]", Amount: amount, OperationLogID: newID("operation"), CreatedAt: current, UpdatedAt: current, NextPollAt: current, Deadline: current.Add(timeout)}
+	item := model.VideoGenerationTask{ID: newID("video-task"), OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Status: "queued", ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config), RequestJSON: string(body), InputMediaIDsJSON: string(inputJSON), ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]", Amount: amount, OperationLogID: newID("operation"), CreatedAt: current, UpdatedAt: current, NextPollAt: current, Deadline: current.Add(timeout)}
 	operation := model.OperationLog{ID: item.OperationLogID, ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: user.Roles, Action: "video_generate", Status: model.OperationStatusSubmitted, TargetType: "video_generation", TargetID: item.ID, Prompt: request.Prompt, RequestSummary: string(body), CreatedAt: current}
 	item, err = repository.CreateVideoGenerationTask(item, operation, inputs)
 	if err != nil {

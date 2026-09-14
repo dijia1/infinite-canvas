@@ -51,9 +51,11 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	}
 
-	if existing, found, err := repository.GetImageGenerationTaskByClientRequest(user.UID, request.ClientRequestID); err != nil {
+	existing, existingFound, err := repository.GetImageGenerationTaskByClientRequest(user.UID, request.ClientRequestID)
+	if err != nil {
 		return ImageTaskView{}, err
-	} else if found {
+	}
+	if existingFound && existing.RequestHash == "" {
 		return imageTaskView(ctx, user, existing)
 	}
 	if len(request.ReferenceMediaIDs) > 0 {
@@ -68,9 +70,20 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	if err != nil {
 		return ImageTaskView{}, err
 	}
+	request.ProviderID = provider.ID
 	request, err = normalizeImageTaskRequestForProvider(provider, request)
 	if err != nil {
 		return ImageTaskView{}, err
+	}
+	requestHash, err := imageTaskRequestHash(request)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	if existingFound {
+		if existing.RequestHash != requestHash {
+			return ImageTaskView{}, ErrGenerationRequestConflict
+		}
+		return imageTaskView(ctx, user, existing)
 	}
 	amount, err := imageTaskAmount(provider, request.Request.Resolution)
 	if err != nil {
@@ -96,7 +109,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	}
 	item := model.ImageGenerationTask{
-		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, Mode: request.Mode,
+		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Mode: request.Mode,
 		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
 		Amount: amount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),

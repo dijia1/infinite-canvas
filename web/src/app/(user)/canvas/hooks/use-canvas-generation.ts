@@ -9,7 +9,7 @@ import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config"
 import type { AICapability } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { VideoQueryTransientError, VideoRequestRejectedError, validateVideoGeneration, getVideoTask, getVideoTaskByClientRequest, resumeVideoTask, type VideoGenerationTask } from "@/services/api/video";
-import type { ImageGenerationTask } from "@/services/api/image";
+import { ImageRequestRejectedError, type ImageGenerationTask } from "@/services/api/image";
 import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
 import type { UploadedFile } from "@/services/file-storage";
 import { imageEditReferenceError } from "@/lib/image-edit-validation";
@@ -289,6 +289,17 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             task = await create(clientRequestId);
         } catch (error) {
             if (!taskCurrent(identity)) return;
+            if (error instanceof ImageRequestRejectedError) {
+                const errorDetails = error.message || "图片任务提交失败";
+                options.setNodes((previous) =>
+                    !taskCurrent(identity, previous)
+                        ? previous
+                        : previous.map((node) =>
+                              node.id === nodeId ? { ...node, metadata: { ...node.metadata, imageTaskClientRequestId: undefined, status: NODE_STATUS_ERROR, errorDetails } } : node,
+                          ),
+                );
+                throw error;
+            }
             try {
                 task = await options.getImageTaskByClientRequest(clientRequestId);
             } catch {

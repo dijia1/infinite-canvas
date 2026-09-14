@@ -614,6 +614,46 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	}
 }
 
+func TestImageGenerationRejectsAnIdempotencyKeyReusedForDifferentPayload(t *testing.T) {
+	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+		Providers:       []model.AIProvider{{ID: "idempotency-image", Name: "Maizi", Type: "maizi-image", Enabled: true, AspectRatios: []string{"1:1"}, ImagePrices: []model.ImageResolutionPrice{{Resolution: "1k", Amount: decimal.RequireFromString("0.1234")}}, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
+		ImageProviderID: "idempotency-image",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	clientRequestID := "image-idempotency-payload-" + time.Now().Format("20060102150405.000000000")
+	submit := func(prompt string) *httptest.ResponseRecorder {
+		body, err := json.Marshal(map[string]any{"clientRequestId": clientRequestID, "prompt": prompt, "n": 1, "size": "1:1", "resolution": "1k"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Portal-User-Uid", "image-idempotency-owner")
+		response := httptest.NewRecorder()
+		New().ServeHTTP(response, request)
+		return response
+	}
+
+	first := submit("生成红色汽车")
+	replay := submit("生成红色汽车")
+	conflict := submit("生成蓝色汽车")
+	if first.Code != http.StatusOK || replay.Code != http.StatusOK {
+		t.Fatalf("exact replay = first %d/%s, replay %d/%s", first.Code, first.Body.String(), replay.Code, replay.Body.String())
+	}
+	var firstPayload, replayPayload struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(first.Body.Bytes(), &firstPayload) != nil || json.Unmarshal(replay.Body.Bytes(), &replayPayload) != nil || firstPayload.Data.ID == "" || replayPayload.Data.ID != firstPayload.Data.ID {
+		t.Fatalf("exact replay returned different task: first=%s replay=%s", first.Body.String(), replay.Body.String())
+	}
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "客户端请求 ID 已用于不同生成请求") {
+		t.Fatalf("different payload = %d/%s, want 409 conflict", conflict.Code, conflict.Body.String())
+	}
+}
+
 func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	const owner = "reserved-workflow-request-owner"
 

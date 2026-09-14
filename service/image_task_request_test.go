@@ -113,3 +113,65 @@ func TestImageTaskAmountUsesConfiguredResolutionPrice(t *testing.T) {
 		t.Fatal("imageTaskAmount() accepted an unpriced resolution")
 	}
 }
+
+func TestImageTaskRequestHashUsesNormalizedPayloadIdentity(t *testing.T) {
+	base := CreateImageTaskRequest{
+		ClientRequestID: "client-a",
+		ProviderID:      "provider-a",
+		Mode:            ImageTaskModeEdit,
+		Request: ai.ImageRequest{
+			Prompt: "编辑商品图", Count: 1, Quality: "high", Size: "1:1", Resolution: "2k", OutputFormat: "png", Background: "opaque",
+			Options: ai.ImageRequestOptions{"style": json.RawMessage(`{"tone":"warm"}`), "seed": json.RawMessage(`7`)},
+		},
+		ReferenceMediaIDs: []string{"media-a", "media-b"},
+	}
+	first, err := imageTaskRequestHash(base)
+	if err != nil || len(first) != 64 {
+		t.Fatalf("imageTaskRequestHash() = %q, %v", first, err)
+	}
+	equivalent := base
+	equivalent.ClientRequestID = "client-b"
+	equivalent.Request.Options = ai.ImageRequestOptions{"seed": json.RawMessage("7"), "style": json.RawMessage(`{ "tone": "warm" }`)}
+	if got, err := imageTaskRequestHash(equivalent); err != nil || got != first {
+		t.Fatalf("equivalent payload hash = %q, %v; want %q", got, err, first)
+	}
+	for name, mutate := range map[string]func(*CreateImageTaskRequest){
+		"provider": func(request *CreateImageTaskRequest) { request.ProviderID = "provider-b" },
+		"prompt":   func(request *CreateImageTaskRequest) { request.Request.Prompt = "编辑另一张商品图" },
+		"options": func(request *CreateImageTaskRequest) {
+			request.Request.Options = ai.ImageRequestOptions{"seed": json.RawMessage(`8`)}
+		},
+		"media order": func(request *CreateImageTaskRequest) {
+			request.ReferenceMediaIDs = []string{"media-b", "media-a"}
+		},
+	} {
+		changed := base
+		changed.Request.Options = cloneImageRequestOptionsForTest(base.Request.Options)
+		changed.ReferenceMediaIDs = append([]string{}, base.ReferenceMediaIDs...)
+		mutate(&changed)
+		if got, err := imageTaskRequestHash(changed); err != nil || got == first {
+			t.Errorf("%s payload hash = %q, %v; want different from %q", name, got, err, first)
+		}
+	}
+}
+
+func TestImageTaskRequestHashIncludesOrderedUploadedContentWithoutTemporaryPaths(t *testing.T) {
+	base := CreateImageTaskRequest{ProviderID: "provider", Mode: ImageTaskModeEdit, Request: ai.ImageRequest{Prompt: "编辑", Count: 1, OutputFormat: "png", Background: "opaque"}, References: []ai.ImageReference{{Name: "folder/reference.png", ContentType: "image/png", Data: tinyPNG}}}
+	first, err := imageTaskRequestHash(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := base
+	changed.References = []ai.ImageReference{{Name: "reference.png", ContentType: "image/png", Data: append(append([]byte{}, tinyPNG...), 0)}}
+	if got, err := imageTaskRequestHash(changed); err != nil || got == first {
+		t.Fatalf("changed uploaded bytes hash = %q, %v; want different", got, err)
+	}
+}
+
+func cloneImageRequestOptionsForTest(options ai.ImageRequestOptions) ai.ImageRequestOptions {
+	result := make(ai.ImageRequestOptions, len(options))
+	for key, value := range options {
+		result[key] = append(json.RawMessage(nil), value...)
+	}
+	return result
+}

@@ -62,6 +62,41 @@ func TestVideoRequestBoundariesAndPriceSnapshot(t *testing.T) {
 	}
 }
 
+func TestNormalizeAndHashVideoTaskRequestUsesStableOrderedIdentity(t *testing.T) {
+	request, err := normalizeVideoTaskRequest(CreateVideoTaskRequest{ClientRequestID: " client ", ProviderID: " provider ", Prompt: " make it move ", Seconds: 5, Size: " 16:9 ", Resolution: " 720p ", GenerateAudio: true, ImageMediaIDs: []string{" image-a ", "image-b"}, VideoMediaIDs: []string{" video-a "}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.ClientRequestID != "client" || request.ProviderID != "provider" || request.Prompt != "make it move" || request.Size != "16:9" || request.Resolution != "720p" || request.ImageMediaIDs[0] != "image-a" || request.VideoMediaIDs[0] != "video-a" {
+		t.Fatalf("normalized video request = %#v", request)
+	}
+	first, err := videoTaskRequestHash(request)
+	if err != nil || len(first) != 64 {
+		t.Fatalf("videoTaskRequestHash() = %q, %v", first, err)
+	}
+	equivalent := request
+	equivalent.ClientRequestID = "another-client"
+	if got, err := videoTaskRequestHash(equivalent); err != nil || got != first {
+		t.Fatalf("equivalent video hash = %q, %v; want %q", got, err, first)
+	}
+	for name, mutate := range map[string]func(*CreateVideoTaskRequest){
+		"provider": func(request *CreateVideoTaskRequest) { request.ProviderID = "provider-b" },
+		"prompt":   func(request *CreateVideoTaskRequest) { request.Prompt = "different" },
+		"audio":    func(request *CreateVideoTaskRequest) { request.GenerateAudio = false },
+		"media order": func(request *CreateVideoTaskRequest) {
+			request.ImageMediaIDs = []string{"image-b", "image-a"}
+		},
+	} {
+		changed := request
+		changed.ImageMediaIDs = append([]string{}, request.ImageMediaIDs...)
+		changed.VideoMediaIDs = append([]string{}, request.VideoMediaIDs...)
+		mutate(&changed)
+		if got, err := videoTaskRequestHash(changed); err != nil || got == first {
+			t.Errorf("%s video hash = %q, %v; want different from %q", name, got, err, first)
+		}
+	}
+}
+
 type workerVideoProvider struct {
 	task  ai.VideoTask
 	err   error

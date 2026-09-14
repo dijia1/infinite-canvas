@@ -3,6 +3,7 @@ package repository
 import (
 	"errors"
 	"github.com/basketikun/infinite-canvas/model"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,6 +47,95 @@ func TestVideoTaskCreationHoldsMediaAndIsIdempotent(t *testing.T) {
 	}
 	if _, found, _ := GetVideoGenerationTask(item.ID, "other"); found {
 		t.Fatal("cross-user task exposed")
+	}
+}
+
+func TestCreateVideoGenerationTaskValidatesRequestHashAndPreservesLegacyReplay(t *testing.T) {
+	item, _ := videoFixture(t)
+	item.RequestHash = strings.Repeat("a", 64)
+	createVideoFixture(t, item)
+
+	exact := item
+	exact.ID, exact.OperationLogID = "video-exact", "video-exact-operation"
+	if got, err := CreateVideoGenerationTask(exact, model.OperationLog{ID: exact.OperationLogID}, []string{"reference"}); err != nil || got.ID != item.ID {
+		t.Fatalf("exact replay = %#v, err=%v", got, err)
+	}
+	for _, hash := range []string{strings.Repeat("b", 64), ""} {
+		duplicate := item
+		duplicate.ID, duplicate.OperationLogID, duplicate.RequestHash = "video-duplicate-"+hash, "video-duplicate-operation-"+hash, hash
+		if _, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []string{"reference"}); !errors.Is(err, ErrGenerationRequestConflict) {
+			t.Fatalf("duplicate hash %q err=%v", hash, err)
+		}
+	}
+
+	legacy := item
+	legacy.ID, legacy.ClientRequestID, legacy.OperationLogID, legacy.RequestHash = "legacy-video", "legacy-video-client", "legacy-video-operation", ""
+	createVideoFixture(t, legacy)
+	legacyReplay := legacy
+	legacyReplay.ID, legacyReplay.OperationLogID, legacyReplay.RequestHash = "legacy-video-replay", "legacy-video-replay-operation", strings.Repeat("c", 64)
+	if got, err := CreateVideoGenerationTask(legacyReplay, model.OperationLog{ID: legacyReplay.OperationLogID}, []string{"reference"}); err != nil || got.ID != legacy.ID {
+		t.Fatalf("legacy replay = %#v, err=%v", got, err)
+	}
+}
+
+func TestConcurrentVideoGenerationHashConflictWaitsForUniqueKeyWinner(t *testing.T) {
+	useRepositoryTestDB(t, newRepositoryTestConfig(t, "video_hash_race"))
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := time.Now().UTC()
+	winner := model.VideoGenerationTask{ID: "video-winner", OwnerUID: "video-race-owner", ClientRequestID: "video-race-client", RequestHash: strings.Repeat("a", 64), Status: "queued", InputMediaIDsJSON: "[]", ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]", OperationLogID: "video-winner-operation", NextPollAt: current, Deadline: current.Add(time.Hour), CreatedAt: current, UpdatedAt: current}
+	holder := database.Begin()
+	if holder.Error != nil {
+		t.Fatal(holder.Error)
+	}
+	t.Cleanup(func() { _ = holder.Rollback().Error })
+	if err := holder.Create(&winner).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := holder.Create(&model.OperationLog{ID: winner.OperationLogID, ActorUID: winner.OwnerUID, TargetID: winner.ID}).Error; err != nil {
+		t.Fatal(err)
+	}
+	var holderXID string
+	if err := holder.Raw("SELECT txid_current()::text").Scan(&holderXID).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	result := make(chan error, 1)
+	loser := winner
+	loser.ID, loser.OperationLogID, loser.RequestHash = "video-loser", "video-loser-operation", strings.Repeat("b", 64)
+	go func() {
+		_, err := CreateVideoGenerationTask(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID}, nil)
+		result <- err
+	}()
+	waitForTransactionIDLock(t, database, holderXID)
+	select {
+	case completed := <-result:
+		t.Fatalf("loser returned before winner committed: %v", completed)
+	default:
+	}
+	if err := holder.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrGenerationRequestConflict) {
+		t.Fatalf("loser err=%v", err)
+	}
+	var tasks, operations int64
+	if err := database.Model(&model.VideoGenerationTask{}).Where("owner_uid = ? AND client_request_id = ?", winner.OwnerUID, winner.ClientRequestID).Count(&tasks).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Model(&model.OperationLog{}).Where("id IN ?", []string{winner.OperationLogID, loser.OperationLogID}).Count(&operations).Error; err != nil {
+		t.Fatal(err)
+	}
+	if tasks != 1 || operations != 1 {
+		t.Fatalf("race persisted tasks=%d operations=%d", tasks, operations)
+	}
+	if _, found, err := ClaimNextVideoGenerationTask(current); err != nil || !found {
+		t.Fatalf("first claim = found %t, err=%v", found, err)
+	}
+	if _, found, err := ClaimNextVideoGenerationTask(current); err != nil || found {
+		t.Fatalf("second claim = found %t, err=%v", found, err)
 	}
 }
 func TestVideoTaskCannotReferenceDeletingMedia(t *testing.T) {

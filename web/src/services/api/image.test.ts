@@ -3,7 +3,7 @@ import test from "node:test";
 
 import axios from "axios";
 
-import { getImageGenerationTask, uploadUserImage } from "./image";
+import { getImageGenerationTask, ImageRequestRejectedError, requestGeneration, uploadUserImage } from "./image";
 
 type AxiosPost = typeof axios.post;
 
@@ -135,5 +135,22 @@ test("preserves uncertain image task state instead of treating it as a new failu
         assert.equal(task.error, "提交结果待确认");
     } finally {
         axios.get = previous;
+    }
+});
+
+test("classifies an image generation 409 as an explicit request rejection", async () => {
+    const restorePost = withAxiosPost((async () => {
+        throw Object.assign(new Error("conflict"), {
+            isAxiosError: true,
+            response: { status: 409, data: { code: 1, data: null, msg: "客户端请求 ID 已用于不同生成请求" } },
+        });
+    }) as AxiosPost);
+    try {
+        await assert.rejects(
+            requestGeneration({ quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", background: "auto" } as never, "prompt", "client"),
+            (error: unknown) => error instanceof ImageRequestRejectedError && error.message.includes("不同生成请求"),
+        );
+    } finally {
+        restorePost();
     }
 });

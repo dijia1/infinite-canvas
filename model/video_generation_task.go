@@ -10,6 +10,7 @@ type VideoGenerationTask struct {
 	ID                 string          `json:"id" gorm:"primaryKey"`
 	OwnerUID           string          `json:"-" gorm:"uniqueIndex:idx_video_owner_client"`
 	ClientRequestID    string          `json:"clientRequestId" gorm:"uniqueIndex:idx_video_owner_client"`
+	RequestHash        string          `json:"-" gorm:"size:64"`
 	Status             string          `json:"status" gorm:"index"`
 	ProviderID         string          `json:"-"`
 	ProviderName       string          `json:"-"`

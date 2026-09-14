@@ -75,8 +75,15 @@ func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.O
 		}
 		if result.RowsAffected == 0 {
 			owner, client := item.OwnerUID, item.ClientRequestID
+			requestHash := item.RequestHash
 			item = model.VideoGenerationTask{}
-			return tx.Where("owner_uid = ? AND client_request_id = ?", owner, client).First(&item).Error
+			if err := tx.Where("owner_uid = ? AND client_request_id = ?", owner, client).First(&item).Error; err != nil {
+				return err
+			}
+			if !generationRequestHashMatches(item.RequestHash, requestHash) {
+				return ErrGenerationRequestConflict
+			}
+			return nil
 		}
 		return tx.Create(&operation).Error
 	})
