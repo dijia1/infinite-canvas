@@ -156,7 +156,7 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		_, _ = repository.SaveSettings(previous, now())
+		saveGenerationSettingsForTest(t, previous)
 	})
 	provider := model.AIProvider{
 		ID: "generation-idempotency-model", Name: "Idempotency Model", Type: providerType, Enabled: true,
@@ -165,9 +165,9 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 		VideoPrices:  []model.ImageResolutionPrice{{Resolution: "720p", Amount: decimal.NewFromInt(1)}},
 		Config:       json.RawMessage(`{}`),
 	}
-	if _, err := repository.SaveSettings(model.Settings{AI: model.AISettings{
+	if _, err := saveGenerationSettingsForTest(t, model.Settings{AI: model.AISettings{
 		Providers: []model.AIProvider{provider}, ImageProviderID: provider.ID, VideoProviderID: provider.ID,
-	}}, now()); err != nil {
+	}}); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(WithPortalUser(context.Background(), PortalUser{UID: "generation-idempotency-owner"}), 5*time.Second)
@@ -332,7 +332,7 @@ func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidatio
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SaveSettings(model.Settings{}, now()); err != nil {
+	if _, err := saveGenerationSettingsForTest(t, model.Settings{}); err != nil {
 		t.Fatal(err)
 	}
 	database, err := repository.DB()
@@ -343,7 +343,7 @@ func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidatio
 		_ = database.Where("owner_uid = ?", owner).Delete(&model.ImageGenerationTask{}).Error
 		_ = database.Where("owner_uid = ?", owner).Delete(&model.VideoGenerationTask{}).Error
 		_ = database.Where("actor_uid = ?", owner).Delete(&model.OperationLog{}).Error
-		_, _ = repository.SaveSettings(previous, now())
+		saveGenerationSettingsForTest(t, previous)
 	})
 	ctx := WithPortalUser(context.Background(), PortalUser{UID: owner})
 
@@ -429,4 +429,14 @@ func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidatio
 	if _, err := CreateVideoGenerationTask(ctx, changedVideo); !errors.Is(err, ErrGenerationRequestConflict) {
 		t.Fatalf("retired video changed replay err=%v", err)
 	}
+}
+
+func saveGenerationSettingsForTest(t *testing.T, settings model.Settings) (model.Settings, error) {
+	t.Helper()
+	current, err := repository.GetSettings()
+	if err != nil {
+		return model.Settings{}, err
+	}
+	settings.Revision = current.Revision
+	return repository.SaveSettings(settings, now())
 }

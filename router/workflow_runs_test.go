@@ -281,12 +281,10 @@ func configureWorkflowRouteRuntime(t *testing.T) func() {
 		ID: "workflow-route-provider", Name: "Workflow route provider", Type: workflowRouteProviderType, Enabled: true,
 		Config: json.RawMessage(`{}`), ImagePrices: []model.ImageResolutionPrice{{Resolution: "1k", Amount: decimal.RequireFromString("0.01")}},
 	}}}}
-	if _, err := repository.SaveSettings(settings, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
-		t.Fatal(err)
-	}
+	saveRepositorySettingsForTest(t, settings, time.Now().UTC().Format(time.RFC3339Nano))
 	return func() {
 		config.Cfg = previousConfig
-		_, _ = repository.SaveSettings(previousSettings, time.Now().UTC().Format(time.RFC3339Nano))
+		saveRepositorySettingsForTest(t, previousSettings, time.Now().UTC().Format(time.RFC3339Nano))
 	}
 }
 

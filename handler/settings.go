@@ -44,6 +44,11 @@ func AdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := service.SaveSettings(settings)
 	if err != nil {
+		var conflict *repository.SettingsRevisionConflictError
+		if errors.As(err, &conflict) {
+			FailDataStatus(w, http.StatusConflict, "AI 配置已在其他位置更新，请刷新后重试", map[string]any{"currentRevision": conflict.CurrentRevision})
+			return
+		}
 		FailError(w, err)
 		return
 	}

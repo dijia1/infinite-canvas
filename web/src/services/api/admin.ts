@@ -40,6 +40,7 @@ export type AdminAISettings = {
 };
 
 export type AdminSettings = {
+    revision: number;
     ai: AdminAISettings;
 };
 

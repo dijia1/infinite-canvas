@@ -567,12 +567,10 @@ func TestPromoteLegacyCanvasTemporaryMediaKeepsObjectKey(t *testing.T) {
 }
 
 func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T) {
-	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+	saveServiceSettingsForTest(t, model.Settings{AI: model.AISettings{
 		Providers:       []model.AIProvider{{ID: "async-maizi", Name: "Maizi", Type: "maizi-image", Enabled: true, AspectRatios: []string{"1:1", "16:9"}, ImagePrices: []model.ImageResolutionPrice{{Resolution: "1k", Amount: decimal.RequireFromString("0.1234")}, {Resolution: "2k", Amount: decimal.RequireFromString("0.4567")}}, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
 		ImageProviderID: "async-maizi",
-	}}); err != nil {
-		t.Fatal(err)
-	}
+	}})
 	clientRequestID := "async-create-" + time.Now().Format("20060102150405.000000000")
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewBufferString(`{"clientRequestId":"`+clientRequestID+`","model":"browser-controlled-model","prompt":"生成一张测试图","n":1,"size":"1:1","resolution":"2k"}`))
 	request.Header.Set("Content-Type", "application/json")
@@ -615,12 +613,10 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 }
 
 func TestImageGenerationRejectsAnIdempotencyKeyReusedForDifferentPayload(t *testing.T) {
-	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+	saveServiceSettingsForTest(t, model.Settings{AI: model.AISettings{
 		Providers:       []model.AIProvider{{ID: "idempotency-image", Name: "Maizi", Type: "maizi-image", Enabled: true, AspectRatios: []string{"1:1"}, ImagePrices: []model.ImageResolutionPrice{{Resolution: "1k", Amount: decimal.RequireFromString("0.1234")}}, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
 		ImageProviderID: "idempotency-image",
-	}}); err != nil {
-		t.Fatal(err)
-	}
+	}})
 	clientRequestID := "image-idempotency-payload-" + time.Now().Format("20060102150405.000000000")
 	submit := func(prompt string) *httptest.ResponseRecorder {
 		body, err := json.Marshal(map[string]any{"clientRequestId": clientRequestID, "prompt": prompt, "n": 1, "size": "1:1", "resolution": "1k"})
@@ -706,12 +702,10 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 }
 
 func TestImageEditPersistsPNGMaskAndOutputSnapshot(t *testing.T) {
-	if _, err := service.SaveSettings(model.Settings{AI: model.AISettings{
+	saveServiceSettingsForTest(t, model.Settings{AI: model.AISettings{
 		Providers:       []model.AIProvider{{ID: "async-maizi-mask", Name: "Maizi", Type: "maizi-image", Enabled: true, AspectRatios: []string{"1:1", "16:9"}, ImagePrices: []model.ImageResolutionPrice{{Resolution: "2K", Amount: decimal.Zero}}, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
 		ImageProviderID: "async-maizi-mask",
-	}}); err != nil {
-		t.Fatal(err)
-	}
+	}})
 	clientRequestID := "async-mask-" + time.Now().Format("20060102150405.000000000")
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)

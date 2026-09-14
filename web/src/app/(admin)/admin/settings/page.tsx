@@ -10,7 +10,7 @@ import { isCNYAmountInput } from "@/lib/money";
 import { formatImagePrices, isImageResolutionInput } from "@/lib/image-pricing";
 import { useAdminStore } from "@/stores/use-admin-store";
 
-const emptySettings: AdminSettings = { ai: { providers: [], imageProviderId: "", videoProviderId: "" } };
+const emptySettings: AdminSettings = { revision: 0, ai: { providers: [], imageProviderId: "", videoProviderId: "" } };
 
 type ProviderFormValues = Omit<AdminAIProvider, "config"> & { config: string; fields?: Record<string, string> };
 

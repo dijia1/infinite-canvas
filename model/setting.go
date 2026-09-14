@@ -39,11 +39,13 @@ type AISettings struct {
 type Setting struct {
 	Key       SettingKey      `json:"key" gorm:"primaryKey"`
 	Value     json.RawMessage `json:"value" gorm:"serializer:json"`
+	Revision  int             `json:"revision" gorm:"not null;default:1"`
 	CreatedAt string          `json:"createdAt"`
 	UpdatedAt string          `json:"updatedAt"`
 }
 
 // Settings AI 配置。
 type Settings struct {
-	AI AISettings `json:"ai"`
+	Revision int        `json:"revision"`
+	AI       AISettings `json:"ai"`
 }
