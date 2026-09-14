@@ -5,6 +5,12 @@ import (
 
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+)
+
+var (
+	ErrPrivateFolderNotFound = errors.New("private folder not found")
+	ErrPrivateFolderNotEmpty = errors.New("private folder not empty")
 )
 
 func SavePrivateFolder(item model.PrivateFolder) (model.PrivateFolder, error) {
@@ -12,7 +18,19 @@ func SavePrivateFolder(item model.PrivateFolder) (model.PrivateFolder, error) {
 	if err != nil {
 		return model.PrivateFolder{}, err
 	}
-	return item, db.Create(&item).Error
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if item.ParentID != "" {
+			var parent model.PrivateFolder
+			if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Select("id").First(&parent, "id = ? AND owner_uid = ?", item.ParentID, item.OwnerUID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrPrivateFolderNotFound
+				}
+				return err
+			}
+		}
+		return tx.Create(&item).Error
+	})
+	return item, err
 }
 
 func GetPrivateFolder(ownerUID, id string) (model.PrivateFolder, bool, error) {
@@ -55,6 +73,10 @@ func PrivateFolderHasContents(ownerUID, id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return privateFolderHasContents(db, ownerUID, id)
+}
+
+func privateFolderHasContents(db *gorm.DB, ownerUID, id string) (bool, error) {
 	var count int64
 	if err := db.Model(&model.PrivateFolder{}).Where("owner_uid = ? AND parent_id = ?", ownerUID, id).Count(&count).Error; err != nil {
 		return false, err
@@ -73,6 +95,28 @@ func DeletePrivateFolder(ownerUID, id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	result := db.Delete(&model.PrivateFolder{}, "id = ? AND owner_uid = ?", id, ownerUID)
-	return result.RowsAffected > 0, result.Error
+	deleted := false
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var item model.PrivateFolder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ? AND owner_uid = ?", id, ownerUID).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		hasContents, err := privateFolderHasContents(tx, ownerUID, id)
+		if err != nil {
+			return err
+		}
+		if hasContents {
+			return ErrPrivateFolderNotEmpty
+		}
+		result := tx.Delete(&model.PrivateFolder{}, "id = ? AND owner_uid = ?", id, ownerUID)
+		if result.Error != nil {
+			return result.Error
+		}
+		deleted = result.RowsAffected > 0
+		return nil
+	})
+	return deleted, err
 }

@@ -195,11 +195,29 @@ func UpdatePrivateMedia(id, ownerUID string, title *string, folderID *string) (m
 	if len(updates) == 0 {
 		return model.Media{}, false, nil
 	}
-	result := db.Model(&model.Media{}).Where("id = ? AND owner_uid = ? AND cleanup_status = ?", id, ownerUID, model.MediaCleanupActive).Updates(updates)
-	if result.Error != nil || result.RowsAffected == 0 {
-		return model.Media{}, false, result.Error
-	}
-	return GetMedia(id)
+	var updated model.Media
+	found := false
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if folderID != nil && *folderID != "" {
+			var folder model.PrivateFolder
+			if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Select("id").First(&folder, "id = ? AND owner_uid = ?", *folderID, ownerUID).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return ErrPrivateFolderNotFound
+				}
+				return err
+			}
+		}
+		result := tx.Model(&model.Media{}).Where("id = ? AND owner_uid = ? AND cleanup_status = ?", id, ownerUID, model.MediaCleanupActive).Updates(updates)
+		if result.Error != nil || result.RowsAffected == 0 {
+			return result.Error
+		}
+		if err := tx.First(&updated, "id = ? AND owner_uid = ?", id, ownerUID).Error; err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	return updated, found, err
 }
 
 // ClaimCanvasMediaCleanup shares the media row lock with Canvas writes. A lease

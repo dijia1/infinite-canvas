@@ -71,17 +71,13 @@ func UpdatePrivateImage(_ context.Context, user PortalUser, id string, title *st
 	}
 	if folderID != nil {
 		value := strings.TrimSpace(*folderID)
-		if value != "" {
-			if _, exists, err := repository.GetPrivateFolder(user.UID, value); err != nil {
-				return model.Media{}, err
-			} else if !exists {
-				return model.Media{}, safeMessageError{message: "文件夹不存在"}
-			}
-		}
 		*folderID = value
 	}
 	updated, found, err := repository.UpdatePrivateMedia(id, user.UID, title, folderID)
 	if err != nil {
+		if errors.Is(err, repository.ErrPrivateFolderNotFound) {
+			return model.Media{}, safeMessageError{message: "文件夹不存在"}
+		}
 		return model.Media{}, err
 	}
 	if !found {
@@ -108,15 +104,11 @@ func CreatePrivateFolder(_ context.Context, user PortalUser, title, parentID str
 		return model.PrivateFolder{}, err
 	}
 	parentID = strings.TrimSpace(parentID)
-	if parentID != "" {
-		if _, found, err := repository.GetPrivateFolder(user.UID, parentID); err != nil {
-			return model.PrivateFolder{}, err
-		} else if !found {
-			return model.PrivateFolder{}, safeMessageError{message: "父文件夹不存在"}
-		}
-	}
 	item := model.PrivateFolder{ID: newID("private-folder"), OwnerUID: user.UID, ParentID: parentID, Title: name, CreatedAt: now()}
 	saved, err := repository.SavePrivateFolder(item)
+	if errors.Is(err, repository.ErrPrivateFolderNotFound) {
+		return model.PrivateFolder{}, safeMessageError{message: "父文件夹不存在"}
+	}
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return model.PrivateFolder{}, safeMessageError{message: "同级文件夹名称已存在"}
 	}
@@ -147,20 +139,11 @@ func RenamePrivateFolder(_ context.Context, user PortalUser, id, title string) (
 }
 
 func DeletePrivateFolder(_ context.Context, user PortalUser, id string) error {
-	if _, found, err := repository.GetPrivateFolder(user.UID, id); err != nil {
-		return err
-	} else if !found {
-		return safeMessageError{message: "文件夹不存在"}
-	}
-	hasContents, err := repository.PrivateFolderHasContents(user.UID, id)
-	if err != nil {
-		return err
-	}
-	if hasContents {
-		return safeMessageError{message: "文件夹包含图片或子文件夹，请先整理内容"}
-	}
 	deleted, err := repository.DeletePrivateFolder(user.UID, id)
 	if err != nil {
+		if errors.Is(err, repository.ErrPrivateFolderNotEmpty) {
+			return safeMessageError{message: "文件夹包含图片或子文件夹，请先整理内容"}
+		}
 		return err
 	}
 	if !deleted {
