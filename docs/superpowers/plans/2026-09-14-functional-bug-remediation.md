@@ -53,6 +53,9 @@
 - Modify: `repository/video_generation_task.go`
 - Modify: `service/image_tasks.go`
 - Modify: `service/video_generation_tasks.go`
+- Modify: `handler/ai.go`
+- Modify: `web/src/services/api/image.ts`
+- Modify: `web/src/app/(user)/canvas/hooks/use-canvas-generation.ts`
 - Modify: the existing database migration/AutoMigrate registration only as required by project conventions
 - Test: image/video service and repository task tests
 
@@ -67,6 +70,7 @@
 - [ ] Run the new tests and confirm the mismatch and concurrency assertions fail on the current implementation.
 - [ ] Calculate the canonical hash only after semantic normalization. Store it on new image/video tasks and compare it inside the insert-conflict transaction.
 - [ ] Map a mismatch to HTTP 409 using the existing application error style. For historical rows without a hash, preserve the old replay behavior; do not guess a hash from incomplete legacy data.
+- [ ] Give image requests the same explicit non-retryable 4xx classification already used by video requests. The Canvas generation hook must not recover a 409 by client request ID and silently accept the older, different task.
 - [ ] Ensure duplicate image attempts clean only newly-created temporary inputs and never delete inputs owned by the existing task.
 - [ ] Run focused image/video service and repository tests, then generation worker regressions.
 - [ ] Commit as `fix: validate generation idempotency payloads`.
