@@ -8,9 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -383,12 +383,7 @@ func canvasGraphViolations(document map[string]any) map[canvasGraphViolation]int
 		nodeIDs[id]++
 		for _, dimension := range []string{"width", "height"} {
 			if !canvasPositiveNumber(node[dimension]) {
-				number := node[dimension].(json.Number)
-				parsed, _ := number.Float64()
-				detail := strconv.FormatFloat(parsed, 'g', -1, 64)
-				if parsed == 0 {
-					detail = "0"
-				}
+				detail := canvasGraphNumberIdentity(node[dimension].(json.Number))
 				violations[canvasGraphViolation{kind: "node_" + dimension, primaryID: id, detail: detail}]++
 			}
 		}
@@ -416,6 +411,13 @@ func canvasGraphViolations(document map[string]any) map[canvasGraphViolation]int
 		}
 	}
 	return violations
+}
+
+func canvasGraphNumberIdentity(number json.Number) string {
+	if rational, ok := new(big.Rat).SetString(number.String()); ok {
+		return rational.RatString()
+	}
+	return "raw:" + number.String()
 }
 
 func validateCanvasDocument(document map[string]any) error {

@@ -78,9 +78,9 @@ func TestCanvasGraphInvariantBaselineCanBePreservedReducedButNotChangedOrWorsene
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	owner := "graph-baseline-owner-" + suffix
 	legacyID := "graph-baseline-legacy-" + suffix
-	legacy := `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0.0,"height":10,"metadata":{"legacy":true}},{"id":" exact-id ","type":"image","title":"duplicate","position":{"x":20,"y":0},"width":10,"height":10}],"connections":[{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"},{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	legacy := `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0e5,"height":10,"metadata":{"legacy":true}},{"id":" exact-id ","type":"image","title":"duplicate","position":{"x":20,"y":0},"width":10,"height":-1e1}],"connections":[{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"},{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 	seedCanvasGraphProject(t, legacyID, owner, legacy)
-	preserved := `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10,"metadata":{"legacy":true,"edited":true}},{"id":" exact-id ","type":"image","title":"duplicate","position":{"x":20,"y":0},"width":10,"height":10}],"connections":[{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"},{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":12,"y":24,"k":2},"metadata":{"saved":true}}`
+	preserved := `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10,"metadata":{"legacy":true,"edited":true}},{"id":" exact-id ","type":"image","title":"duplicate","position":{"x":20,"y":0},"width":10,"height":-10.0}],"connections":[{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"},{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":12,"y":24,"k":2},"metadata":{"saved":true}}`
 	response := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+legacyID, owner, `{"revision":1,"title":"metadata saved","document":`+preserved+`}`)
 	if response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
 		t.Fatalf("preserving a legacy violation = %d/%s", response.Code, response.Body.String())
@@ -98,6 +98,8 @@ func TestCanvasGraphInvariantBaselineCanBePreservedReducedButNotChangedOrWorsene
 	}{
 		{name: "raw node ID identity is not trimmed", baseline: `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":"exact-id","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
 		{name: "zero dimension becomes negative", baseline: `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":-1,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "distinct large negative dimensions do not collide", baseline: `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":-9007199254740992,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":-9007199254740993,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
+		{name: "distinct exponential negative dimensions do not collide", baseline: `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":-1e20,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":-100000000000000000001,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
 		{name: "dangling endpoint changes identity", baseline: `{"nodes":[{"id":"node-a","type":"text","title":"A","position":{"x":0,"y":0},"width":10,"height":10}],"connections":[{"id":"edge-a","fromNodeId":"node-a","toNodeId":"missing-a"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":"node-a","type":"text","title":"A","position":{"x":0,"y":0},"width":10,"height":10}],"connections":[{"id":"edge-a","fromNodeId":"node-a","toNodeId":"missing-b"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
 		{name: "new duplicate node ID", baseline: emptyCanvasGraphDocument, candidate: `{"nodes":[{"id":"dup","type":"text","title":"A","position":{"x":0,"y":0},"width":10,"height":10},{"id":"dup","type":"text","title":"B","position":{"x":20,"y":0},"width":10,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
 		{name: "duplicate node count worsens", baseline: `{"nodes":[{"id":"dup","type":"text","title":"A","position":{"x":0,"y":0},"width":10,"height":10},{"id":"dup","type":"text","title":"B","position":{"x":20,"y":0},"width":10,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, candidate: `{"nodes":[{"id":"dup","type":"text","title":"A","position":{"x":0,"y":0},"width":10,"height":10},{"id":"dup","type":"text","title":"B","position":{"x":20,"y":0},"width":10,"height":10},{"id":"dup","type":"text","title":"C","position":{"x":40,"y":0},"width":10,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`},
@@ -124,8 +126,17 @@ func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T
 	firstBody := `{"revision":1,"title":"first accepted","document":` + legacy + `}`
 	seedCanvasGraphProject(t, id, owner, legacy)
 	first := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, firstBody, requestID)
-	if first.Code != http.StatusOK {
+	var accepted model.CanvasProject
+	if first.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, first).Data, &accepted) != nil {
 		t.Fatalf("first legacy save = %d/%s", first.Code, first.Body.String())
+	}
+	mismatched := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, strings.Replace(firstBody, "first accepted", "different payload", 1), requestID)
+	if mismatched.Code != http.StatusBadRequest {
+		t.Fatalf("same request ID with a different payload = %d/%s", mismatched.Code, mismatched.Body.String())
+	}
+	crossOwner := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, "other-"+owner, firstBody, requestID)
+	if crossOwner.Code != http.StatusBadRequest {
+		t.Fatalf("same request ID from another owner = %d/%s", crossOwner.Code, crossOwner.Body.String())
 	}
 	advancedLegacy := strings.Replace(legacy, `"viewport":{"x":0`, `"viewport":{"x":99`, 1)
 	advanced := canvasRequest(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, `{"revision":2,"title":"advanced","document":`+advancedLegacy+`}`)
@@ -140,7 +151,7 @@ func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T
 	replay := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, firstBody, requestID)
 	var replayed model.CanvasProject
 	var replayedDocument, firstDocument any
-	if replay.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, replay).Data, &replayed) != nil || json.Unmarshal(replayed.Document, &replayedDocument) != nil || json.Unmarshal([]byte(legacy), &firstDocument) != nil || replayed.Revision != 2 || replayed.Title != "first accepted" || !equalCanvasJSON(replayedDocument, firstDocument) {
+	if replay.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, replay).Data, &replayed) != nil || json.Unmarshal(replayed.Document, &replayedDocument) != nil || json.Unmarshal([]byte(legacy), &firstDocument) != nil || replayed.Revision != accepted.Revision || replayed.CreatedAt != accepted.CreatedAt || replayed.UpdatedAt != accepted.UpdatedAt || replayed.Title != "first accepted" || !equalCanvasJSON(replayedDocument, firstDocument) {
 		t.Fatalf("accepted legacy request did not replay its original result = %d/%s", replay.Code, replay.Body.String())
 	}
 	assertStoredCanvasGraph(t, owner, id, 3, "advanced", advancedLegacy)
