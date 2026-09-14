@@ -5,11 +5,58 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/ai"
 )
+
+func TestDoubaoSeedreamCanonicalizerTreatsLegacyAndOptionFieldsEqually(t *testing.T) {
+	typeInfo, found := ai.Type("doubao-seedream-5-pro")
+	if !found || typeInfo.CanonicalizeImageTaskRequest == nil {
+		t.Fatal("Doubao Seedream pure request canonicalizer is not registered")
+	}
+
+	legacy, err := typeInfo.CanonicalizeImageTaskRequest(ai.ImageTaskRequest{Request: ai.ImageRequest{
+		Prompt: "画一只猫", Resolution: "2K", OutputFormat: "png", Background: "opaque",
+	}})
+	if err != nil {
+		t.Fatalf("legacy canonicalization error = %v", err)
+	}
+	options, err := typeInfo.CanonicalizeImageTaskRequest(ai.ImageTaskRequest{Request: ai.ImageRequest{
+		Prompt: "画一只猫",
+		Options: ai.ImageRequestOptions{
+			"resolution":   json.RawMessage(`"2K"`),
+			"outputFormat": json.RawMessage(`"png"`),
+			"background":   json.RawMessage(`"opaque"`),
+		},
+	}})
+	if err != nil {
+		t.Fatalf("options canonicalization error = %v", err)
+	}
+	if !reflect.DeepEqual(legacy.Request, options.Request) {
+		t.Fatalf("equivalent request forms normalized differently:\nlegacy = %#v\noptions = %#v", legacy.Request, options.Request)
+	}
+
+	snapshot := doubaoSeedreamImageRequestSchema
+	snapshot.Fields = append([]ai.ImageRequestField(nil), snapshot.Fields...)
+	for index := range snapshot.Fields {
+		if snapshot.Fields[index].Key == "outputFormat" {
+			snapshot.Fields[index].Default = json.RawMessage(`"png"`)
+		}
+	}
+	fromSnapshot, err := typeInfo.CanonicalizeImageTaskRequest(ai.ImageTaskRequest{
+		RequestSchema: &snapshot,
+		Request:       ai.ImageRequest{Prompt: "画一只猫", Resolution: "2K"},
+	})
+	if err != nil {
+		t.Fatalf("snapshot canonicalization error = %v", err)
+	}
+	if fromSnapshot.Request.OutputFormat != "png" {
+		t.Fatalf("snapshot output format = %q, want png", fromSnapshot.Request.OutputFormat)
+	}
+}
 
 func TestDoubaoSeedreamNormalizesAndSubmitsACompleteImageRequest(t *testing.T) {
 	originalTransport := http.DefaultTransport

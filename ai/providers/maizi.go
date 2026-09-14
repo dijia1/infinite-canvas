@@ -87,8 +87,9 @@ func init() {
 			{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
 			{Key: "model", Label: "模型名称", Type: "text", Placeholder: "例如：gpt-image-2", Required: true},
 		},
-		ImageRequestSchema: &maiziImageRequestSchema,
-		New:                newMaiziProvider,
+		ImageRequestSchema:           &maiziImageRequestSchema,
+		CanonicalizeImageTaskRequest: canonicalizeMaiziImageTaskRequest,
+		New:                          newMaiziProvider,
 	})
 }
 
@@ -99,6 +100,10 @@ func (provider *maiziProvider) NormalizeImageTaskRequest(request ai.ImageTaskReq
 	if request.Mask != nil && len(request.References) == 0 {
 		return ai.ImageTaskRequest{}, maiziError{message: "遮罩编辑需要参考图"}
 	}
+	return canonicalizeMaiziImageTaskRequest(request)
+}
+
+func canonicalizeMaiziImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
 	options := cloneImageRequestOptions(request.Request.Options)
 	setImageRequestOption(options, "quality", request.Request.Quality)
 	setImageRequestOption(options, "size", request.Request.Size)

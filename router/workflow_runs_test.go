@@ -263,9 +263,10 @@ func configureWorkflowRouteRuntime(t *testing.T) func() {
 	registerWorkflowRouteProvider.Do(func() {
 		_ = ai.Register(ai.ProviderType{
 			ID: workflowRouteProviderType, Name: "Workflow route provider",
-			Capabilities:       []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
-			ImageRequestSchema: &ai.ImageRequestSchema{Version: "v1", MaxReferenceImages: 2},
-			New:                func(json.RawMessage) (ai.Provider, error) { return workflowRouteImageProvider{}, nil },
+			Capabilities:                 []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
+			ImageRequestSchema:           &ai.ImageRequestSchema{Version: "v1", MaxReferenceImages: 2},
+			CanonicalizeImageTaskRequest: workflowRouteImageProvider{}.NormalizeImageTaskRequest,
+			New:                          func(json.RawMessage) (ai.Provider, error) { return workflowRouteImageProvider{}, nil },
 		})
 	})
 	previousConfig := config.Cfg

@@ -29,12 +29,13 @@ type ConfigField struct {
 }
 
 type ProviderType struct {
-	ID                 string                                  `json:"id"`
-	Name               string                                  `json:"name"`
-	Capabilities       []Capability                            `json:"capabilities"`
-	ConfigFields       []ConfigField                           `json:"configFields"`
-	ImageRequestSchema *ImageRequestSchema                     `json:"imageRequestSchema,omitempty"`
-	New                func(json.RawMessage) (Provider, error) `json:"-"`
+	ID                           string                                           `json:"id"`
+	Name                         string                                           `json:"name"`
+	Capabilities                 []Capability                                     `json:"capabilities"`
+	ConfigFields                 []ConfigField                                    `json:"configFields"`
+	ImageRequestSchema           *ImageRequestSchema                              `json:"imageRequestSchema,omitempty"`
+	CanonicalizeImageTaskRequest func(ImageTaskRequest) (ImageTaskRequest, error) `json:"-"`
+	New                          func(json.RawMessage) (Provider, error)          `json:"-"`
 }
 
 func (item ProviderType) Supports(capability Capability) bool {

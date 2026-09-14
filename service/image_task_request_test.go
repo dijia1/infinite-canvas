@@ -166,6 +166,18 @@ func TestImageTaskRequestHashIncludesOrderedUploadedContentWithoutTemporaryPaths
 	if got, err := imageTaskRequestHash(changed); err != nil || got == first {
 		t.Fatalf("changed uploaded bytes hash = %q, %v; want different", got, err)
 	}
+
+	detectedDefaults := base
+	detectedDefaults.References = []ai.ImageReference{{Data: tinyPNG}}
+	detectedHash, err := imageTaskRequestHash(detectedDefaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicitDetectedDefaults := base
+	explicitDetectedDefaults.References = []ai.ImageReference{{Name: "reference.png", ContentType: "image/png", Data: tinyPNG}}
+	if got, err := imageTaskRequestHash(explicitDetectedDefaults); err != nil || got != detectedHash {
+		t.Fatalf("explicit detected upload identity hash = %q, %v; want %q", got, err, detectedHash)
+	}
 }
 
 func cloneImageRequestOptionsForTest(options ai.ImageRequestOptions) ai.ImageRequestOptions {

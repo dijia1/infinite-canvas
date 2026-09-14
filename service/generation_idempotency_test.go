@@ -18,6 +18,15 @@ import (
 
 type generationIdempotencyProvider struct{}
 
+var generationIdempotencyImageSchema = ai.ImageRequestSchema{
+	Version: "v2-test",
+	Fields: []ai.ImageRequestField{{
+		Key: "quality", Label: "Quality", Type: ai.ImageRequestFieldSelect,
+		Default: json.RawMessage(`"provider-default"`),
+		Options: []ai.ImageRequestFieldOption{{Value: "provider-default", Label: "Default"}, {Value: "provider-high", Label: "High"}},
+	}},
+}
+
 type generationIdempotencyInputStore struct {
 	mu      sync.Mutex
 	objects map[string][]byte
@@ -76,8 +85,26 @@ func (*generationIdempotencyInputStore) ReadPrefix(context.Context, string, int6
 }
 
 func (generationIdempotencyProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
-	request.Request.Quality = "provider-default"
-	request.Request.Options = ai.ImageRequestOptions{"providerDefault": json.RawMessage(`true`)}
+	options := ai.ImageRequestOptions{}
+	for key, value := range request.Request.Options {
+		options[key] = append(json.RawMessage(nil), value...)
+	}
+	if request.Request.Quality != "" {
+		encoded, _ := json.Marshal(request.Request.Quality)
+		options["quality"] = encoded
+	}
+	schema := generationIdempotencyImageSchema
+	if request.RequestSchema != nil {
+		schema = *request.RequestSchema
+	}
+	normalized, err := ai.NormalizeImageRequestOptions(schema, options)
+	if err != nil {
+		return ai.ImageTaskRequest{}, err
+	}
+	request.Request.Options = normalized
+	if err := json.Unmarshal(normalized["quality"], &request.Request.Quality); err != nil {
+		return ai.ImageTaskRequest{}, err
+	}
 	return request, nil
 }
 
@@ -105,17 +132,25 @@ func (generationIdempotencyProvider) GetVideoContent(context.Context, string) (a
 	return ai.VideoContent{}, errors.New("not used")
 }
 
-func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.T) {
+func registerGenerationIdempotencyProvider(t *testing.T) {
+	t.Helper()
 	const providerType = "generation-idempotency-test"
 	if _, found := ai.Type(providerType); !found {
 		if err := ai.Register(ai.ProviderType{
 			ID: providerType, Name: providerType,
-			Capabilities: []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityVideoGenerate},
-			New:          func(json.RawMessage) (ai.Provider, error) { return generationIdempotencyProvider{}, nil },
+			Capabilities:                 []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityVideoGenerate},
+			ImageRequestSchema:           &generationIdempotencyImageSchema,
+			CanonicalizeImageTaskRequest: generationIdempotencyProvider{}.NormalizeImageTaskRequest,
+			New:                          func(json.RawMessage) (ai.Provider, error) { return generationIdempotencyProvider{}, nil },
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.T) {
+	const providerType = "generation-idempotency-test"
+	registerGenerationIdempotencyProvider(t)
 	previous, err := repository.GetSettings()
 	if err != nil {
 		t.Fatal(err)
@@ -160,17 +195,27 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 		t.Fatal(err)
 	}
 	hashRequest.ProviderID = provider.ID
+	hashRequest, err = canonicalizeImageTaskRequestForHash(providerType, nil, hashRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	expectedImageHash, err := imageTaskRequestHash(hashRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	persistedImage, found, err := repository.GetImageGenerationTaskByClientRequest("generation-idempotency-owner", imageRequest.ClientRequestID)
-	if err != nil || !found || persistedImage.RequestHash != expectedImageHash || persistedImage.Quality != "provider-default" {
+	if err != nil || !found || persistedImage.RequestHash != expectedImageHash || persistedImage.RequestHashVersion != imageRequestHashVersion || persistedImage.RequestSchemaJSON == "" || persistedImage.Quality != "provider-default" {
 		t.Fatalf("persisted image identity = %#v, found=%t, err=%v, expected hash=%s", persistedImage, found, err, expectedImageHash)
 	}
 	replayedImage, err := CreateImageTask(ctx, imageRequest)
 	if err != nil || replayedImage.ID != image.ID {
 		t.Fatalf("exact image replay = %#v, err=%v; original=%s", replayedImage, err, image.ID)
+	}
+	explicitProviderDefault := imageRequest
+	explicitProviderDefault.Request.Quality = "provider-default"
+	replayedImage, err = CreateImageTask(ctx, explicitProviderDefault)
+	if err != nil || replayedImage.ID != image.ID {
+		t.Fatalf("explicit provider default replay = %#v, err=%v; original=%s", replayedImage, err, image.ID)
 	}
 	changedImage := imageRequest
 	changedImage.Request.Prompt = "draw a mountain"
@@ -281,6 +326,8 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 
 func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidation(t *testing.T) {
 	const owner = "retired-generation-owner"
+	const providerType = "generation-idempotency-test"
+	registerGenerationIdempotencyProvider(t)
 	previous, err := repository.GetSettings()
 	if err != nil {
 		t.Fatal(err)
@@ -310,14 +357,29 @@ func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidatio
 	}
 	imageHashRequest := imageRequest
 	imageHashRequest.ProviderID = "retired-image-provider"
+	_, schemaJSON, err := imageTaskRequestSchemaSnapshot(model.AIProvider{Type: providerType})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schemaJSON == "" {
+		t.Fatal("base provider schema was not persisted for replay")
+	}
+	schema, err := decodeImageTaskRequestSchema(schemaJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageHashRequest, err = canonicalizeImageTaskRequestForHash(providerType, schema, imageHashRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	imageHash, err := imageTaskRequestHash(imageHashRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	imageItem := model.ImageGenerationTask{
 		ID: "retired-image-task", OwnerUID: owner, ClientRequestID: imageRequest.ClientRequestID,
-		RequestHash: imageHash, Mode: imageRequest.Mode, Status: model.ImageTaskQueued,
-		ProviderID: "retired-image-provider", ReferencesJSON: "[]", OperationLogID: "retired-image-operation",
+		RequestHash: imageHash, RequestHashVersion: imageRequestHashVersion, RequestSchemaJSON: schemaJSON, Mode: imageRequest.Mode, Status: model.ImageTaskQueued,
+		ProviderID: "retired-image-provider", ProviderType: providerType, ReferencesJSON: "[]", OperationLogID: "retired-image-operation",
 	}
 	if _, inserted, err := repository.CreateImageGenerationTaskWithOperationLog(imageItem, model.OperationLog{
 		ID: imageItem.OperationLogID, ActorUID: owner, Status: model.OperationStatusSubmitted,

@@ -62,7 +62,18 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		if request.ProviderID == "" {
 			request.ProviderID = existing.ProviderID
 		}
-		requestHash, err := imageTaskRequestHash(request)
+		if existing.RequestHashVersion != imageRequestHashVersion {
+			return ImageTaskView{}, fmt.Errorf("图片任务幂等版本不受支持：%d", existing.RequestHashVersion)
+		}
+		schema, err := decodeImageTaskRequestSchema(existing.RequestSchemaJSON)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		hashRequest, err := canonicalizeImageTaskRequestForHash(existing.ProviderType, schema, request)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		requestHash, err := imageTaskRequestHash(hashRequest)
 		if err != nil {
 			return ImageTaskView{}, err
 		}
@@ -77,7 +88,15 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	}
 	request.ProviderID = provider.ID
-	requestHash, err := imageTaskRequestHash(request)
+	schema, schemaJSON, err := imageTaskRequestSchemaSnapshot(provider)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	hashRequest, err := canonicalizeImageTaskRequestForHash(provider.Type, schema, request)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	requestHash, err := imageTaskRequestHash(hashRequest)
 	if err != nil {
 		return ImageTaskView{}, err
 	}
@@ -117,7 +136,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		return ImageTaskView{}, err
 	}
 	item := model.ImageGenerationTask{
-		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Mode: request.Mode,
+		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, RequestHashVersion: imageRequestHashVersion, RequestSchemaJSON: schemaJSON, Mode: request.Mode,
 		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
 		Amount: amount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
@@ -238,18 +257,70 @@ func normalizeImageTaskRequestForProvider(provider model.AIProvider, request Cre
 	if !ok {
 		return CreateImageTaskRequest{}, safeMessageError{message: "当前供应商未实现请求参数适配"}
 	}
-	var configuredSchema *ai.ImageRequestSchema
-	if typeInfo.ImageRequestSchema != nil && len(provider.AspectRatios) > 0 {
-		schema := configuredImageRequestSchema(provider, *typeInfo.ImageRequestSchema)
-		// Keep resolution validation and its existing price error in the service.
-		for index, field := range typeInfo.ImageRequestSchema.Fields {
-			if field.Key != "size" {
-				schema.Fields[index] = field
-			}
-		}
-		configuredSchema = &schema
-	}
+	configuredSchema := configuredImageTaskRequestSchema(provider, typeInfo)
 	normalized, err := adapter.NormalizeImageTaskRequest(ai.ImageTaskRequest{Request: request.Request, References: request.References, Mask: request.Mask, RequestSchema: configuredSchema})
+	if err != nil {
+		return CreateImageTaskRequest{}, err
+	}
+	request.Request, request.References, request.Mask = normalized.Request, normalized.References, normalized.Mask
+	return request, nil
+}
+
+func configuredImageTaskRequestSchema(provider model.AIProvider, typeInfo ai.ProviderType) *ai.ImageRequestSchema {
+	if typeInfo.ImageRequestSchema == nil || len(provider.AspectRatios) == 0 {
+		return nil
+	}
+	schema := configuredImageRequestSchema(provider, *typeInfo.ImageRequestSchema)
+	// Keep resolution validation and its existing price error in the service.
+	for index, field := range typeInfo.ImageRequestSchema.Fields {
+		if field.Key != "size" {
+			schema.Fields[index] = field
+		}
+	}
+	return &schema
+}
+
+func imageTaskRequestSchemaSnapshot(provider model.AIProvider) (*ai.ImageRequestSchema, string, error) {
+	typeInfo, ok := ai.Type(strings.TrimSpace(provider.Type))
+	if !ok || typeInfo.CanonicalizeImageTaskRequest == nil {
+		return nil, "", errors.New("当前供应商未实现稳定请求规范化")
+	}
+	schema := configuredImageTaskRequestSchema(provider, typeInfo)
+	if schema == nil && typeInfo.ImageRequestSchema != nil {
+		schema = typeInfo.ImageRequestSchema
+	}
+	if schema == nil {
+		return nil, "", nil
+	}
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		return nil, "", err
+	}
+	return schema, string(encoded), nil
+}
+
+func decodeImageTaskRequestSchema(encoded string) (*ai.ImageRequestSchema, error) {
+	if strings.TrimSpace(encoded) == "" {
+		return nil, nil
+	}
+	var schema ai.ImageRequestSchema
+	if err := json.Unmarshal([]byte(encoded), &schema); err != nil {
+		return nil, err
+	}
+	return &schema, nil
+}
+
+func canonicalizeImageTaskRequestForHash(providerType string, schema *ai.ImageRequestSchema, request CreateImageTaskRequest) (CreateImageTaskRequest, error) {
+	typeInfo, ok := ai.Type(strings.TrimSpace(providerType))
+	if !ok || typeInfo.CanonicalizeImageTaskRequest == nil {
+		return CreateImageTaskRequest{}, errors.New("任务绑定的供应商请求规范化规则已不可用")
+	}
+	normalized, err := typeInfo.CanonicalizeImageTaskRequest(ai.ImageTaskRequest{
+		RequestSchema: schema,
+		Request:       request.Request,
+		References:    request.References,
+		Mask:          request.Mask,
+	})
 	if err != nil {
 		return CreateImageTaskRequest{}, err
 	}
@@ -367,6 +438,9 @@ func validateImageTaskProvider(provider model.AIProvider) (model.AIProvider, err
 	}
 	if _, ok := instance.(ai.ImageTaskRequestAdapter); !ok {
 		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现请求参数适配"}
+	}
+	if typeInfo.CanonicalizeImageTaskRequest == nil {
+		return model.AIProvider{}, safeMessageError{message: "当前供应商未实现稳定请求规范化"}
 	}
 	return provider, nil
 }

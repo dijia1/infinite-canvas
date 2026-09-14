@@ -157,7 +157,7 @@ func serve(path, out string) error {
 	defer listener.Close()
 	base := "http://" + listener.Addr().String()
 	fake := &fakeProvider{base: base}
-	if err := ai.Register(ai.ProviderType{ID: "load-fake", Name: "Local load-test fake", Capabilities: []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit}, New: func(json.RawMessage) (ai.Provider, error) { return fake, nil }}); err != nil {
+	if err := ai.Register(ai.ProviderType{ID: "load-fake", Name: "Local load-test fake", Capabilities: []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit}, CanonicalizeImageTaskRequest: fake.NormalizeImageTaskRequest, New: func(json.RawMessage) (ai.Provider, error) { return fake, nil }}); err != nil {
 		return err
 	}
 	if _, err := repository.SaveSettings(model.Settings{AI: model.AISettings{ImageProviderID: "load-fake", Providers: []model.AIProvider{{ID: "load-fake", Name: "Local fake", Type: "load-fake", Enabled: true, ImagePrices: []model.ImageResolutionPrice{{Resolution: "1k", Amount: decimal.Zero}}, Config: json.RawMessage(`{}`)}}}}, time.Now().UTC().Format(time.RFC3339)); err != nil {

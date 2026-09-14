@@ -44,10 +44,11 @@ var doubaoSeedreamImageRequestSchema = ai.ImageRequestSchema{
 
 func init() {
 	_ = ai.Register(ai.ProviderType{
-		ID:                 "doubao-seedream-5-pro",
-		Name:               "Doubao Seedream 5.0 Pro",
-		Capabilities:       []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
-		ImageRequestSchema: &doubaoSeedreamImageRequestSchema,
+		ID:                           "doubao-seedream-5-pro",
+		Name:                         "Doubao Seedream 5.0 Pro",
+		Capabilities:                 []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
+		ImageRequestSchema:           &doubaoSeedreamImageRequestSchema,
+		CanonicalizeImageTaskRequest: canonicalizeDoubaoSeedreamImageTaskRequest,
 		ConfigFields: []ai.ConfigField{
 			{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
 			{Key: "model", Label: "模型名称", Type: "text", Placeholder: "例如：doubao-seedream-5-0-pro-260628", Required: true},
@@ -76,20 +77,12 @@ func (provider *doubaoSeedreamProvider) NormalizeImageTaskRequest(request ai.Ima
 	if request.Mask != nil {
 		return ai.ImageTaskRequest{}, doubaoSeedreamError{message: "Doubao Seedream 暂不支持手绘遮罩编辑"}
 	}
-	options := cloneImageRequestOptions(request.Request.Options)
-	delete(options, "watermark")
-	setSeedreamLegacyOption(options, "resolution", request.Request.Resolution)
-	setSeedreamLegacyOption(options, "outputFormat", request.Request.OutputFormat)
-	if strings.TrimSpace(request.Request.Background) != "auto" {
-		setSeedreamLegacyOption(options, "background", request.Request.Background)
-	}
-	normalized, err := ai.NormalizeImageRequestOptions(doubaoSeedreamImageRequestSchema, options)
+	request, err := canonicalizeDoubaoSeedreamImageTaskRequest(request)
 	if err != nil {
-		return ai.ImageTaskRequest{}, doubaoSeedreamError{message: err.Error()}
+		return ai.ImageTaskRequest{}, err
 	}
-	resolution := imageRequestOptionString(normalized, "resolution")
-	outputFormat := imageRequestOptionString(normalized, "outputFormat")
-	background := imageRequestOptionString(normalized, "background")
+	background := request.Request.Background
+	outputFormat := request.Request.OutputFormat
 	if background == "transparent" {
 		if len(request.References) != 1 || !strings.EqualFold(strings.TrimSpace(request.References[0].ContentType), "image/png") {
 			return ai.ImageTaskRequest{}, doubaoSeedreamError{message: "透明背景仅支持一张 PNG 参考图的图像编辑"}
@@ -98,6 +91,28 @@ func (provider *doubaoSeedreamProvider) NormalizeImageTaskRequest(request ai.Ima
 			return ai.ImageTaskRequest{}, doubaoSeedreamError{message: "透明背景只能使用 PNG 输出格式"}
 		}
 	}
+	return request, nil
+}
+
+func canonicalizeDoubaoSeedreamImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
+	options := cloneImageRequestOptions(request.Request.Options)
+	delete(options, "watermark")
+	setSeedreamLegacyOption(options, "resolution", request.Request.Resolution)
+	setSeedreamLegacyOption(options, "outputFormat", request.Request.OutputFormat)
+	if strings.TrimSpace(request.Request.Background) != "auto" {
+		setSeedreamLegacyOption(options, "background", request.Request.Background)
+	}
+	schema := doubaoSeedreamImageRequestSchema
+	if request.RequestSchema != nil {
+		schema = *request.RequestSchema
+	}
+	normalized, err := ai.NormalizeImageRequestOptions(schema, options)
+	if err != nil {
+		return ai.ImageTaskRequest{}, doubaoSeedreamError{message: err.Error()}
+	}
+	resolution := imageRequestOptionString(normalized, "resolution")
+	outputFormat := imageRequestOptionString(normalized, "outputFormat")
+	background := imageRequestOptionString(normalized, "background")
 	request.Request.Options = normalized
 	request.Request.Size = resolution
 	request.Request.Resolution = resolution

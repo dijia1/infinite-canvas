@@ -13,6 +13,8 @@ import (
 
 var ErrGenerationRequestConflict = repository.ErrGenerationRequestConflict
 
+const imageRequestHashVersion = 2
+
 type imageTaskInputIdentity struct {
 	Name        string `json:"name"`
 	ContentType string `json:"contentType"`
@@ -56,7 +58,7 @@ func imageTaskRequestHash(request CreateImageTaskRequest) (string, error) {
 		providerOptions = ai.ImageRequestOptions{}
 	}
 	identity := imageTaskRequestIdentity{
-		Version: 1, Kind: "image", ProviderID: request.ProviderID, Mode: request.Mode,
+		Version: imageRequestHashVersion, Kind: "image", ProviderID: request.ProviderID, Mode: request.Mode,
 		Prompt: request.Request.Prompt, Count: request.Request.Count, Quality: request.Request.Quality,
 		Size: request.Request.Size, Resolution: request.Request.Resolution, OutputFormat: request.Request.OutputFormat,
 		Background: request.Request.Background, ProviderOptions: providerOptions,
@@ -67,23 +69,34 @@ func imageTaskRequestHash(request CreateImageTaskRequest) (string, error) {
 	}
 	if len(request.ReferenceMediaIDs) == 0 {
 		for _, reference := range request.References {
-			identity.UploadedInputs = append(identity.UploadedInputs, imageTaskReferenceIdentity(reference))
+			input, err := imageTaskReferenceIdentity(reference)
+			if err != nil {
+				return "", err
+			}
+			identity.UploadedInputs = append(identity.UploadedInputs, input)
 		}
 	}
 	if request.Mask != nil {
-		mask := imageTaskReferenceIdentity(*request.Mask)
+		mask, err := imageTaskReferenceIdentity(*request.Mask)
+		if err != nil {
+			return "", err
+		}
 		identity.Mask = &mask
 	}
 	return canonicalRequestHash(identity)
 }
 
-func imageTaskReferenceIdentity(reference ai.ImageReference) imageTaskInputIdentity {
+func imageTaskReferenceIdentity(reference ai.ImageReference) (imageTaskInputIdentity, error) {
+	contentType, extension, err := normalizeImage(reference.Data, reference.ContentType)
+	if err != nil {
+		return imageTaskInputIdentity{}, err
+	}
 	name := filepath.Base(strings.TrimSpace(reference.Name))
-	if name == "." {
-		name = ""
+	if name == "" || name == "." {
+		name = "reference." + extension
 	}
 	digest := sha256.Sum256(reference.Data)
-	return imageTaskInputIdentity{Name: name, ContentType: strings.ToLower(strings.TrimSpace(reference.ContentType)), Digest: hex.EncodeToString(digest[:])}
+	return imageTaskInputIdentity{Name: name, ContentType: contentType, Digest: hex.EncodeToString(digest[:])}, nil
 }
 
 func videoTaskRequestHash(request CreateVideoTaskRequest) (string, error) {

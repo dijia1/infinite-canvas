@@ -106,7 +106,7 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
  VALUES ('legacy-video-task', 'legacy-owner', 'legacy-video-request', 'running', '2026-09-08T01:00:00Z', '2026-09-08T01:00:01Z')`).Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"claim_id", "lease_until", "request_hash"} {
+	for _, column := range []string{"claim_id", "lease_until", "request_hash", "request_hash_version", "request_schema_json"} {
 		if legacy.Migrator().HasColumn("image_generation_tasks", column) {
 			t.Fatalf("legacy fixture already has %s", column)
 		}
@@ -115,7 +115,7 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("migrate legacy image task: %v", err)
 	}
-	for _, column := range []string{"claim_id", "lease_until", "request_hash"} {
+	for _, column := range []string{"claim_id", "lease_until", "request_hash", "request_hash_version", "request_schema_json"} {
 		if !database.Migrator().HasColumn(&model.ImageGenerationTask{}, column) {
 			t.Errorf("migration omitted %s", column)
 		}
@@ -130,6 +130,10 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 	var hashMissing bool
 	if err := database.Raw("SELECT request_hash IS NULL FROM image_generation_tasks WHERE id = ?", item.ID).Scan(&hashMissing).Error; err != nil || !hashMissing {
 		t.Fatalf("legacy image request hash = null %t, err=%v", hashMissing, err)
+	}
+	var identityMissing bool
+	if err := database.Raw("SELECT request_hash_version IS NULL AND request_schema_json IS NULL FROM image_generation_tasks WHERE id = ?", item.ID).Scan(&identityMissing).Error; err != nil || !identityMissing {
+		t.Fatalf("legacy image request identity metadata = null %t, err=%v", identityMissing, err)
 	}
 	var video model.VideoGenerationTask
 	if err := database.First(&video, "id = ?", "legacy-video-task").Error; err != nil {
