@@ -146,9 +146,11 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 	}
 	requestID = strings.TrimSpace(requestID)
 	if requestID != "" {
-		if _, err := uuid.Parse(requestID); err != nil {
+		parsedRequestID, err := uuid.Parse(requestID)
+		if err != nil {
 			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识无效"}
 		}
+		requestID = parsedRequestID.String()
 		payloadHash := canvasProjectPayloadHash(title, input.Revision, document)
 		if receipt, found, err := repository.GetCanvasSaveRequest(requestID); err != nil {
 			return model.CanvasProject{}, false, err

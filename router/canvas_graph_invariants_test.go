@@ -175,6 +175,37 @@ func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T
 	assertStoredCanvasGraph(t, owner, id, 3, "advanced", advancedLegacy)
 }
 
+func TestCanvasSaveRequestCanonicalizesEquivalentUUIDSpellings(t *testing.T) {
+	suffix := fmt.Sprint(time.Now().UnixNano())
+	owner := "canvas-request-uuid-owner-" + suffix
+	id := "canvas-request-uuid-" + suffix
+	document := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
+	body := `{"revision":1,"title":"canonical request","document":` + document + `}`
+	seedCanvasGraphProject(t, id, owner, document)
+
+	requestUUID := uuid.New()
+	bracedRequestID := "{" + requestUUID.String() + "}"
+	first := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, body, bracedRequestID)
+	var accepted model.CanvasProject
+	if first.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, first).Data, &accepted) != nil || accepted.Revision != 2 {
+		t.Fatalf("save with braced UUID = %d/%s", first.Code, first.Body.String())
+	}
+
+	replay := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, owner, body, requestUUID.String())
+	var replayed model.CanvasProject
+	if replay.Code != http.StatusOK || json.Unmarshal(decodeCanvasResponse(t, replay).Data, &replayed) != nil || replayed.Revision != accepted.Revision || replayed.UpdatedAt != accepted.UpdatedAt {
+		t.Fatalf("replay with canonical UUID = %d/%s", replay.Code, replay.Body.String())
+	}
+
+	receipt, found, err := repository.GetCanvasSaveRequest(requestUUID.String())
+	if err != nil || !found || receipt.RequestID != requestUUID.String() {
+		t.Fatalf("canonical receipt = %#v, found=%t, err=%v", receipt, found, err)
+	}
+	if _, found, err := repository.GetCanvasSaveRequest(bracedRequestID); err != nil || found {
+		t.Fatalf("noncanonical receipt must not exist: found=%t err=%v", found, err)
+	}
+}
+
 func TestCanvasShareCopiesLegacyGraphViolations(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
 	owner := "graph-share-owner-" + suffix

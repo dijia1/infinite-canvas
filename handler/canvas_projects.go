@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/service"
+	"github.com/google/uuid"
 )
 
 func CanvasProjects(w http.ResponseWriter, r *http.Request) {
@@ -90,6 +92,10 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	trace := canvasProjectWriteTraceFromRequest(r)
+	requestID := strings.TrimSpace(r.Header.Get("X-Canvas-Request-Id"))
+	if parsedRequestID, err := uuid.Parse(requestID); err == nil {
+		trace.RequestID = parsedRequestID.String()
+	}
 	writeLog := func(outcome string, serverRevision int, userAgent string) {
 		logCanvasProjectWrite(canvasProjectWriteLogEntry{
 			Outcome:           outcome,
@@ -103,7 +109,7 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 			Trace:             trace,
 		})
 	}
-	item, deduplicated, err := service.UpdateCanvasProject(r.Context(), user, id, input, trace.RequestID)
+	item, deduplicated, err := service.UpdateCanvasProject(r.Context(), user, id, input, requestID)
 	if err != nil {
 		if errors.Is(err, service.ErrCanvasProjectConflict) {
 			serverRevision := 0
