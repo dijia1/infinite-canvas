@@ -679,6 +679,7 @@ function InfiniteCanvasPage() {
 
     const {
         runningNodeId,
+        getImageResultState,
         generateNode: handleGenerateNode,
         retryNode: handleRetryNode,
         generateImageFromTextNode,
@@ -905,7 +906,8 @@ function InfiniteCanvasPage() {
     const canvasImageSource = useCallback(
         (node: CanvasNodeData) => {
             if (!node.metadata?.mediaId) return node.metadata?.content;
-            return canvasImageResources.get(node.id)?.url;
+            const resource = canvasImageResources.get(node.id);
+            return resource?.mediaId === node.metadata.mediaId ? resource.url : undefined;
         },
         [canvasImageResources],
     );
@@ -2155,6 +2157,9 @@ function InfiniteCanvasPage() {
                                 imageMask={node.metadata?.sourceNodeId ? undefined : resolveCanvasNodeMask(node, maskResources)}
                                 imageStorageKey={imageResource?.storageKey}
                                 imageSourceManaged={Boolean(node.metadata?.mediaId)}
+                                imageError={canvasImageErrors.get(node.id)}
+                                imageResultState={getImageResultState(node.id)}
+                                onRetryImage={retryCanvasImage}
                                 renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id ? "overview" : "full"}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}

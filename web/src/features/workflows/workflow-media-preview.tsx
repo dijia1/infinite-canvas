@@ -1,8 +1,9 @@
 "use client";
 
-import { Image as ImageIcon, RefreshCw, Video } from "lucide-react";
+import { Image as ImageIcon, Video } from "lucide-react";
 
 import { CanvasVideoContent } from "@/app/(user)/canvas/components/canvas-video-content";
+import { CanvasReadyImage } from "@/components/canvas-ready-image";
 
 export function WorkflowMediaPreview({
     nodeId,
@@ -42,24 +43,16 @@ export function WorkflowMediaPreview({
         );
     }
     if (type === "video") return <CanvasVideoContent nodeId={nodeId} mediaId={mediaId} visible={visible} />;
-    if (imageError) {
-        return (
-            <button type="button" className="flex h-full w-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-red-400" onClick={onRetryImage} onPointerDown={(event) => event.stopPropagation()}>
-                <RefreshCw className="size-4" />
-                {imageError}
-            </button>
-        );
-    }
-    if (!imageUrl) return <div className="h-full w-full animate-pulse bg-black/10 dark:bg-white/10" />;
     return (
-        <img
+        <CanvasReadyImage
+            key={mediaId}
             src={imageUrl}
             alt=""
-            draggable={false}
-            className="pointer-events-none h-full w-full object-contain"
-            onLoad={(event) => {
+            error={imageError}
+            onRetry={onRetryImage}
+            onReady={(image) => {
                 if (imageStorageKey) onImageLoaded?.(imageStorageKey);
-                onImageDimensions?.({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight });
+                onImageDimensions?.({ width: image.naturalWidth, height: image.naturalHeight });
             }}
         />
     );

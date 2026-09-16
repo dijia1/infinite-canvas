@@ -1,6 +1,7 @@
 import type { MouseEventHandler, PointerEventHandler } from "react";
 
 import type { Position } from "@/app/(user)/canvas/types";
+import { CanvasReadyImage } from "./canvas-ready-image";
 
 type CanvasOverviewNodeProps = {
     nodeId: string;
@@ -12,6 +13,7 @@ type CanvasOverviewNodeProps = {
     media: boolean;
     imageSource?: string;
     imageStorageKey?: string;
+    imageIdentity?: string;
     fill: string;
     placeholderFill: string;
     stroke: string;
@@ -33,6 +35,7 @@ export function CanvasOverviewNode({
     media,
     imageSource,
     imageStorageKey,
+    imageIdentity,
     fill,
     placeholderFill,
     stroke,
@@ -59,13 +62,14 @@ export function CanvasOverviewNode({
                 onMouseDown={onMouseDown}
             >
                 {imageSource ? (
-                    <img
+                    <CanvasReadyImage
+                        key={imageIdentity || nodeId}
                         src={imageSource}
                         alt=""
-                        draggable={false}
-                        className="h-full w-full object-cover"
-                        decoding="async"
-                        onLoad={() => {
+                        className="object-cover"
+                        loading={<div className="h-full w-full" style={{ background: placeholderFill }} />}
+                        errorFallback={<div className="h-full w-full" style={{ background: placeholderFill }} />}
+                        onReady={() => {
                             if (imageStorageKey) onImageLoaded?.(imageStorageKey);
                         }}
                     />
@@ -76,4 +80,3 @@ export function CanvasOverviewNode({
         </div>
     );
 }
-

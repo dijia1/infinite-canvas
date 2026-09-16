@@ -120,6 +120,44 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
     return { controller, nodesRef, connectionsRef, calls };
 }
 
+test("successful image task keeps its loading placeholder until the result download finishes", async () => {
+    const uploaded = deferred<StoredCanvasImage>();
+    const source = node("source", CanvasNodeType.Config);
+    const { controller, nodesRef } = setup([source], [], { uploadImage: () => uploaded.promise });
+    const generation = controller.generateNode("source", "image", "a forest");
+    await settleGeneration();
+    const result = nodesRef.current.find((item) => item.type === CanvasNodeType.Image)!;
+    assert.equal(result.metadata?.status, "loading");
+    assert.equal(controller.getImageResultState(result.id), "loading");
+    assert.equal(result.metadata?.content, undefined);
+    uploaded.resolve({ url: "blob:ready", storageKey: "media:ready", mediaId: "ready", width: 512, height: 512, bytes: 12, mimeType: "image/png" });
+    await generation;
+    assert.equal(nodesRef.current.find((item) => item.id === result.id)?.metadata?.status, "success");
+    assert.equal(controller.getImageResultState(result.id), undefined);
+});
+
+test("retrying a failed result download retrieves the successful task without submitting again", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    let downloads = 0;
+    const { controller, nodesRef, calls } = setup([source], [], {
+        getImageTask: async () => completedTask("image-1", "media-1"),
+        uploadImage: async () => {
+            if (++downloads === 1) throw new Error("offline");
+            return { url: "blob:ready", storageKey: "media:ready", mediaId: "ready", width: 512, height: 512, bytes: 12, mimeType: "image/png" };
+        },
+    });
+    await controller.generateNode("source", "image", "a forest");
+    const result = nodesRef.current.find((item) => item.type === CanvasNodeType.Image)!;
+    assert.equal(result.metadata?.status, "error");
+    assert.equal(controller.getImageResultState(result.id), "error");
+    assert.match(result.metadata?.errorDetails || "", /图片加载失败/);
+    await controller.retryNode(result);
+    assert.equal(calls.generation, 1);
+    assert.equal(calls.edit, 0);
+    assert.equal(downloads, 2);
+    assert.equal(nodesRef.current.find((item) => item.id === result.id)?.metadata?.status, "success");
+});
+
 test("creates a batch root and three children with three parallel single-image requests", async () => {
     const source = node("source", CanvasNodeType.Config, { count: 3 });
     const { controller, nodesRef, connectionsRef, calls } = setup([source]);
@@ -1023,6 +1061,7 @@ for (const reason of ["scope", "replacement", "deleted-child"] as const) {
         if (reason === "scope") scope = "account:project:2";
         if (reason === "replacement") nodesRef.current = [root, pendingGenerationNode("image", "new")];
         if (reason === "deleted-child") nodesRef.current = [root];
+        assert.equal(controller.getImageResultState(child.id), undefined);
         const replacement = nodesRef.current;
         uploaded.resolve({ url: "blob:old", storageKey: "media:old", mediaId: "media-old", width: 512, height: 512, bytes: 12, mimeType: "image/png" });
         await settleGeneration();

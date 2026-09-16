@@ -103,6 +103,7 @@ export function WorkflowNodeCard({
             media={hasMedia}
             imageSource={mediaType === "image" ? imageUrl : undefined}
             imageStorageKey={imageStorageKey}
+            imageIdentity={node.mediaId}
             fill={theme.node.fill}
             placeholderFill={theme.toolbar.activeBg}
             stroke={theme.node.stroke}
@@ -308,6 +309,7 @@ export function WorkflowOutputCard({
             media={Boolean(hasMedia)}
             imageSource={hasMedia && slot.type === "image" ? imageUrl : undefined}
             imageStorageKey={imageStorageKey}
+            imageIdentity={execution?.mediaId}
             fill={theme.node.fill}
             placeholderFill={theme.toolbar.activeBg}
             stroke={theme.node.stroke}

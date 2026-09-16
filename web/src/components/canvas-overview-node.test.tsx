@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CanvasOverviewNode } from "./canvas-overview-node";
+import { CanvasReadyImage } from "./canvas-ready-image";
 
 const base = {
     nodeId: "node-1",
@@ -26,7 +27,7 @@ test("overview node keeps the full node geometry and rounded media shell", () =>
     const shell = element.props.children;
     assert.match(shell.props.className, /rounded-3xl/);
     assert.equal(shell.props.style.background, "transparent");
-    assert.equal(shell.props.children.type, "img");
+    assert.equal(shell.props.children.type, CanvasReadyImage);
     assert.equal(shell.props.children.props.src, "/thumbnail.jpg");
 });
 
@@ -40,4 +41,3 @@ test("overview node carries caller data attributes and renders a lightweight pla
     assert.equal(element.props["data-workflow-node-id"], "workflow-node");
     assert.equal(element.props.children.props.children.props.style.background, "#333");
 });
-

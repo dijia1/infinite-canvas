@@ -2,7 +2,7 @@
 
 import { hasCanvasImage } from "../components/canvas-node-actions";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 
 import type { AiConfig } from "@/lib/ai-config";
 import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config";
@@ -57,6 +57,7 @@ export type CanvasGenerationControllerOptions = {
     setDialogNodeId: StateSetter<string | null>;
     setAngleNodeId: StateSetter<string | null>;
     setRunningNodeId?: StateSetter<string | null>;
+    onImageResultStateChange?: () => void;
     createId: () => string;
     createConfigNode: (position: Position, metadata: CanvasNodeMetadata) => CanvasNodeData;
     requestGeneration: (config: AiConfig, prompt: string, clientRequestId: string) => Promise<ImageGenerationTask>;
@@ -80,6 +81,7 @@ export type CanvasGenerationControllerOptions = {
 };
 
 export type CanvasGenerationController = {
+    getImageResultState: (nodeId: string) => "loading" | "error" | undefined;
     stopVideoObservations: (all?: boolean) => void;
     readonly runningNodeId: string | null;
     updateOptions: (options: CanvasGenerationControllerOptions) => void;
@@ -155,6 +157,12 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         }
     };
     const activeImageTaskNodeIds = new Set<string>();
+    // Browser result loading is local UI state, not a provider task status.
+    const imageResultStates = new Map<string, { identity: TaskIdentity; task: ImageGenerationTask; status: "loading" | "error" }>();
+    const getImageResultState = (nodeId: string) => {
+        const state = imageResultStates.get(nodeId);
+        return state && taskCurrent(state.identity, options.nodesRef.current, state.task) ? state.status : undefined;
+    };
     const setRunningNodeId = (next: string | null) => {
         runningNodeId = next;
         options.setRunningNodeId?.(next);
@@ -200,7 +208,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                               ...node.metadata,
                               imageTaskId: task.id,
                               imageTaskClientRequestId: identity.clientRequestId || task.clientRequestId,
-                              status: (task.status === "failed" || task.status === "uncertain") ? NODE_STATUS_ERROR : task.status === "succeeded" ? NODE_STATUS_SUCCESS : NODE_STATUS_LOADING,
+                              status: (task.status === "failed" || task.status === "uncertain") ? NODE_STATUS_ERROR : NODE_STATUS_LOADING,
                               errorDetails: (task.status === "failed" || task.status === "uncertain") ? imageTaskError(task) : undefined,
                           },
                       }
@@ -213,7 +221,21 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const nodeId = identity.nodeId;
         const image = task.images[0];
         if (!image?.dataUrl) throw new Error("图片任务完成但未返回图片");
-        const uploaded = await options.uploadImage(image.dataUrl, image.mediaId);
+        const resultState = { identity, task, status: "loading" as "loading" | "error" };
+        imageResultStates.set(nodeId, resultState);
+        options.onImageResultStateChange?.();
+        let uploaded: StoredCanvasImage;
+        try {
+            uploaded = await options.uploadImage(image.dataUrl, image.mediaId);
+        } catch {
+            if (taskCurrent(identity, options.nodesRef.current, task)) resultState.status = "error";
+            throw new Error("图片加载失败，请重新加载");
+        } finally {
+            if (imageResultStates.get(nodeId) === resultState) {
+                if (resultState.status !== "error") imageResultStates.delete(nodeId);
+                options.onImageResultStateChange?.();
+            }
+        }
         if (!taskCurrent(identity, options.nodesRef.current, task)) return;
         const imageConfig = NODE_DEFAULT_SIZE[CanvasNodeType.Image];
         const imageSize = fitNodeSize(uploaded.width, uploaded.height, imageConfig.width, imageConfig.height);
@@ -800,12 +822,16 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
     };
 
     return {
+        getImageResultState,
         stopVideoObservations,
         get runningNodeId() {
             return runningNodeId;
         },
         updateOptions(next) {
             options = next;
+            imageResultStates.forEach((state, id) => {
+                if (!taskCurrent(state.identity, options.nodesRef.current, state.task)) imageResultStates.delete(id);
+            });
         },
         generateNode,
         retryNode,
@@ -820,8 +846,9 @@ export type UseCanvasGenerationOptions = Omit<CanvasGenerationControllerOptions,
 
 export function useCanvasGeneration(options: UseCanvasGenerationOptions) {
     const [runningNodeId, setRunningNodeId] = useState<string | null>(null);
+    const [, onImageResultStateChange] = useReducer((version: number) => version + 1, 0);
     const controllerRef = useRef<CanvasGenerationController | null>(null);
-    const controllerOptions = { ...options, setRunningNodeId };
+    const controllerOptions = { ...options, setRunningNodeId, onImageResultStateChange };
     if (!controllerRef.current) controllerRef.current = createCanvasGenerationController(controllerOptions);
     else controllerRef.current.updateOptions(controllerOptions);
     const controller = controllerRef.current;
@@ -843,6 +870,7 @@ export function useCanvasGeneration(options: UseCanvasGenerationOptions) {
     }, [controller]);
     return {
         runningNodeId,
+        getImageResultState: controller.getImageResultState,
         generateNode: controller.generateNode,
         retryNode: controller.retryNode,
         generateImageFromTextNode: controller.generateImageFromTextNode,

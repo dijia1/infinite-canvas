@@ -17,6 +17,7 @@ import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
 
 import { CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
+import { CanvasReadyImage } from "@/components/canvas-ready-image";
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
@@ -25,6 +26,9 @@ type CanvasNodeProps = {
     imageSource?: string;
     imageStorageKey?: string;
     imageSourceManaged?: boolean;
+    imageError?: string;
+    imageResultState?: "loading" | "error";
+    onRetryImage?: (nodeId: string) => void;
     imageMask?: ImageMask;
     renderDetail?: CanvasRenderDetail;
     inputBadgeLabel?: string;
@@ -69,6 +73,9 @@ type NodeContentRendererProps = {
     imageSource?: string;
     imageStorageKey?: string;
     imageSourceManaged?: boolean;
+    imageError?: string;
+    imageResultState?: "loading" | "error";
+    onRetryImage?: (nodeId: string) => void;
     imageMask?: ImageMask;
     isEditingContent: boolean;
     textareaRef: React.RefObject<HTMLTextAreaElement | null>;
@@ -94,6 +101,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     imageSource,
     imageStorageKey,
     imageSourceManaged = false,
+    imageError,
+    imageResultState,
+    onRetryImage,
     imageMask,
     renderDetail = "full",
     inputBadgeLabel,
@@ -269,6 +279,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 media={hasImageContent || hasVideoContent}
                 imageSource={hasImageContent ? resolvedImageSource : undefined}
                 imageStorageKey={imageStorageKey}
+                imageIdentity={data.metadata?.mediaId}
                 fill={theme.node.fill}
                 placeholderFill={theme.toolbar.activeBg}
                 stroke={theme.node.stroke}
@@ -353,6 +364,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                         imageSource={resolvedImageSource}
                         imageStorageKey={imageStorageKey}
                         imageSourceManaged={imageSourceManaged}
+                        imageError={imageError}
+                        imageResultState={imageResultState}
+                        onRetryImage={onRetryImage}
                         imageMask={imageMask}
                         onImageLoaded={onImageLoaded}
                     />
@@ -385,6 +399,9 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
         prev.imageSource === next.imageSource &&
         prev.imageStorageKey === next.imageStorageKey &&
         prev.imageSourceManaged === next.imageSourceManaged &&
+        prev.imageError === next.imageError &&
+        prev.imageResultState === next.imageResultState &&
+        prev.onRetryImage === next.onRetryImage &&
         prev.imageMask === next.imageMask &&
         prev.renderDetail === next.renderDetail &&
         prev.inputBadgeLabel === next.inputBadgeLabel &&
@@ -428,7 +445,7 @@ function InputBadge({ label, node }: { label: string; node: CanvasNodeData }) {
 function NodeContent(props: NodeContentRendererProps) {
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
-    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} />;
+    if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} label={props.imageResultState === "loading" ? "图片加载中" : "生成中"} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
     const Renderer = nodeContentRenderers[props.node.type];
@@ -442,11 +459,11 @@ const nodeContentRenderers = {
     [CanvasNodeType.Video]: VideoNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-function LoadingContent({ theme }: Pick<NodeContentRendererProps, "theme">) {
+function LoadingContent({ theme, label = "生成中" }: Pick<NodeContentRendererProps, "theme"> & { label?: string }) {
     return (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
+        <div role="status" className="flex h-full w-full flex-col items-center justify-center gap-3" style={{ color: theme.node.activeStroke }}>
             <div className="size-10 animate-spin rounded-full border-2" style={{ borderColor: theme.node.stroke, borderTopColor: theme.node.activeStroke }} />
-            <span className="text-[10px] tracking-[0.2em]">生成中</span>
+            <span className="text-[10px] tracking-[0.2em]">{label}</span>
         </div>
     );
 }
@@ -466,7 +483,7 @@ function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "
                 onMouseDown={(event) => event.stopPropagation()}
             >
                 <RefreshCw className="size-3.5" />
-                重试
+                {node.metadata?.errorDetails?.startsWith("图片加载失败") ? "重新加载" : "重试"}
             </button>
         </div>
     );
@@ -528,10 +545,10 @@ function TextContent({ node, theme, isEditingContent, textareaRef, onContentChan
 
 function ImageNodeContent(props: NodeContentRendererProps) {
     const content = props.imageSourceManaged ? props.imageSource : props.node.metadata?.content;
-    if (!content && props.isBatchRoot) {
+    if (!content && props.isBatchRoot && !props.imageSourceManaged) {
         const content =
             props.node.metadata?.status === "loading" ? (
-                <LoadingContent theme={props.theme} />
+                <LoadingContent theme={props.theme} label={props.imageResultState === "loading" ? "图片加载中" : "生成中"} />
             ) : props.node.metadata?.status === "error" ? (
                 <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />
             ) : (
@@ -543,7 +560,7 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             </BatchFrame>
         );
     }
-    if (!content) return props.imageSourceManaged ? <LoadingContent theme={props.theme} /> : <EmptyImageContent {...props} />;
+    if (!content && !props.imageSourceManaged) return <EmptyImageContent {...props} />;
 
     return (
         <ImageContent
@@ -557,6 +574,8 @@ function ImageNodeContent(props: NodeContentRendererProps) {
             onSetBatchPrimary={props.onSetBatchPrimary}
             imageSource={content}
             imageStorageKey={props.imageStorageKey}
+            imageError={props.imageError}
+            onRetryImage={props.onRetryImage}
             imageMask={props.imageMask}
             onImageLoaded={props.onImageLoaded}
             onRetry={props.onRetry}
@@ -590,6 +609,8 @@ function ImageContent({
     node,
     imageSource,
     imageStorageKey,
+    imageError,
+    onRetryImage,
     imageMask,
     isBatchRoot,
     batchCount,
@@ -602,8 +623,10 @@ function ImageContent({
     onRetry,
 }: {
     node: CanvasNodeData;
-    imageSource: string;
+    imageSource?: string;
     imageStorageKey?: string;
+    imageError?: string;
+    onRetryImage?: (nodeId: string) => void;
     imageMask?: ImageMask;
     isBatchRoot: boolean;
     batchCount: number;
@@ -621,16 +644,17 @@ function ImageContent({
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="relative h-full w-full overflow-hidden rounded-3xl">
-                <img
+                <CanvasReadyImage
+                    key={node.metadata?.mediaId || node.id}
                     src={imageSource}
                     alt={node.title}
-                    draggable={false}
-                    decoding="async"
-                    onLoad={() => {
+                    error={imageError}
+                    loading={<div className="h-full w-full" style={{ background: theme.node.fill }}><LoadingContent theme={theme} label="图片加载中" /></div>}
+                    onRetry={() => onRetryImage?.(node.id)}
+                    onReady={() => {
                         if (imageStorageKey) onImageLoaded?.(node.id, imageStorageKey);
                     }}
-                    onDragStart={(event) => event.preventDefault()}
-                    className={`pointer-events-none block h-full w-full select-none ${node.metadata?.freeResize ? "object-fill" : "object-contain"}`}
+                    className={node.metadata?.freeResize ? "object-fill" : "object-contain"}
                 />
                 {imageMask?.strokes.length ? <CanvasImageMaskOverlay mask={imageMask} /> : null}
                 {node.metadata?.localUploadState === "uploading" ? (
