@@ -2,49 +2,47 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-const completedMediaUploadIntentRetention = 24 * time.Hour
-
 // CleanupExpiredMediaUploadIntents removes unfinished expired uploads and the
 // objects reserved for them. Completed rows are retained briefly for duplicate
 // completion retries, then removed without touching their media objects.
 func CleanupExpiredMediaUploadIntents(current time.Time) error {
-	items, err := repository.ListExpiredUncompletedMediaUploadIntents(current.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return err
-	}
 	store, err := newImageStore()
 	if err != nil {
 		return err
 	}
-	for _, item := range items {
-		if err := deleteImageObject(context.Background(), store, item.ObjectKey); err != nil {
+	return cleanupExpiredMediaUploadIntents(context.Background(), current, store)
+}
+
+func cleanupExpiredMediaUploadIntents(ctx context.Context, current time.Time, store imageStore) error {
+	var failures []error
+	after := ""
+	for {
+		items, err := repository.ListMediaUploadCleanupCandidates(current, after)
+		if err != nil {
 			return err
 		}
-		if item.FinalObjectKey != "" {
-			if err := deleteImageObject(context.Background(), store, item.FinalObjectKey); err != nil {
-				return err
+		if len(items) == 0 {
+			break
+		}
+		for _, item := range items {
+			after = item.ID
+			deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			err := cleanupMediaUploadIntent(deleteCtx, store, item.ID, current)
+			cancel()
+			if err != nil {
+				failures = append(failures, fmt.Errorf("upload cleanup intent %s: %w", item.ID, err))
 			}
 		}
-		if err := repository.DeleteMediaUploadIntent(item.ID); err != nil {
-			return err
-		}
 	}
-	completedVideos, err := repository.ListExpiredVideoUploadIntents(current.UTC().Format(time.RFC3339Nano))
-	if err != nil {
-		return err
-	}
-	for _, item := range completedVideos {
-		if err := deleteImageObject(context.Background(), store, item.ObjectKey); err != nil {
-			return err
-		}
-	}
-	return repository.DeleteCompletedMediaUploadIntentsBefore(current.UTC().Add(-completedMediaUploadIntentRetention).Format(time.RFC3339Nano))
+	return errors.Join(failures...)
 }
 
 func StartMediaUploadIntentRetention(ctx context.Context) func() {
@@ -53,7 +51,7 @@ func StartMediaUploadIntentRetention(ctx context.Context) func() {
 	}
 	stop := make(chan struct{})
 	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
+		ticker := time.NewTicker(time.Minute)
 		defer ticker.Stop()
 		for {
 			select {

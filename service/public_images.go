@@ -276,28 +276,17 @@ func DeletePublicImage(ctx context.Context, id string) error {
 	if err != nil {
 		return safeMessageError{message: "素材正在使用或无法删除"}
 	}
-	if err := deleteImageObject(ctx, store, media.ObjectKey); err != nil {
+	deleted, err := deleteClaimedMediaObject(ctx, store, media, time.Now().UTC())
+	if err != nil {
 		auditMediaFailure(media, actor.UID, "delete_failed", "object_delete_failed")
 		return err
+	}
+	if !deleted {
+		return nil
 	}
 	_, err = repository.DeleteClaimedCanvasMedia(media.ID, media.CleanupClaimID)
 	if err != nil {
 		auditMediaFailure(media, actor.UID, "delete_failed", "record_delete_failed")
 	}
 	return err
-}
-
-func deleteMedia(ctx context.Context, id string) error {
-	item, found, err := repository.GetMedia(id)
-	if err != nil || !found {
-		return err
-	}
-	store, err := newImageStore()
-	if err != nil {
-		return err
-	}
-	if err := deleteImageObject(ctx, store, item.ObjectKey); err != nil {
-		return err
-	}
-	return repository.DeleteMedia(id)
 }

@@ -21,6 +21,9 @@ func SaveMedia(item model.Media, contexts ...context.Context) (model.Media, erro
 		db = db.WithContext(contexts[0])
 	}
 	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := completeMediaObjectReservation(tx, item); err != nil {
+			return err
+		}
 		if err := tx.Create(&item).Error; err != nil {
 			return err
 		}

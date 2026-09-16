@@ -68,11 +68,15 @@ func deleteClaimedCanvasMedia(ctx context.Context, store imageStore, claimed []m
 			continue
 		}
 		deleteCtx, cancel := context.WithTimeout(ctx, canvasMediaDeleteTimeout)
-		err = deleteImageObject(deleteCtx, store, item.ObjectKey)
+		deleted, deleteErr := deleteClaimedMediaObject(deleteCtx, store, item, now())
+		err = deleteErr
 		cancel()
 		if err != nil {
 			auditMediaFailure(item, "", "delete_failed", "object_delete_failed")
 			log.Printf("canvas media cleanup object delete failed media_id=%s claim_id=%s: %v", item.ID, item.CleanupClaimID, err)
+			continue
+		}
+		if !deleted {
 			continue
 		}
 		if _, err := repository.DeleteClaimedCanvasMedia(item.ID, item.CleanupClaimID); err != nil {

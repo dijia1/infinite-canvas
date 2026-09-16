@@ -370,12 +370,21 @@ func cleanupCanvasShareMedia(ctx context.Context, store imageStore, items []mode
 		if cleanupCtx.Err() != nil {
 			return
 		}
-		if err := deleteImageObject(cleanupCtx, store, item.ObjectKey); err != nil {
-			auditMediaFailure(item, "", "delete_failed", "share_cleanup_failed")
-			log.Printf("canvas share cleanup object failed media_id=%s: %v", item.ID, err)
+		claimed, err := repository.PreparePrivateMediaDeletion(item.ID, item.OwnerUID, time.Now().UTC())
+		if err != nil {
+			log.Printf("canvas share cleanup claim failed media_id=%s: %v", item.ID, err)
 			continue
 		}
-		if err := repository.DeleteMedia(item.ID, cleanupCtx); err != nil {
+		deleted, err := deleteClaimedMediaObject(cleanupCtx, store, claimed, time.Now().UTC())
+		if err != nil {
+			auditMediaFailure(item, "", "delete_failed", "share_cleanup_failed")
+			log.Printf("canvas share cleanup deferred media_id=%s: %v", item.ID, err)
+			continue
+		}
+		if !deleted {
+			continue
+		}
+		if _, err := repository.DeleteClaimedCanvasMedia(claimed.ID, claimed.CleanupClaimID); err != nil {
 			log.Printf("canvas share cleanup record failed media_id=%s: %v", item.ID, err)
 		}
 	}

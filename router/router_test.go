@@ -332,7 +332,7 @@ func TestMediaUploadIntentUsesProxyModeForLocalStorage(t *testing.T) {
 	}
 }
 
-func TestMediaUploadIntentRetentionRemovesOnlyExpiredUncompletedRequests(t *testing.T) {
+func TestMediaUploadIntentRetentionKeepsLateWriteTrackingUntilRecheck(t *testing.T) {
 	current := time.Now().UTC()
 	expired := model.MediaUploadIntent{ID: "expired-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "missing-expired-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
 	completed := model.MediaUploadIntent{ID: "completed-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "completed-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CompletedMediaID: "media-still-audited", CompletedAt: current.Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
@@ -341,14 +341,31 @@ func TestMediaUploadIntentRetentionRemovesOnlyExpiredUncompletedRequests(t *test
 			t.Fatal(err)
 		}
 	}
+	media, err := repository.SaveMedia(model.Media{ID: completed.CompletedMediaID, OwnerUID: completed.OwnerUID, ObjectKey: completed.ObjectKey, Source: model.MediaSourceUpload, ContentType: "image/png"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := service.CleanupExpiredMediaUploadIntents(current); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := repository.GetMediaUploadIntentForOwner(expired.ID, expired.OwnerUID); err != nil || found {
+	if _, found, err := repository.GetMediaUploadIntentForOwner(expired.ID, expired.OwnerUID); err != nil || !found {
 		t.Fatalf("expired intent found=%t err=%v", found, err)
 	}
 	if _, found, err := repository.GetMediaUploadIntentForOwner(completed.ID, completed.OwnerUID); err != nil || !found {
 		t.Fatalf("completed intent found=%t err=%v", found, err)
+	}
+
+	// The first empty listing cannot discard the key: a late PUT may still arrive.
+	if err := service.CleanupExpiredMediaUploadIntents(current.Add(25 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []model.MediaUploadIntent{expired, completed} {
+		if _, found, err := repository.GetMediaUploadIntentForOwner(item.ID, item.OwnerUID); err != nil || found {
+			t.Fatalf("intent not removed after final recheck: %s %v", item.ID, err)
+		}
+	}
+	if _, found, err := repository.GetMedia(media.ID); err != nil || !found {
+		t.Fatalf("completed upload media removed: %v", err)
 	}
 }
 

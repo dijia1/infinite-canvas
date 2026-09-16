@@ -401,3 +401,35 @@ func putImageObject(ctx context.Context, store imageStore, key string, data []by
 	}
 	return store.Head(ctx, key)
 }
+
+func (store *ossImageStore) DeleteObjectVersions(ctx context.Context, key string) error {
+	request := &oss.ListObjectVersionsRequest{Bucket: oss.Ptr(store.bucket), Prefix: oss.Ptr(key), MaxKeys: 1000}
+	for {
+		result, err := store.internal.ListObjectVersions(ctx, request)
+		if err != nil {
+			return err
+		}
+		for _, item := range result.ObjectVersions {
+			if oss.ToString(item.Key) == key {
+				if err := store.DeleteVersion(ctx, key, oss.ToString(item.VersionId)); err != nil {
+					return err
+				}
+			}
+		}
+		for _, item := range result.ObjectDeleteMarkers {
+			if oss.ToString(item.Key) == key {
+				if err := store.DeleteVersion(ctx, key, oss.ToString(item.VersionId)); err != nil {
+					return err
+				}
+			}
+		}
+		if !result.IsTruncated {
+			return nil
+		}
+		if result.NextKeyMarker == nil || (oss.ToString(result.NextKeyMarker) == oss.ToString(request.KeyMarker) && oss.ToString(result.NextVersionIdMarker) == oss.ToString(request.VersionIdMarker)) {
+			return errors.New("OSS 版本列表分页没有前进")
+		}
+		request.KeyMarker = result.NextKeyMarker
+		request.VersionIdMarker = result.NextVersionIdMarker
+	}
+}

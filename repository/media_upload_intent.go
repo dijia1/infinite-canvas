@@ -42,7 +42,7 @@ func FinalizeMediaUploadIntent(id, ownerUID, completedAt string, media model.Med
 	resultMedia := model.Media{}
 	created := false
 	err = database.Transaction(func(transaction *gorm.DB) error {
-		query := transaction.Model(&model.MediaUploadIntent{})
+		query := transaction.Model(&model.MediaUploadIntent{}).Where("intent <> ? AND COALESCE(finalize_claim_id, '') NOT LIKE ?", InternalMediaUploadIntent, mediaObjectCleanupClaimPrefix+"%")
 		if len(claimID) > 0 && claimID[0] != "" {
 			query = query.Where("finalize_claim_id = ? AND finalize_lease_until > ?", claimID[0], completedAt)
 		}

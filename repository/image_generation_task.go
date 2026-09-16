@@ -346,6 +346,9 @@ func CompleteImageGenerationTask(item model.ImageGenerationTask, media []model.M
 			if result.ID == "" || result.OwnerUID != task.OwnerUID {
 				return errors.New("image task result media owner mismatch")
 			}
+			if err := completeMediaObjectReservation(transaction, result); err != nil {
+				return err
+			}
 			if err := transaction.Create(&result).Error; err != nil {
 				return err
 			}

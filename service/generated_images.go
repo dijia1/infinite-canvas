@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -53,6 +52,10 @@ func prepareImageTaskResultMedia(ctx context.Context, images []ai.ImageResult) (
 		}
 		createdAt := time.Now().UTC()
 		key := privateImageObjectKey(user.UID, model.MediaSourceGenerated, extension, createdAt)
+		if err := reserveMediaObject(ctx, user.UID, key); err != nil {
+			prepared.cleanup(ctx)
+			return preparedImageTaskResults{}, err
+		}
 		prepared.keys = append(prepared.keys, key)
 		metadata, err := putImageObject(ctx, store, key, data, contentType)
 		if err != nil {
@@ -81,11 +84,7 @@ func (prepared preparedImageTaskResults) cleanup(ctx context.Context) {
 	cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	for _, key := range prepared.keys {
-		if err := prepared.store.Delete(cleanupContext, key); err != nil && !isMissingImageObjectError(err) {
-			// A later retention pass cannot find an unpublished object, so retain
-			// enough context for an operator to remove it manually.
-			log.Printf("cleanup unpublished image task object %s failed: %v", key, err)
-		}
+		cleanupReservedMediaObject(cleanupContext, prepared.store, key)
 	}
 }
 

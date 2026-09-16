@@ -141,6 +141,9 @@ func CreateMediaUploadIntent(ctx context.Context, user PortalUser, input MediaUp
 		_ = repository.DeleteMediaUploadIntent(item.ID)
 		return MediaUploadIntentView{}, fmt.Errorf("生成上传地址失败: %w", err)
 	}
+	if err := repository.UpdateMediaUploadSignedExpiry(item.ID, signedExpiry); err != nil {
+		return MediaUploadIntentView{}, err
+	}
 	return MediaUploadIntentView{Mode: "direct", ID: item.ID, UploadURL: uploadURL, ExpiresAt: signedExpiry}, nil
 }
 
@@ -154,6 +157,9 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 	}
 	if !found {
 		return MediaAccess{}, false, safeMessageError{message: "上传请求不存在"}
+	}
+	if intent.Intent == repository.InternalMediaUploadIntent {
+		return MediaAccess{}, false, safeMessageError{message: "上传请求无效"}
 	}
 	if intent.CompletedMediaID != "" {
 		access, err := MediaAccessURL(ctx, user, intent.CompletedMediaID)
@@ -322,16 +328,19 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	if isPublic {
 		key = publicImageObjectKey(extension, createdAt)
 	}
+	if err := reserveMediaObject(ctx, user.UID, key); err != nil {
+		return MediaAccess{}, err
+	}
 	metadata, err := putImageObject(ctx, store, key, data, contentType)
 	if err != nil {
-		_ = store.Delete(ctx, key)
+		cleanupReservedMediaObject(ctx, store, key)
 		return MediaAccess{}, fmt.Errorf("读取已保存图片版本失败: %w", err)
 	}
 	width, height := imageDimensions(data)
 	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
 	saved, err := repository.SaveMedia(item, ctx)
 	if err != nil {
-		_ = store.Delete(ctx, key)
+		cleanupReservedMediaObject(ctx, store, key)
 		return MediaAccess{}, err
 	}
 	return mediaAccess(ctx, store, saved)
@@ -445,9 +454,13 @@ func DeletePrivateMedia(ctx context.Context, user PortalUser, id string) error {
 	if err != nil {
 		return safeMessageError{message: "素材正在使用或无法删除"}
 	}
-	if err := deleteImageObject(ctx, store, item.ObjectKey); err != nil {
+	deleted, err := deleteClaimedMediaObject(ctx, store, item, time.Now().UTC())
+	if err != nil {
 		auditMediaFailure(item, user.UID, "delete_failed", "object_delete_failed")
 		return privateMediaDeleteFailure(id, err)
+	}
+	if !deleted {
+		return nil
 	}
 	if _, err := repository.DeleteClaimedCanvasMedia(item.ID, item.CleanupClaimID); err != nil {
 		auditMediaFailure(item, user.UID, "delete_failed", "record_delete_failed")
@@ -462,7 +475,14 @@ func privateMediaDeleteFailure(id string, err error) error {
 }
 
 func deleteImageObject(ctx context.Context, store imageStore, key string) error {
-	err := store.Delete(ctx, key)
+	var err error
+	if versions, ok := store.(interface {
+		DeleteObjectVersions(context.Context, string) error
+	}); ok {
+		err = versions.DeleteObjectVersions(ctx, key)
+	} else {
+		err = store.Delete(ctx, key)
+	}
 	if err == nil || isMissingImageObjectError(err) {
 		return nil
 	}
