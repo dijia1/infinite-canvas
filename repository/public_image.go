@@ -15,7 +15,13 @@ func SavePublicImage(item model.PublicImage) (model.PublicImage, error) {
 	if err != nil {
 		return model.PublicImage{}, err
 	}
-	return item, db.Create(&item).Error
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := lockPublicFolders(tx, item.FolderID); err != nil {
+			return err
+		}
+		return tx.Create(&item).Error
+	})
+	return item, err
 }
 
 func GetPublicImage(id string) (model.PublicImage, bool, error) {
@@ -80,10 +86,31 @@ func UpdatePublicImage(id string, title *string, folderID *string) (model.Public
 	if folderID != nil {
 		updates["folder_id"] = *folderID
 	}
-	if err := db.Model(&model.PublicImage{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		return model.PublicImage{}, false, err
-	}
-	return GetPublicImage(id)
+	var item model.PublicImage
+	found := false
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.First(&item, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if folderID != nil {
+			if err := lockPublicFolders(tx, item.FolderID, *folderID); err != nil {
+				return err
+			}
+		}
+		result := tx.Model(&model.PublicImage{}).Where("id = ?", id).Updates(updates)
+		if result.Error != nil || result.RowsAffected == 0 {
+			return result.Error
+		}
+		if err := tx.Preload("Media").First(&item, "id = ?", id).Error; err != nil {
+			return err
+		}
+		found = true
+		return nil
+	})
+	return item, found, err
 }
 
 func DeletePublicImageAndMedia(publicImageID, mediaID string) error {

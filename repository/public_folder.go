@@ -2,6 +2,8 @@ package repository
 
 import (
 	"errors"
+	"gorm.io/gorm/clause"
+	"sort"
 
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
@@ -12,7 +14,13 @@ func SavePublicFolder(item model.PublicFolder) (model.PublicFolder, error) {
 	if err != nil {
 		return model.PublicFolder{}, err
 	}
-	return item, db.Create(&item).Error
+	err = db.Transaction(func(tx *gorm.DB) error {
+		if err := lockPublicFolders(tx, item.ParentID); err != nil {
+			return err
+		}
+		return tx.Create(&item).Error
+	})
+	return item, err
 }
 
 func GetPublicFolder(id string) (model.PublicFolder, bool, error) {
@@ -58,6 +66,9 @@ func PublicFolderHasContents(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return publicFolderHasContents(db, id)
+}
+func publicFolderHasContents(db *gorm.DB, id string) (bool, error) {
 	var count int64
 	if err := db.Model(&model.PublicFolder{}).Where("parent_id = ?", id).Count(&count).Error; err != nil {
 		return false, err
@@ -76,6 +87,51 @@ func DeletePublicFolder(id string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	result := db.Delete(&model.PublicFolder{}, "id = ?", id)
-	return result.RowsAffected > 0, result.Error
+	deleted := false
+	err = db.Transaction(func(tx *gorm.DB) error {
+		var folder model.PublicFolder
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&folder, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPublicFolderNotFound
+			}
+			return err
+		}
+		contains, err := publicFolderHasContents(tx, id)
+		if err != nil {
+			return err
+		}
+		if contains {
+			return ErrPublicFolderNotEmpty
+		}
+		result := tx.Delete(&folder)
+		deleted = result.RowsAffected > 0
+		return result.Error
+	})
+	return deleted, err
+}
+
+var (
+	ErrPublicFolderNotFound = errors.New("public folder not found")
+	ErrPublicFolderNotEmpty = errors.New("public folder not empty")
+)
+
+// Writers and deletion lock the same directory row. Sort before locking more
+// than one directory so opposite moves cannot acquire them in reverse order.
+func lockPublicFolders(tx *gorm.DB, ids ...string) error {
+	sort.Strings(ids)
+	previous := ""
+	for _, id := range ids {
+		if id == "" || id == previous {
+			continue
+		}
+		previous = id
+		var folder model.PublicFolder
+		if err := tx.Clauses(clause.Locking{Strength: "KEY SHARE"}).Select("id").First(&folder, "id = ?", id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPublicFolderNotFound
+			}
+			return err
+		}
+	}
+	return nil
 }

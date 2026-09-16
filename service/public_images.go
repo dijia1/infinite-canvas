@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
+	"log"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,6 +39,9 @@ func CreatePublicFolder(title, parentID string) (model.PublicFolder, error) {
 	}
 	item := model.PublicFolder{ID: newID("public-folder"), ParentID: parentID, Title: name, CreatedAt: now()}
 	saved, err := repository.SavePublicFolder(item)
+	if errors.Is(err, repository.ErrPublicFolderNotFound) {
+		return model.PublicFolder{}, safeMessageError{message: "父文件夹不存在"}
+	}
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return model.PublicFolder{}, safeMessageError{message: "同级文件夹名称已存在"}
 	}
@@ -77,28 +82,14 @@ func RenamePublicFolder(id, title string) (model.PublicFolder, error) {
 }
 
 func DeletePublicFolder(id string) error {
-	_, found, err := repository.GetPublicFolder(id)
-	if err != nil {
-		return err
-	}
-	if !found {
-		return safeMessageError{message: "文件夹不存在"}
-	}
-	hasContents, err := repository.PublicFolderHasContents(id)
-	if err != nil {
-		return err
-	}
-	if hasContents {
+	deleted, err := repository.DeletePublicFolder(id)
+	if errors.Is(err, repository.ErrPublicFolderNotEmpty) {
 		return safeMessageError{message: "文件夹包含图片或子文件夹，请先整理内容"}
 	}
-	deleted, err := repository.DeletePublicFolder(id)
-	if err != nil {
-		return err
-	}
-	if !deleted {
+	if errors.Is(err, repository.ErrPublicFolderNotFound) || (err == nil && !deleted) {
 		return safeMessageError{message: "文件夹不存在"}
 	}
-	return nil
+	return err
 }
 
 func validatePublicFolderID(folderID string) (string, error) {
@@ -148,7 +139,18 @@ func SavePublicImage(ctx context.Context, user PortalUser, filename, contentType
 	}
 	saved, err := repository.SavePublicImage(item)
 	if err != nil {
-		_ = deleteMedia(ctx, access.MediaID)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		expiry := time.Now().Add(24 * time.Hour)
+		if _, cleanupErr := repository.SetPrivateMediaExpiry(access.MediaID, user.UID, &expiry); cleanupErr != nil {
+			log.Printf("public image unpublished retention failed media_id=%s: %v", access.MediaID, cleanupErr)
+		}
+		if cleanupErr := DeletePrivateMedia(cleanupCtx, user, access.MediaID); cleanupErr != nil {
+			log.Printf("public image unpublished cleanup deferred media_id=%s: %v", access.MediaID, cleanupErr)
+		}
+		cancel()
+		if errors.Is(err, repository.ErrPublicFolderNotFound) {
+			err = safeMessageError{message: "文件夹不存在"}
+		}
 		return model.PublicImage{}, MediaAccess{}, err
 	}
 	media, found, err := repository.GetMedia(access.MediaID)
@@ -193,6 +195,9 @@ func UpdatePublicImage(id string, title *string, folderID *string) (model.Public
 		*folderID = validatedFolderID
 	}
 	item, found, err := repository.UpdatePublicImage(id, title, folderID)
+	if errors.Is(err, repository.ErrPublicFolderNotFound) {
+		return model.PublicImage{}, safeMessageError{message: "文件夹不存在"}
+	}
 	if err != nil {
 		return model.PublicImage{}, err
 	}
