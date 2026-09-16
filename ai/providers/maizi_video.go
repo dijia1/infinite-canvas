@@ -22,11 +22,17 @@ type maiziVideoProvider struct {
 	client *http.Client
 }
 
+var maiziSeedanceVideoRequestSchema = ai.VideoRequestSchema{
+	MinDuration: 4, MaxDuration: 15, DefaultDuration: 5,
+	MaxReferenceImages: 9, MaxReferenceVideos: 3, MaxReferenceVideoDuration: 15,
+	SupportsAudio: true,
+}
+
 func init() {
 	_ = ai.Register(ai.ProviderType{ID: "maizi-video-seedance", Name: "MaiziAiVideo Seedance", Capabilities: []ai.Capability{ai.CapabilityVideoGenerate}, ConfigFields: []ai.ConfigField{
 		{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
 		{Key: "model", Label: "模型名称", Type: "text", Placeholder: "doubao-seedance-2.0", Required: true},
-	}, New: newMaiziVideoProvider})
+	}, VideoRequestSchema: &maiziSeedanceVideoRequestSchema, New: newMaiziVideoProvider})
 }
 
 func newMaiziVideoProvider(raw json.RawMessage) (ai.Provider, error) {
@@ -39,7 +45,11 @@ func newMaiziVideoProvider(raw json.RawMessage) (ai.Provider, error) {
 	if config.APIKey == "" || config.Model == "" {
 		return nil, maiziError{"请填写视频供应商 API Key 和模型名称"}
 	}
-	return &maiziVideoProvider{config: config, client: &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+	return &maiziVideoProvider{config: config, client: newMaiziVideoHTTPClient()}, nil
+}
+
+func newMaiziVideoHTTPClient() *http.Client {
+	return &http.Client{Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 }
 
 func (p *maiziVideoProvider) CreateVideo(ctx context.Context, r ai.VideoRequest) (ai.VideoTask, error) {

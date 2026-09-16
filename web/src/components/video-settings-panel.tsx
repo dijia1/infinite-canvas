@@ -5,6 +5,7 @@ import { CanvasSettingsSelect } from "@/components/canvas-settings-select";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { resolveSelectedModel } from "@/lib/model-selection";
+import { videoDurationOptions, videoSupportsAudio } from "@/lib/video-config";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 
 type Props = { config: AiConfig; onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "generateAudio", value: string) => void; theme: CanvasTheme; showTitle?: boolean; className?: string };
@@ -12,6 +13,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
     const status = useConfigStore((state) => state.status);
     const schema = resolveSelectedModel(status?.videoModels, config.videoProviderId, status?.defaultVideoModelId)?.videoRequestSchema;
     const invalid = Boolean(schema && (!schema.resolutions.some((r) => r.value === config.vquality) || !schema.aspectRatios.includes(config.videoSize || "")));
+    const durationOptions = videoDurationOptions(schema);
     return (
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(e) => e.stopPropagation()}>
@@ -32,12 +34,14 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </label>
                 <label className="block space-y-1 text-xs">
                     <span>时长</span>
-                    <CanvasSettingsSelect className="w-full" value={config.videoSeconds || "5"} options={Array.from({ length: 12 }, (_, i) => ({ value: String(i + 4), label: `${i + 4} 秒` }))} onChange={(v) => onConfigChange("videoSeconds", v)} />
+                    <CanvasSettingsSelect className="w-full" value={config.videoSeconds || String(schema?.defaultDuration || 5)} options={durationOptions} onChange={(v) => onConfigChange("videoSeconds", v)} />
                 </label>
-                <label className="flex items-center justify-between text-xs">
-                    <span>生成音频</span>
-                    <Switch checkedChildren="开" unCheckedChildren="关" size="small" checked={config.generateAudio === "true"} onChange={(v) => onConfigChange("generateAudio", String(v))} />
-                </label>
+                {videoSupportsAudio(schema) ? (
+                    <label className="flex items-center justify-between text-xs">
+                        <span>生成音频</span>
+                        <Switch checkedChildren="开" unCheckedChildren="关" size="small" checked={config.generateAudio === "true"} onChange={(v) => onConfigChange("generateAudio", String(v))} />
+                    </label>
+                ) : null}
                 {!schema && (
                     <p role="alert" className="text-xs">
                         管理员尚未配置视频模型参数

@@ -63,6 +63,37 @@ func TestVideoRequestBoundariesAndPriceSnapshot(t *testing.T) {
 	}
 }
 
+func TestVideoRequestCapabilitiesUseSelectedProviderType(t *testing.T) {
+	info := ai.ProviderType{VideoRequestSchema: &ai.VideoRequestSchema{
+		MinDuration: 5, MaxDuration: 15, DefaultDuration: 5,
+		MaxReferenceImages: 9, MaxReferenceVideos: 0, SupportsAudio: false,
+	}}
+	provider := model.AIProvider{
+		AspectRatios: []string{"16:9"},
+		VideoPrices:  []model.ImageResolutionPrice{{Resolution: "administrator-resolution", Amount: decimal.RequireFromString("0.25")}},
+	}
+	valid := CreateVideoTaskRequest{Seconds: 5, Size: "16:9", Resolution: "administrator-resolution", ImageMediaIDs: []string{"image"}}
+	if err := validateVideoRequestCapabilities(valid, provider, info); err != nil {
+		t.Fatalf("valid request = %v", err)
+	}
+	cases := []CreateVideoTaskRequest{
+		{Seconds: 4, Size: "16:9", Resolution: "administrator-resolution"},
+		{Seconds: 5, Size: "16:9", Resolution: "administrator-resolution", VideoMediaIDs: []string{"video"}},
+		{Seconds: 5, Size: "16:9", Resolution: "administrator-resolution", GenerateAudio: true},
+	}
+	for _, request := range cases {
+		if err := validateVideoRequestCapabilities(request, provider, info); err == nil {
+			t.Fatalf("unsupported request was accepted: %#v", request)
+		}
+	}
+	if err := validateVideoRequestCapabilities(CreateVideoTaskRequest{Seconds: 5, Size: "9:16", Resolution: "administrator-resolution"}, provider, info); err == nil {
+		t.Fatal("unconfigured ratio was accepted")
+	}
+	if err := validateVideoRequestCapabilities(CreateVideoTaskRequest{Seconds: 5, Size: "16:9", Resolution: "removed-resolution"}, provider, info); err == nil {
+		t.Fatal("unconfigured resolution was accepted")
+	}
+}
+
 func TestNormalizeAndHashVideoTaskRequestUsesStableOrderedIdentity(t *testing.T) {
 	request, err := normalizeVideoTaskRequest(CreateVideoTaskRequest{ClientRequestID: " client ", ProviderID: " provider ", Prompt: " make it move ", Seconds: 5, Size: " 16:9 ", Resolution: " 720p ", GenerateAudio: true, ImageMediaIDs: []string{" image-a ", "image-b"}, VideoMediaIDs: []string{" video-a "}})
 	if err != nil {

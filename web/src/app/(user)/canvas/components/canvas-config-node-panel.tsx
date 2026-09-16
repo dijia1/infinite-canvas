@@ -206,7 +206,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                     </span>
                 </Button>
                 {mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
-                {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality }); }} /> : null}
+                {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio }); }} /> : null}
             </div>
             <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} centered destroyOnHidden>
                 <div ref={previewContentRef} className="min-h-0 flex-1 overflow-hidden" data-canvas-no-zoom onWheelCapture={(event) => event.stopPropagation()}>

@@ -79,7 +79,7 @@ func publicAIModelChoices(settings model.AISettings, capability ai.Capability) [
 			choice.ImageRequestSchema = &schema
 		}
 		if capability == ai.CapabilityVideoGenerate {
-			choice.VideoRequestSchema = configuredVideoRequestSchema(provider)
+			choice.VideoRequestSchema = configuredVideoRequestSchema(provider, typeInfo)
 		}
 		choices = append(choices, choice)
 	}
@@ -327,12 +327,17 @@ type safeMessageError struct{ message string }
 func (err safeMessageError) Error() string       { return err.message }
 func (err safeMessageError) SafeMessage() string { return err.message }
 
-func configuredVideoRequestSchema(provider model.AIProvider) *ai.VideoRequestSchema {
-	schema := &ai.VideoRequestSchema{AspectRatios: append([]string(nil), provider.AspectRatios...), MinDuration: 4, MaxDuration: 15, DefaultDuration: 5, MaxReferenceImages: 9, MaxReferenceVideos: 3, MaxReferenceVideoDuration: 15, Resolutions: []ai.ImageRequestFieldOption{}}
+func configuredVideoRequestSchema(provider model.AIProvider, info ai.ProviderType) *ai.VideoRequestSchema {
+	schema := ai.VideoRequestSchema{MinDuration: 4, MaxDuration: 15, DefaultDuration: 5, MaxReferenceImages: 9, MaxReferenceVideos: 3, MaxReferenceVideoDuration: 15, SupportsAudio: true}
+	if info.VideoRequestSchema != nil {
+		schema = *info.VideoRequestSchema
+	}
+	schema.AspectRatios = append([]string(nil), provider.AspectRatios...)
+	schema.Resolutions = make([]ai.ImageRequestFieldOption, 0, len(provider.VideoPrices))
 	for _, price := range provider.VideoPrices {
 		schema.Resolutions = append(schema.Resolutions, ai.ImageRequestFieldOption{Value: price.Resolution, Label: price.Resolution, Price: price.Amount.String()})
 	}
-	return schema
+	return &schema
 }
 
 var aspectRatioParameter = regexp.MustCompile(`^[1-9][0-9]{0,3}:[1-9][0-9]{0,3}$`)

@@ -34,6 +34,7 @@ type ProviderType struct {
 	Capabilities                 []Capability                                     `json:"capabilities"`
 	ConfigFields                 []ConfigField                                    `json:"configFields"`
 	ImageRequestSchema           *ImageRequestSchema                              `json:"imageRequestSchema,omitempty"`
+	VideoRequestSchema           *VideoRequestSchema                              `json:"videoRequestSchema,omitempty"`
 	CanonicalizeImageTaskRequest func(ImageTaskRequest) (ImageTaskRequest, error) `json:"-"`
 	New                          func(json.RawMessage) (Provider, error)          `json:"-"`
 }
@@ -210,6 +211,7 @@ type VideoRequestSchema struct {
 	MaxReferenceImages        int                       `json:"maxReferenceImages"`
 	MaxReferenceVideos        int                       `json:"maxReferenceVideos"`
 	MaxReferenceVideoDuration int                       `json:"maxReferenceVideoDuration"`
+	SupportsAudio             bool                      `json:"supportsAudio"`
 }
 
 type VideoTask struct {

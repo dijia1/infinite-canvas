@@ -20,4 +20,5 @@ export type VideoRequestSchema = {
     maxReferenceImages: number;
     maxReferenceVideos: number;
     maxReferenceVideoDuration: number;
+    supportsAudio?: boolean;
 };

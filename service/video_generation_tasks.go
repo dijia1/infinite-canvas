@@ -126,6 +126,13 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 		return VideoTaskView{}, safeMessageError{message: "视频模型不可用"}
 	}
 	request.ProviderID = provider.ID
+	providerType, found := ai.Type(provider.Type)
+	if !found {
+		return VideoTaskView{}, safeMessageError{message: "视频模型不可用"}
+	}
+	if err := validateVideoRequestCapabilities(request, provider, providerType); err != nil {
+		return VideoTaskView{}, err
+	}
 	requestHash, err := videoTaskRequestHash(request)
 	if err != nil {
 		return VideoTaskView{}, err
@@ -152,6 +159,24 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 		return VideoTaskView{}, err
 	}
 	return videoGenerationTaskView(ctx, user, item)
+}
+
+func validateVideoRequestCapabilities(request CreateVideoTaskRequest, provider model.AIProvider, info ai.ProviderType) error {
+	schema := configuredVideoRequestSchema(provider, info)
+	if request.Seconds < schema.MinDuration || request.Seconds > schema.MaxDuration {
+		return safeMessageError{message: "请选择当前模型支持的视频时长"}
+	}
+	if len(request.ImageMediaIDs) > schema.MaxReferenceImages {
+		return safeMessageError{message: "参考图片数量超过当前模型上限"}
+	}
+	if len(request.VideoMediaIDs) > schema.MaxReferenceVideos {
+		return safeMessageError{message: "当前模型不支持这么多参考视频"}
+	}
+	if request.GenerateAudio && !schema.SupportsAudio {
+		return safeMessageError{message: "当前模型不支持生成音频"}
+	}
+	_, err := videoTaskAmount(provider, request)
+	return err
 }
 func GetVideoGenerationTask(ctx context.Context, id string) (VideoTaskView, error) {
 	user, ok := PortalUserFromContext(ctx)

@@ -136,7 +136,9 @@ func TestValidateSettingsAllowsCustomResolutionPricesAndRejectsUnsafeRules(t *te
 }
 
 func TestVideoModelSettingsRequirePricesAndRatios(t *testing.T) {
-	info := ai.ProviderType{ID: "video-settings-test", Name: "Video", Capabilities: []ai.Capability{ai.CapabilityVideoGenerate}}
+	info := ai.ProviderType{ID: "video-settings-test", Name: "Video", Capabilities: []ai.Capability{ai.CapabilityVideoGenerate}, VideoRequestSchema: &ai.VideoRequestSchema{
+		MinDuration: 5, MaxDuration: 15, DefaultDuration: 5, MaxReferenceImages: 9, MaxReferenceVideos: 0, SupportsAudio: false,
+	}}
 	_ = ai.Register(info)
 	p := model.AIProvider{ID: "video", Name: "Video", Type: info.ID, Enabled: true, Config: json.RawMessage(`{}`)}
 	if err := validateSettings(model.AISettings{Providers: []model.AIProvider{p}, VideoProviderID: p.ID}); err != nil {
@@ -155,7 +157,7 @@ func TestVideoModelSettingsRequirePricesAndRatios(t *testing.T) {
 		t.Fatal(choices)
 	}
 	s := choices[0].VideoRequestSchema
-	if s.MinDuration != 4 || s.MaxDuration != 15 || s.MaxReferenceImages != 9 || s.MaxReferenceVideos != 3 || s.Resolutions[0].Price != "0.25" || s.AspectRatios[0] != "16:9" {
+	if s.MinDuration != 5 || s.MaxDuration != 15 || s.MaxReferenceImages != 9 || s.MaxReferenceVideos != 0 || s.SupportsAudio || s.Resolutions[0].Price != "0.25" || s.AspectRatios[0] != "16:9" {
 		t.Fatalf("%+v", s)
 	}
 	p.AspectRatios = []string{"16:9", "16:9"}
