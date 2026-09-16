@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/ai"
@@ -164,14 +165,36 @@ func TestVideoModelSettingsRequirePricesAndRatios(t *testing.T) {
 	if validateProviderVideoSettings(p, info) == nil {
 		t.Fatal("duplicate ratio accepted")
 	}
-	p.AspectRatios = []string{"0:9"}
-	if validateProviderVideoSettings(p, info) == nil {
-		t.Fatal("invalid ratio accepted")
+	p.AspectRatios = []string{"portrait", "landscape", "square"}
+	if err := validateProviderVideoSettings(p, info); err != nil {
+		t.Fatalf("named upstream ratios rejected: %v", err)
+	}
+	configured := configuredVideoRequestSchema(p, info)
+	if len(configured.AspectRatios) != 3 || configured.AspectRatios[0] != "portrait" || configured.AspectRatios[2] != "square" {
+		t.Fatalf("configured ratios = %#v", configured.AspectRatios)
+	}
+	for _, invalidRatio := range []string{"", "bad\nratio", strings.Repeat("x", 65)} {
+		p.AspectRatios = []string{invalidRatio}
+		if validateProviderVideoSettings(p, info) == nil {
+			t.Fatalf("unsafe video ratio accepted: %q", invalidRatio)
+		}
 	}
 	p.AspectRatios = []string{"16:9"}
 	p.VideoPrices[0].Amount = decimal.NewFromInt(-1)
 	if validateProviderVideoSettings(p, info) == nil {
 		t.Fatal("negative price accepted")
+	}
+}
+
+func TestImageAspectRatiosRemainNumericOrAuto(t *testing.T) {
+	info := ai.ProviderType{ID: "image-ratio-validation-test", Capabilities: []ai.Capability{ai.CapabilityImageGenerate}, ImageRequestSchema: &ai.ImageRequestSchema{Fields: []ai.ImageRequestField{{Key: "size"}}}}
+	provider := model.AIProvider{AspectRatios: []string{"16:9", "auto"}}
+	if err := validateProviderVideoSettings(provider, info); err != nil {
+		t.Fatalf("valid image ratios rejected: %v", err)
+	}
+	provider.AspectRatios = []string{"portrait"}
+	if validateProviderVideoSettings(provider, info) == nil {
+		t.Fatal("named ratio accepted for image provider")
 	}
 }
 func TestConfiguredImageAspectRatiosNoFallbackAndClone(t *testing.T) {

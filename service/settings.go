@@ -343,7 +343,8 @@ func configuredVideoRequestSchema(provider model.AIProvider, info ai.ProviderTyp
 var aspectRatioParameter = regexp.MustCompile(`^[1-9][0-9]{0,3}:[1-9][0-9]{0,3}$`)
 
 func validateProviderVideoSettings(provider model.AIProvider, info ai.ProviderType) error {
-	if len(provider.AspectRatios) > 0 && !info.Supports(ai.CapabilityVideoGenerate) {
+	isVideoProvider := info.Supports(ai.CapabilityVideoGenerate)
+	if len(provider.AspectRatios) > 0 && !isVideoProvider {
 		supportsRatio := false
 		if info.ImageRequestSchema != nil {
 			for _, field := range info.ImageRequestSchema.Fields {
@@ -358,7 +359,11 @@ func validateProviderVideoSettings(provider model.AIProvider, info ai.ProviderTy
 	}
 	seenRatios := map[string]bool{}
 	for _, ratio := range provider.AspectRatios {
-		if !aspectRatioParameter.MatchString(ratio) && ratio != "auto" {
+		if isVideoProvider {
+			if err := validateImageResolutionParameter(ratio); err != nil {
+				return errors.New("视频比例参数必须为 1 至 64 个非控制字符")
+			}
+		} else if !aspectRatioParameter.MatchString(ratio) && ratio != "auto" {
 			return errors.New("比例必须为正整数比例（例如 16:9）或 auto")
 		}
 		if seenRatios[ratio] {

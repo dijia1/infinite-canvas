@@ -102,12 +102,21 @@ test("image and video tabs scope both types and provider lists", () => {
 });
 
 
-test("aspect ratio validation matches the backend four-digit limit", async () => {
-    const validate = sourceBehavior(pageURL).select(
+test("image ratio validation keeps the numeric or auto rule", async () => {
+    const validate = sourceBehavior(pageURL, { acceptsOpaqueAspectRatios: false, isImageResolutionInput: () => false }).select(
         (node) => ts.isArrowFunction(node) && ts.isPropertyAssignment(node.parent) && node.parent.name.getText() === "validator" && node.getText().includes("auto|"),
     );
     for (const value of ["auto", "16:9", "9999:1", "1:9999"]) await validate(undefined, value);
-    for (const value of ["10000:1", "1:10000", "0:1", "01:1"]) await assert.rejects(validate(undefined, value));
+    for (const value of ["portrait", "10000:1", "1:10000", "0:1", "01:1"]) await assert.rejects(validate(undefined, value));
+});
+
+test("video ratio validation accepts safe upstream parameter names", async () => {
+    const isImageResolutionInput = (value: string) => value.trim().length > 0 && Array.from(value.trim()).length <= 64 && !/[\u0000-\u001F\u007F-\u009F]/.test(value.trim());
+    const validate = sourceBehavior(pageURL, { acceptsOpaqueAspectRatios: true, isImageResolutionInput }).select(
+        (node) => ts.isArrowFunction(node) && ts.isPropertyAssignment(node.parent) && node.parent.name.getText() === "validator" && node.getText().includes("auto|"),
+    );
+    for (const value of ["portrait", "landscape", "square", "16:9"]) await validate(undefined, value);
+    for (const value of ["", "bad\nratio", "x".repeat(65)]) await assert.rejects(validate(undefined, value));
 });
 
 function settingsPage() {

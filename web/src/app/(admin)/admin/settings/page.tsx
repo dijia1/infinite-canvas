@@ -26,7 +26,9 @@ export default function AdminSettingsPage() {
     const [drawerOpen, setDrawerOpen] = useState(false);
     const [form] = Form.useForm<ProviderFormValues>();
     const selectedType = Form.useWatch("type", form);
-    const configFields = types.find((item) => item.id === selectedType)?.configFields || [];
+    const selectedProviderType = types.find((item) => item.id === selectedType);
+    const configFields = selectedProviderType?.configFields || [];
+    const acceptsOpaqueAspectRatios = selectedProviderType?.capabilities.includes("video_generate") ?? false;
 
     useEffect(() => {
         if (!token) return;
@@ -298,10 +300,19 @@ export default function AdminSettingsPage() {
                                                     className="mb-0 flex-1"
                                                     rules={[
                                                         { required: true, message: "请输入比例" },
-                                                        { validator: (_, value: string) => (/^(?:auto|[1-9][0-9]{0,3}:[1-9][0-9]{0,3})$/.test((value || "").trim()) ? Promise.resolve() : Promise.reject(new Error("请输入 auto 或 1 至 9999 的整数比例，例如 16:9"))) },
+                                                        {
+                                                            validator: (_, value: string) =>
+                                                                acceptsOpaqueAspectRatios
+                                                                    ? isImageResolutionInput(value || "")
+                                                                        ? Promise.resolve()
+                                                                        : Promise.reject(new Error("请输入 1 至 64 个不含控制字符的上游比例参数"))
+                                                                    : /^(?:auto|[1-9][0-9]{0,3}:[1-9][0-9]{0,3})$/.test((value || "").trim())
+                                                                      ? Promise.resolve()
+                                                                      : Promise.reject(new Error("请输入 auto 或 1 至 9999 的整数比例，例如 16:9")),
+                                                        },
                                                     ]}
                                                 >
-                                                    <Input placeholder="例如：16:9" />
+                                                    <Input placeholder={acceptsOpaqueAspectRatios ? "例如：portrait 或 16:9" : "例如：16:9"} />
                                                 </Form.Item>
                                                 <Button danger type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} aria-label="删除该比例" />
                                             </Space>
