@@ -34,7 +34,6 @@ import {
 import { hydrateCanvasImages, imageMetadata } from "@/services/canvas-image-hydration";
 import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { nanoid } from "nanoid";
-import { getDataUrlByteSize } from "@/lib/image-utils";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { appPath } from "@/lib/app-path";
 import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
@@ -58,7 +57,6 @@ import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
 import { CanvasNodeCropDialog, type CanvasImageCropRect } from "../components/canvas-node-crop-dialog";
 import { buildNodeGenerationContext, buildNodeGenerationInputs, hydrateNodeGenerationContext, type NodeGenerationInput } from "../components/canvas-node-generation";
-import { canSaveNodeAsAsset } from "../components/canvas-node-actions";
 import { CanvasNodeHoverToolbar } from "../components/canvas-node-hover-toolbar";
 import { InfiniteCanvas, type InfiniteCanvasHandle } from "../components/infinite-canvas";
 import { Minimap } from "../components/canvas-mini-map";
@@ -231,7 +229,6 @@ function InfiniteCanvasPage() {
     const aiStatus = useConfigStore((state) => state.status);
     const isAiConfigReady = useConfigStore((state) => state.isAiConfigReady);
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
-    const addAsset = useAssetStore((state) => state.addAsset);
     const cleanupAssetImages = useAssetStore((state) => state.cleanupImages);
     const hydrated = useCanvasStore((state) => state.hydrated);
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
@@ -1670,39 +1667,6 @@ function InfiniteCanvasPage() {
         [downloadNodeImage, message],
     );
 
-    const saveNodeAsset = useCallback(
-        async (node: CanvasNodeData) => {
-            if (!canSaveNodeAsAsset(node)) return message.error("没有可保存的图片");
-            const content = canvasImageSource(node) || "";
-            const dataUrl = node.metadata.storageKey || node.metadata.mediaId || node.metadata.publicImageId ? "" : content;
-            addAsset({
-                kind: "image",
-                title: node.metadata?.prompt?.slice(0, 24) || "画布图片",
-                coverUrl: content,
-                tags: [],
-                source: "Canvas",
-                data: {
-                    dataUrl,
-                    storageKey: node.metadata.storageKey,
-                    width: node.metadata.naturalWidth || node.width,
-                    height: node.metadata.naturalHeight || node.height,
-                    bytes: node.metadata.bytes || getDataUrlByteSize(dataUrl),
-                    mimeType: node.metadata.mimeType || "image/png",
-                },
-                metadata: {
-                    source: "canvas",
-                    nodeId: node.id,
-                    prompt: node.metadata?.prompt,
-                    mediaId: node.metadata?.mediaId,
-                    publicImageId: node.metadata?.publicImageId,
-                    uploadState: node.metadata?.mediaId ? "uploaded" : undefined,
-                },
-            });
-            message.success("已加入我的素材");
-        },
-        [addAsset, message, canvasImageSource],
-    );
-
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect, source: string) => {
         if (!source) return;
         const cropped = await cropDataUrl(source, crop);
@@ -2242,13 +2206,10 @@ function InfiniteCanvasPage() {
                         onEditText={openTextEditor}
                         onDecreaseFont={(node) => handleFontSizeChange(node.id, Math.max(10, (node.metadata?.fontSize || 14) - 2))}
                         onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
-                        onToggleDialog={(node) => setDialogNodeId((current) => (current === node.id ? null : node.id))}
                         onGenerateImage={generateImageFromTextNode}
                         onUpload={(node) => handleUploadRequest(node.id)}
                         onDownload={(node) => void downloadNodeImage(node).catch((error) => message.error(error instanceof Error ? error.message : "下载失败"))}
-                        onSaveAsset={(node) => void saveNodeAsset(node).catch((error) => message.error(error instanceof Error ? error.message : "保存素材失败"))}
                         onCrop={(node) => setCropNodeId(node.id)}
-                        onAngle={(node) => setAngleNodeId(node.id)}
                         onViewImage={(node) => setPreviewNodeId(node.id)}
                         onMask={(node) => setMaskNodeId(node.id)}
                         onRetry={handleCanvasNodeRetry}
