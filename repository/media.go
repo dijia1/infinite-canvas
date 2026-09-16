@@ -100,10 +100,23 @@ func ListPrivateMedia(ownerUID string, kind PrivateMediaKind) ([]model.Media, er
 	err = query.
 		Where("cleanup_status = ?", model.MediaCleanupActive).
 		Where("expires_at IS NULL").
+		Where("source <> ?", model.MediaSourceMask).
 		Where("NOT EXISTS (SELECT 1 FROM public_images WHERE public_images.media_id = media.id)").
 		Order("created_at desc").
 		Find(&items).Error
 	return items, err
+}
+
+// A mask remains temporary even when a generic retention path restores a reference.
+func preserveMaskExpiry(item model.Media, target *time.Time) *time.Time {
+	if item.Source != model.MediaSourceMask || target != nil {
+		return target
+	}
+	if item.ExpiresAt != nil {
+		return item.ExpiresAt
+	}
+	expiry := time.Now().UTC().Add(24 * time.Hour)
+	return &expiry
 }
 
 func mediaExpiryEqual(current, target *time.Time) bool {
@@ -133,6 +146,7 @@ func SetPrivateMediaExpiry(id, ownerUID string, expiresAt *time.Time) (bool, err
 			}
 			return err
 		}
+		expiresAt = preserveMaskExpiry(item, expiresAt)
 		if mediaExpiryEqual(item.ExpiresAt, expiresAt) {
 			updated = true
 			return nil
@@ -278,14 +292,19 @@ func ClaimCanvasMediaCleanupBatch(ids []string, current time.Time, lease time.Du
 			if invalidOwners[item.OwnerUID] != nil {
 				continue
 			}
-			referenced := public[item.ID]
-			if !referenced {
-				preparing, err := imageTaskPreparingMediaReferenced(tx, item.ID)
-				if err != nil {
+			preparing, err := imageTaskPreparingMediaReferenced(tx, item.ID)
+			if err != nil {
+				return err
+			}
+			if preparing {
+				// Preparation is a temporary hold, never a permanent library reference.
+				expiry := current.Add(canvasMediaCleanupDelay)
+				if err := tx.Model(&model.Media{}).Where("id = ?", item.ID).Update("expires_at", expiry).Error; err != nil {
 					return err
 				}
-				referenced = preparing
+				continue
 			}
+			referenced := public[item.ID]
 			workflowHeld, err := workflowMediaReferenced(tx, item.ID)
 			if err != nil {
 				return err
@@ -321,10 +340,15 @@ func ClaimCanvasMediaCleanupBatch(ids []string, current time.Time, lease time.Du
 				if item.CleanupStatus == model.MediaCleanupDeleting {
 					return errors.New("deleting media has a persisted reference")
 				}
-				if err := tx.Model(&model.Media{}).Where("id = ?", item.ID).Update("expires_at", nil).Error; err != nil {
+				var expiry *time.Time
+				if item.Source == model.MediaSourceMask {
+					deadline := current.Add(canvasMediaCleanupDelay)
+					expiry = &deadline
+				}
+				if err := tx.Model(&model.Media{}).Where("id = ?", item.ID).Update("expires_at", expiry).Error; err != nil {
 					return err
 				}
-				item.ExpiresAt = nil
+				item.ExpiresAt = expiry
 				if err := recordMediaLifecycle(tx, item, "", "cleanup_cancelled", "", "persisted_reference_found"); err != nil {
 					return err
 				}

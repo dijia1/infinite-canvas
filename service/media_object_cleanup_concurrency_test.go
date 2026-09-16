@@ -77,7 +77,7 @@ func awaitMediaUploadIntentRaceResult(t *testing.T, results <-chan mediaIntentRa
 	}
 }
 
-func runMediaUploadIntentRace(t *testing.T, first, second func() error) (mediaIntentRaceResult, mediaIntentRaceResult) {
+func runMediaUploadIntentRace(t *testing.T, first, second func() error, queryFilter ...func(*gorm.DB) bool) (mediaIntentRaceResult, mediaIntentRaceResult) {
 	t.Helper()
 	database, err := repository.DB()
 	if err != nil {
@@ -94,7 +94,11 @@ func runMediaUploadIntentRace(t *testing.T, first, second func() error) (mediaIn
 	beforeName := "test_media_intent_race_before_" + callbackSuffix
 	afterName := "test_media_intent_race_after_" + callbackSuffix
 	if err := database.Callback().Query().Before("gorm:query").Register(beforeName, func(tx *gorm.DB) {
-		if !mediaIntentLockQuery(tx) {
+		matches := mediaIntentLockQuery
+		if len(queryFilter) > 0 {
+			matches = queryFilter[0]
+		}
+		if !matches(tx) {
 			return
 		}
 		index := queries.Add(1)

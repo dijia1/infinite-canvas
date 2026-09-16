@@ -180,6 +180,7 @@ func applyCanvasMediaChanges(tx *gorm.DB, changes []canvasMediaChange) error {
 			continue
 		}
 		item := media[id]
+		expiry = preserveMaskExpiry(item, expiry)
 		if mediaExpiryEqual(item.ExpiresAt, expiry) {
 			continue
 		}

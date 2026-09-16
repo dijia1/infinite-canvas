@@ -189,8 +189,19 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 	if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
 		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
 	}
+	source, err := uploadMediaSource([]string{intent.Intent})
+	if err != nil {
+		return MediaAccess{}, false, err
+	}
 	completedAt := time.Now().UTC()
-	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: model.MediaSourceUpload, ObjectKey: intent.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: intent.ContentType, Bytes: intent.ExpectedBytes, Filename: intent.Filename, Title: strings.TrimSuffix(intent.Filename, filepath.Ext(intent.Filename)), CreatedAt: completedAt.Format(time.RFC3339)}
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: intent.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: intent.ContentType, Bytes: intent.ExpectedBytes, Filename: intent.Filename, Title: strings.TrimSuffix(intent.Filename, filepath.Ext(intent.Filename)), CreatedAt: completedAt.Format(time.RFC3339)}
+	if source == model.MediaSourceMask {
+		if intent.ContentType != "image/png" {
+			return MediaAccess{}, false, safeMessageError{message: "遮罩必须为 PNG 图片"}
+		}
+		expiry := completedAt.Add(24 * time.Hour)
+		item.ExpiresAt = &expiry
+	}
 	if intent.ContentType == "video/mp4" {
 		intent, err = repository.ClaimVideoUploadCompletion(intent.ID, user.UID, privateImageObjectKey(user.UID, model.MediaSourceUpload, "mp4", completedAt), time.Now().UTC())
 		if err != nil {
@@ -270,6 +281,9 @@ func validateMediaUploadIntentInput(input MediaUploadIntentInput) (model.MediaSo
 		return "", "", "", safeMessageError{message: "图片大小无效"}
 	}
 	contentType := normalizedImageContentType(input.ContentType)
+	if source == model.MediaSourceMask && contentType != "image/png" {
+		return "", "", "", safeMessageError{message: "遮罩必须为 PNG 图片"}
+	}
 	extension, ok := mediaUploadExtensions[contentType]
 	if !ok {
 		return "", "", "", safeMessageError{message: "图片格式无效"}
@@ -303,6 +317,8 @@ func uploadMediaSource(intent []string) (model.MediaSource, error) {
 		return model.MediaSourceUpload, nil
 	case "canvas":
 		return model.MediaSourceUpload, nil
+	case "mask":
+		return model.MediaSourceMask, nil
 	default:
 		return "", safeMessageError{message: "图片上传意图无效"}
 	}
@@ -318,6 +334,9 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	contentType, extension, err := normalizeImage(data, contentType)
 	if err != nil {
 		return MediaAccess{}, err
+	}
+	if source == model.MediaSourceMask && contentType != "image/png" {
+		return MediaAccess{}, safeMessageError{message: "遮罩必须为 PNG 图片"}
 	}
 	store, err := newImageStore()
 	if err != nil {
@@ -338,6 +357,10 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	}
 	width, height := imageDimensions(data)
 	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
+	if source == model.MediaSourceMask {
+		expiry := createdAt.Add(24 * time.Hour)
+		item.ExpiresAt = &expiry
+	}
 	saved, err := repository.SaveMedia(item, ctx)
 	if err != nil {
 		cleanupReservedMediaObject(ctx, store, key)

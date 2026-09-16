@@ -14,6 +14,7 @@ const (
 const (
 	MediaSourceGenerated MediaSource = "generated"
 	MediaSourceUpload    MediaSource = "upload"
+	MediaSourceMask      MediaSource = "mask"
 )
 
 // Media is a private image object owned by one Portal user.

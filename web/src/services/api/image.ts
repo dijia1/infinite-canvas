@@ -134,7 +134,7 @@ async function uploadDirectlyToOSS(uploadURL: string, file: File, options: UserI
     });
 }
 
-export async function uploadUserImage(file: File, intent: "canvas" | "library" = "library", options: UserImageUploadOptions = {}) {
+export async function uploadUserImage(file: File, intent: "canvas" | "library" | "mask" = "library", options: UserImageUploadOptions = {}) {
     const uploadIntent = await axios.post<ImageApiResponse & { data?: UserImageUploadIntent }>(
         aiApiPath("/media/upload-intents"),
         {
@@ -236,7 +236,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }),
     );
     const mask = maskedReferences[0];
-    const maskMediaId = mask?.mask ? (await uploadUserImage(await createImageMaskFile(mask.mask, mask), "canvas")).mediaId : undefined;
+    const maskMediaId = mask?.mask ? (await uploadUserImage(await createImageMaskFile(mask.mask, mask), "mask")).mediaId : undefined;
     const body = {
         clientRequestId,
         ...(config.imageProviderId ? { providerId: config.imageProviderId } : {}),

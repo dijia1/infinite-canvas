@@ -111,6 +111,7 @@ func ReplaceWorkflowMediaRefs(tx *gorm.DB, ownerUID, scope, scopeID string, medi
 				expiry = &deadline
 			}
 		}
+		expiry = preserveMaskExpiry(item, expiry)
 		if mediaExpiryEqual(item.ExpiresAt, expiry) {
 			continue
 		}

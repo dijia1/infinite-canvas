@@ -143,6 +143,10 @@ func QueuePreparedImageGenerationTask(taskID, referencesJSON, updatedAt string) 
 		return err
 	}
 	return database.Transaction(func(transaction *gorm.DB) error {
+		masks, err := lockPreparingSourceMasks(transaction, taskID)
+		if err != nil {
+			return err
+		}
 		var pending int64
 		if err := transaction.Model(&model.ImageGenerationTaskInput{}).Where("task_id = ? AND preparation_status <> ?", taskID, "ready").Count(&pending).Error; err != nil {
 			return err
@@ -159,7 +163,7 @@ func QueuePreparedImageGenerationTask(taskID, referencesJSON, updatedAt string) 
 		if result.RowsAffected != 1 {
 			return errors.New("image task is no longer preparing")
 		}
-		return nil
+		return scheduleReleasedMasks(transaction, masks, updatedAt)
 	})
 }
 
@@ -169,6 +173,10 @@ func FailPreparingImageGenerationTask(taskID, message, finishedAt string) error 
 		return err
 	}
 	return database.Transaction(func(transaction *gorm.DB) error {
+		masks, err := lockPreparingSourceMasks(transaction, taskID)
+		if err != nil {
+			return err
+		}
 		var item model.ImageGenerationTask
 		if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", taskID).Error; err != nil {
 			return err
@@ -180,9 +188,11 @@ func FailPreparingImageGenerationTask(taskID, message, finishedAt string) error 
 			return err
 		}
 		if item.OperationLogID != "" {
-			return transaction.Model(&model.OperationLog{}).Where("id = ?", item.OperationLogID).Updates(map[string]any{"status": model.OperationStatusFailure, "error_message": message}).Error
+			if err := transaction.Model(&model.OperationLog{}).Where("id = ?", item.OperationLogID).Updates(map[string]any{"status": model.OperationStatusFailure, "error_message": message}).Error; err != nil {
+				return err
+			}
 		}
-		return nil
+		return scheduleReleasedMasks(transaction, masks, finishedAt)
 	})
 }
 

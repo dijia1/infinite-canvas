@@ -176,3 +176,44 @@ test("submits image edits as JSON media identities without image bytes", async (
         restorePost();
     }
 });
+
+
+test("each masked edit uploads a new temporary mask and submits media IDs only", async () => {
+    const originalDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
+    const originalFetch = globalThis.fetch;
+    const context = { clearRect() {}, save() {}, restore() {}, beginPath() {}, arc() {}, fill() {}, moveTo() {}, lineTo() {}, stroke() {} };
+    Object.defineProperty(globalThis, "document", { configurable: true, value: { createElement: () => ({ getContext: () => context, toBlob: (done: (blob: Blob) => void) => done(new Blob(["mask"], { type: "image/png" })) }) } });
+    globalThis.fetch = (async () => new Response(null, { status: 200 })) as typeof fetch;
+    let uploads = 0;
+    const submitted: Record<string, unknown>[] = [];
+    const restore = withAxiosPost((async (url: string, body: Record<string, unknown>) => {
+        if (url.endsWith("/media/upload-intents")) {
+            assert.equal(body.intent, "mask");
+            uploads++;
+            return { data: { code: 0, data: { mode: "direct", id: `mask-${uploads}`, uploadUrl: "https://oss.example/upload" } } };
+        }
+        if (url.endsWith("/complete")) return { data: { code: 0, data: { mediaId: `mask-${uploads}`, url: "https://oss.example/mask" } } };
+        if (url.endsWith("/images/edits")) {
+            submitted.push(body);
+            return { data: { code: 0, data: { id: "task", status: "queued", progress: 0, images: [] } } };
+        }
+        throw new Error(`unexpected ${url}`);
+    }) as AxiosPost);
+    try {
+        const config = { quality: "auto", size: "1:1", resolution: "1K" } as never;
+        const reference = { mediaId: "original", width: 10, height: 10, mask: { version: 1, strokes: [{ id: "paint", tool: "paint", radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] } } as never;
+        await requestEdit(config, "edit", [reference], "one");
+        await requestEdit(config, "edit", [reference], "two");
+        assert.equal(uploads, 2);
+        assert.deepEqual(submitted.map(body => body.maskMediaId), ["mask-1", "mask-2"]);
+        for (const body of submitted) {
+            assert.deepEqual(body.referenceMediaIds, ["original"]);
+            assert.equal("images" in body || "mask" in body || "maskDataUrl" in body, false);
+        }
+    } finally {
+        restore();
+        globalThis.fetch = originalFetch;
+        if (originalDocument) Object.defineProperty(globalThis, "document", originalDocument);
+        else Reflect.deleteProperty(globalThis, "document");
+    }
+});
