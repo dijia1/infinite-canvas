@@ -130,8 +130,30 @@ func prepareImageGenerationTaskInput(ctx context.Context, store versionedImageSt
 		}
 	}
 	if input.SourceVersionID == "" || input.SourceETag == "" {
-		metadata, err := store.Head(ctx, input.SourceObjectKey)
+		source, found, err := repository.GetMedia(input.SourceMediaID)
 		if err != nil {
+			return err
+		}
+		if !found || source.ObjectKey != input.SourceObjectKey {
+			return permanentImagePreparationError{message: "参考图片不存在"}
+		}
+		// A partially bound input must never choose a new current version.
+		if input.SourceVersionID != "" && source.ObjectVersionID != "" && input.SourceVersionID != source.ObjectVersionID {
+			return permanentImagePreparationError{message: "参考图片版本不一致"}
+		}
+		if input.SourceVersionID != "" {
+			source.ObjectVersionID = input.SourceVersionID
+		}
+		if input.SourceETag != "" {
+			source.ObjectETag = input.SourceETag
+		}
+		source, err = bindMediaVersion(ctx, store, source)
+		metadata := imageObjectMetadata{VersionID: source.ObjectVersionID, ETag: source.ObjectETag, Bytes: source.Bytes}
+		if err != nil {
+			var safe safeMessageError
+			if errors.As(err, &safe) {
+				return permanentImagePreparationError{message: safe.Error()}
+			}
 			if imageObjectMissing(err) || imageObjectPreconditionFailed(err) {
 				return permanentImagePreparationError{message: "参考图片文件不存在或不可访问"}
 			}

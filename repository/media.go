@@ -461,3 +461,30 @@ func imageTaskPreparingMediaReferenced(tx *gorm.DB, mediaID string) (bool, error
 		Count(&count).Error
 	return count > 0, err
 }
+
+// BindMediaObjectIdentity fills a legacy identity once. A concurrent winner is
+// returned so every caller uses the same version, rather than its own HEAD.
+func BindMediaObjectIdentity(ctx context.Context, id, key, version, etag string) (model.Media, error) {
+	db, err := DB()
+	if err != nil {
+		return model.Media{}, err
+	}
+	if version == "" || etag == "" {
+		return model.Media{}, errors.New("media object identity is incomplete")
+	}
+	result := db.WithContext(ctx).Model(&model.Media{}).
+		Where("id = ? AND object_key = ? AND cleanup_status = ?", id, key, model.MediaCleanupActive).
+		Where("(object_version_id IS NULL OR object_version_id = '' OR object_version_id = ?) AND (object_etag IS NULL OR object_etag = '' OR object_etag = ?)", version, etag).
+		Updates(map[string]any{"object_version_id": version, "object_etag": etag})
+	if result.Error != nil {
+		return model.Media{}, result.Error
+	}
+	var item model.Media
+	if err := db.WithContext(ctx).First(&item, "id = ?", id).Error; err != nil {
+		return model.Media{}, err
+	}
+	if item.ObjectKey != key || item.CleanupStatus != model.MediaCleanupActive || item.ObjectVersionID == "" || item.ObjectETag == "" {
+		return model.Media{}, ErrCanvasMediaUnavailable
+	}
+	return item, nil
+}

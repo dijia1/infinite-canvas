@@ -105,7 +105,7 @@ func readImageTaskMediaReferences(ctx context.Context, user PortalUser, mediaIDs
 				return nil, safeMessageError{message: "无权使用该参考图片"}
 			}
 		}
-		reader, err := store.Get(ctx, item.ObjectKey)
+		reader, err := readMediaObject(ctx, store, item)
 		if err != nil {
 			log.Printf("image reference read failed media=%s category=%s", item.ID, taskErrorCategory(err))
 			var serviceError *oss.ServiceError

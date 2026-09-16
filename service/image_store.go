@@ -209,7 +209,13 @@ func (store *ossImageStore) SignedDownloadURL(ctx context.Context, key, disposit
 }
 
 func (store *ossImageStore) signedAccessURL(ctx context.Context, key, process, disposition string) (string, time.Time, error) {
+	return store.signedAccessURLVersion(ctx, key, "", process, disposition)
+}
+func (store *ossImageStore) signedAccessURLVersion(ctx context.Context, key, version, process, disposition string) (string, time.Time, error) {
 	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key)}
+	if version != "" {
+		request.VersionId = oss.Ptr(version)
+	}
 	if disposition != "" {
 		request.ResponseContentDisposition = oss.Ptr(disposition)
 	}
@@ -359,4 +365,39 @@ func newImageStore() (imageStore, error) {
 	internalCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSInternalEndpoint).WithCredentialsProvider(provider)
 	publicCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSPublicEndpoint).WithUseCName(true).WithCredentialsProvider(provider)
 	return &ossImageStore{internal: oss.NewClient(internalCfg), public: oss.NewClient(publicCfg), bucket: config.Cfg.OSSBucket, ttl: ttl}, nil
+}
+
+func (store *ossImageStore) GetVersion(ctx context.Context, key, version, etag string) (io.ReadCloser, error) {
+	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(version)}
+	if etag != "" {
+		request.IfMatch = oss.Ptr(etag)
+	}
+	result, err := store.internal.GetObject(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return result.Body, nil
+}
+
+func (store *ossImageStore) SignedMediaURL(ctx context.Context, key, version, process, disposition string) (string, time.Time, error) {
+	return store.signedAccessURLVersion(ctx, key, version, process, disposition)
+}
+
+// Capture the write response's version; HEAD without a version could observe a
+// later write if this reserved key is ever retried.
+func putImageObject(ctx context.Context, store imageStore, key string, data []byte, contentType string) (imageObjectMetadata, error) {
+	if target, ok := store.(*ossImageStore); ok {
+		result, err := target.internal.PutObject(ctx, &oss.PutObjectRequest{Bucket: oss.Ptr(target.bucket), Key: oss.Ptr(key), Body: bytes.NewReader(data), ContentType: oss.Ptr(contentType), ContentLength: oss.Ptr(int64(len(data))), Acl: oss.ObjectACLPrivate})
+		if err != nil {
+			return imageObjectMetadata{}, err
+		}
+		if oss.ToString(result.VersionId) == "" {
+			return imageObjectMetadata{}, errors.New("OSS 写入未返回 VersionID")
+		}
+		return target.HeadVersion(ctx, key, oss.ToString(result.VersionId), oss.ToString(result.ETag))
+	}
+	if err := store.Put(ctx, key, data, contentType); err != nil {
+		return imageObjectMetadata{}, err
+	}
+	return store.Head(ctx, key)
 }

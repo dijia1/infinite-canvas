@@ -277,6 +277,35 @@ func copyCanvasShareMedia(ctx context.Context, store imageStore, source model.Me
 	if err := ctx.Err(); err != nil {
 		return model.Media{}, err
 	}
+	if versioned, ok := store.(mediaVersionStore); ok {
+		bound, err := bindMediaVersion(ctx, versioned, source)
+		if err != nil {
+			return model.Media{}, err
+		}
+		if bound.Bytes <= 0 || bound.Bytes > maxMediaBytes {
+			return model.Media{}, errors.New("分享素材大小无效")
+		}
+		if strings.HasPrefix(bound.ContentType, "video/") && bound.ContentType != "video/mp4" {
+			return model.Media{}, errors.New("仅支持分享 MP4 视频")
+		}
+		extension := strings.TrimPrefix(filepath.Ext(bound.ObjectKey), ".")
+		if extension == "" {
+			extension = strings.TrimPrefix(filepath.Ext(bound.Filename), ".")
+		}
+		if extension == "" {
+			return model.Media{}, errors.New("分享素材格式无效")
+		}
+		expiry := time.Now().Add(24 * time.Hour)
+		item := model.Media{ID: newID("media"), OwnerUID: recipientUID, Source: model.MediaSourceUpload, ObjectKey: privateImageObjectKey(recipientUID, model.MediaSourceUpload, extension, time.Now()), ContentType: bound.ContentType, Bytes: bound.Bytes, Width: bound.Width, Height: bound.Height, Duration: bound.Duration, Filename: bound.Filename, Title: bound.Title, CreatedAt: now(), ExpiresAt: &expiry}
+		if _, err = repository.SaveMedia(item, ctx); err != nil {
+			return model.Media{}, err
+		}
+		metadata, err := versioned.CopyVersion(ctx, bound.ObjectKey, bound.ObjectVersionID, bound.ObjectETag, item.ObjectKey)
+		if err != nil {
+			return model.Media{}, err
+		}
+		return persistMediaCopyIdentity(ctx, item, metadata)
+	}
 	// Unpublished copies remain eligible for the existing media cleanup worker after a crash.
 	expiresAt := time.Now().Add(24 * time.Hour)
 	if strings.HasPrefix(source.ContentType, "video/") {

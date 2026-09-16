@@ -308,5 +308,10 @@ func persistGeneratedVideoFile(ctx context.Context, store imageStore, item model
 			return model.Media{}, err
 		}
 	}
+	metadata, err := store.Head(ctx, media.ObjectKey)
+	if err != nil {
+		return model.Media{}, err
+	}
+	media.ObjectVersionID, media.ObjectETag = metadata.VersionID, metadata.ETag
 	return media, nil
 }

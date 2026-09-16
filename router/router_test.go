@@ -371,15 +371,22 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
+			w.Header().Set("x-oss-version-id", "upload-v1")
+			w.Header().Set("ETag", "upload-etag")
 			w.Header().Set("Content-Type", item.contentType)
 			w.Header().Set("Content-Length", fmt.Sprint(len(item.body)))
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
+			if r.URL.Query().Get("versionId") != "upload-v1" || r.Header.Get("If-Match") != "upload-etag" {
+				t.Errorf("upload content read not bound to validated version")
+			}
 			item, found := objects[key]
 			if !found {
 				w.WriteHeader(http.StatusNotFound)
 				return
 			}
+			w.Header().Set("x-oss-version-id", "upload-v1")
+			w.Header().Set("ETag", "upload-etag")
 			w.Header().Set("Content-Type", item.contentType)
 			_, _ = w.Write(item.body)
 		case http.MethodDelete:
@@ -461,6 +468,10 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 		t.Fatalf("completed media count=%d err=%v", count, err)
 	}
 
+	stored, found, err := repository.GetMedia(firstPayload.Data.MediaID)
+	if err != nil || !found || stored.ObjectVersionID != "upload-v1" || stored.ObjectETag != "upload-etag" {
+		t.Fatalf("upload identity not persisted: %+v %v", stored, err)
+	}
 	invalidImage := []byte("not an image")
 	invalidIntentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(fmt.Sprintf(`{"filename":"invalid.png","contentType":"image/png","bytes":%d,"intent":"library"}`, len(invalidImage))))
 	invalidIntentRequest.Header.Set("Content-Type", "application/json")

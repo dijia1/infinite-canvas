@@ -199,7 +199,12 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 		defer cancel()
 		// Copy to an immutable object before publishing media: the upload URL
 		// may remain writable until expiry after the completion call.
-		reader, err := store.Get(ctx, intent.ObjectKey)
+		reader, err := func() (io.ReadCloser, error) {
+			if versioned, ok := store.(mediaVersionStore); ok {
+				return versioned.GetVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag)
+			}
+			return store.Get(ctx, intent.ObjectKey)
+		}()
 		if err != nil {
 			return MediaAccess{}, false, err
 		}
@@ -317,10 +322,7 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	if isPublic {
 		key = publicImageObjectKey(extension, createdAt)
 	}
-	if err := store.Put(ctx, key, data, contentType); err != nil {
-		return MediaAccess{}, fmt.Errorf("保存图片失败: %w", err)
-	}
-	metadata, err := store.Head(ctx, key)
+	metadata, err := putImageObject(ctx, store, key, data, contentType)
 	if err != nil {
 		_ = store.Delete(ctx, key)
 		return MediaAccess{}, fmt.Errorf("读取已保存图片版本失败: %w", err)
@@ -388,6 +390,17 @@ func videoDownloadAccess(ctx context.Context, store imageStore, item model.Media
 	disposition := VideoDownloadDisposition(filename)
 	if _, local := store.(localImageStore); local {
 		return MediaAccess{MediaID: item.ID, URL: "/api/v1/media/" + url.PathEscape(item.ID) + "/content?download=1&filename=" + url.QueryEscape(filename), ContentType: item.ContentType}, nil
+	}
+	if versioned, ok := store.(mediaVersionStore); ok {
+		bound, err := bindMediaVersion(ctx, versioned, item)
+		if err != nil {
+			return MediaAccess{}, err
+		}
+		address, expires, err := versioned.SignedMediaURL(ctx, bound.ObjectKey, bound.ObjectVersionID, "", disposition)
+		if err != nil {
+			return MediaAccess{}, err
+		}
+		return MediaAccess{MediaID: item.ID, URL: address, ExpiresAt: expires, ContentType: item.ContentType}, nil
 	}
 	signer, ok := store.(interface {
 		SignedDownloadURL(context.Context, string, string) (string, time.Time, error)
@@ -473,7 +486,18 @@ func videoSnapshotProcess(duration float64) string {
 }
 
 func mediaAccess(ctx context.Context, store imageStore, item model.Media) (MediaAccess, error) {
-	url, expiresAt, err := store.SignedURL(ctx, item.ObjectKey, "")
+	sign := func(process string) (string, time.Time, error) { return store.SignedURL(ctx, item.ObjectKey, process) }
+	if versioned, ok := store.(mediaVersionStore); ok {
+		bound, err := bindMediaVersion(ctx, versioned, item)
+		if err != nil {
+			return MediaAccess{}, err
+		}
+		item = bound
+		sign = func(process string) (string, time.Time, error) {
+			return versioned.SignedMediaURL(ctx, item.ObjectKey, item.ObjectVersionID, process, "")
+		}
+	}
+	url, expiresAt, err := sign("")
 	if err != nil {
 		return MediaAccess{}, fmt.Errorf("生成图片访问地址失败: %w", err)
 	}
@@ -482,7 +506,7 @@ func mediaAccess(ctx context.Context, store imageStore, item model.Media) (Media
 	if video {
 		process = videoSnapshotProcess(item.Duration)
 	}
-	previewURL, _, err := store.SignedURL(ctx, item.ObjectKey, process)
+	previewURL, _, err := sign(process)
 	if err != nil {
 		if !video {
 			return MediaAccess{}, fmt.Errorf("生成图片预览地址失败: %w", err)

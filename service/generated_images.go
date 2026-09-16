@@ -54,11 +54,7 @@ func prepareImageTaskResultMedia(ctx context.Context, images []ai.ImageResult) (
 		createdAt := time.Now().UTC()
 		key := privateImageObjectKey(user.UID, model.MediaSourceGenerated, extension, createdAt)
 		prepared.keys = append(prepared.keys, key)
-		if err := store.Put(ctx, key, data, contentType); err != nil {
-			prepared.cleanup(ctx)
-			return preparedImageTaskResults{}, fmt.Errorf("保存图片失败: %w", err)
-		}
-		metadata, err := store.Head(ctx, key)
+		metadata, err := putImageObject(ctx, store, key, data, contentType)
 		if err != nil {
 			prepared.cleanup(ctx)
 			return preparedImageTaskResults{}, fmt.Errorf("读取已保存图片版本失败: %w", err)
