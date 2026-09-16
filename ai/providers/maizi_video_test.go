@@ -84,6 +84,18 @@ func TestMaiziVideoSubmissionAmbiguityAndSafeErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestMaiziVideoSubmissionReportsStructuredValidationMessage(t *testing.T) {
+	p := videoTestProvider(func(*http.Request) (*http.Response, error) {
+		return videoResponse(http.StatusUnprocessableEntity, `{"message":"aspect_ratio is invalid"}`), nil
+	})
+	_, err := p.CreateVideo(context.Background(), validVideoRequest())
+	var submission *ai.VideoSubmissionError
+	if !errors.As(err, &submission) || submission.Uncertain || submission.Message != "MaiziAI 请求失败：aspect_ratio is invalid" {
+		t.Fatalf("error = %#v", err)
+	}
+}
+
 func TestMaiziVideoLimits(t *testing.T) {
 	p := videoTestProvider(func(*http.Request) (*http.Response, error) {
 		return videoResponse(200, `{"id":"id","status":"processing"}`), nil

@@ -118,11 +118,15 @@ func (p *maiziVideoProvider) request(ctx context.Context, method, path string, b
 		return fail("视频供应商请求失败，提交结果可能不确定", true)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fail(fmt.Sprintf("视频供应商返回 HTTP %d", resp.StatusCode), resp.StatusCode >= 500 || resp.StatusCode == 408)
-	}
 	const limit = 1 << 20
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		message := fmt.Sprintf("视频供应商返回 HTTP %d", resp.StatusCode)
+		if err == nil && len(data) <= limit {
+			message = maiziUpstreamError(resp.StatusCode, data).Error()
+		}
+		return fail(message, resp.StatusCode >= 500 || resp.StatusCode == 408)
+	}
 	if err != nil || len(data) > limit {
 		return fail("视频供应商响应读取失败", true)
 	}
