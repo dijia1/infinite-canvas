@@ -26,14 +26,14 @@ func TestMaiziMiniMaxH3RequestUsesAdministratorConfiguration(t *testing.T) {
 		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
 			t.Fatal(err)
 		}
-		if body["model"] != "administrator-model" || body["prompt"] != "animate" || body["duration"] != float64(5) || body["resolution"] != "custom-resolution" || body["size"] != "16:9" {
+		if body["model"] != "administrator-model" || body["prompt"] != "animate" || body["duration"] != float64(5) || body["resolution"] != "custom-resolution" || body["aspect_ratio"] != "portrait" {
 			t.Fatalf("body = %#v", body)
 		}
 		images, ok := body["image_urls"].([]any)
 		if !ok || len(images) != 1 || images[0] != "https://example.com/reference.png" {
 			t.Fatalf("image_urls = %#v", body["image_urls"])
 		}
-		for _, key := range []string{"aspect_ratio", "video_urls", "audio_urls", "generate_audio", "image_with_roles", "first_frame_image", "last_frame_image", "watermark", "webhook"} {
+		for _, key := range []string{"size", "video_urls", "audio_urls", "generate_audio", "image_with_roles", "first_frame_image", "last_frame_image", "watermark", "webhook"} {
 			if _, exists := body[key]; exists {
 				t.Fatalf("unexpected field %q in %#v", key, body)
 			}
@@ -42,7 +42,7 @@ func TestMaiziMiniMaxH3RequestUsesAdministratorConfiguration(t *testing.T) {
 	})
 
 	task, err := provider.CreateVideo(context.Background(), ai.VideoRequest{
-		Prompt: "animate", Seconds: "5", Size: "16:9", Resolution: "custom-resolution", ImageURLs: []string{"https://example.com/reference.png"},
+		Prompt: "animate", Seconds: "5", Size: "portrait", Resolution: "custom-resolution", ImageURLs: []string{"https://example.com/reference.png"},
 	})
 	if err != nil || task.ID != "minimax-task" || task.Status != "processing" {
 		t.Fatalf("task = %#v, err=%v", task, err)
@@ -55,7 +55,7 @@ func TestMaiziMiniMaxH3RejectsUnsupportedInputsBeforeSubmission(t *testing.T) {
 		calls++
 		return videoResponse(http.StatusOK, `{"id":"unexpected","status":"processing"}`), nil
 	})
-	valid := ai.VideoRequest{Prompt: "animate", Seconds: "5", Size: "16:9", Resolution: "768p", ImageURLs: []string{"https://example.com/reference.png"}}
+	valid := ai.VideoRequest{Prompt: "animate", Seconds: "5", Size: "portrait", Resolution: "768p", ImageURLs: []string{"https://example.com/reference.png"}}
 	cases := []struct {
 		name   string
 		mutate func(*ai.VideoRequest)

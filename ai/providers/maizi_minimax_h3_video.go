@@ -75,12 +75,12 @@ func (provider *maiziMiniMaxH3VideoProvider) CreateVideo(ctx context.Context, re
 		}
 	}
 	payload := struct {
-		Model      string   `json:"model"`
-		Prompt     string   `json:"prompt"`
-		Duration   int      `json:"duration"`
-		Resolution string   `json:"resolution"`
-		Size       string   `json:"size"`
-		ImageURLs  []string `json:"image_urls,omitempty"`
+		Model       string   `json:"model"`
+		Prompt      string   `json:"prompt"`
+		Duration    int      `json:"duration"`
+		Resolution  string   `json:"resolution"`
+		AspectRatio string   `json:"aspect_ratio"`
+		ImageURLs   []string `json:"image_urls,omitempty"`
 	}{model, prompt, duration, resolution, size, request.ImageURLs}
 	body, _ := json.Marshal(payload)
 	return provider.transport().request(ctx, http.MethodPost, "/videos/generations", body, true)
