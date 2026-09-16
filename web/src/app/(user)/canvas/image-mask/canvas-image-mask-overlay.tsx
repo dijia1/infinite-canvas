@@ -2,13 +2,13 @@
 
 import { useEffect, useRef } from "react";
 
+import { MASK_PREVIEW_OPACITY, useMaskPreferencesStore } from "@/stores/use-mask-preferences-store";
 import type { ImageMask } from "@/types/image";
 
 import { drawImageMask } from "./mask-utils";
 
-const overlayColor = "rgba(239, 68, 68, 0.3)";
-
 export function CanvasImageMaskOverlay({ mask }: { mask: ImageMask | undefined }) {
+    const overlayColor = useMaskPreferencesStore((state) => state.previewColor);
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -32,7 +32,7 @@ export function CanvasImageMaskOverlay({ mask }: { mask: ImageMask | undefined }
         const observer = new ResizeObserver(draw);
         observer.observe(canvas);
         return () => observer.disconnect();
-    }, [mask]);
+    }, [mask, overlayColor]);
 
-    return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 z-10 h-full w-full" aria-hidden="true" />;
+    return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 z-10 h-full w-full" style={{ opacity: MASK_PREVIEW_OPACITY }} aria-hidden="true" />;
 }

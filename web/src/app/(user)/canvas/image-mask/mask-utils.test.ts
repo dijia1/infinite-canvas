@@ -51,3 +51,14 @@ test("image masks draw circular paint before erasing with normalized radii", () 
 
     assert.deepEqual(commands, ["clear", "save", "begin", "move:40,30", "line:80,50", "stroke", "begin", "arc:120,70,5", "fill", "restore"]);
 });
+
+test("eraser clears at full strength even when a caller supplies a translucent preview color", () => {
+    const draws: Array<{ alpha: number; color: string | CanvasGradient | CanvasPattern; operation: string }> = [];
+    const context = {
+        clearRect() {}, save() {}, restore() {}, beginPath() {}, arc() {},
+        fill(this: CanvasRenderingContext2D) { draws.push({ alpha: this.globalAlpha, color: this.fillStyle, operation: this.globalCompositeOperation }); },
+        globalAlpha: 0.3, fillStyle: "", globalCompositeOperation: "source-over",
+    } as unknown as CanvasRenderingContext2D;
+    drawImageMask(context, { version: 1, strokes: [{ id: "erase", tool: "erase", radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] }, 100, 100, "rgba(239,68,68,0.3)");
+    assert.deepEqual(draws, [{ alpha: 1, color: "#000000", operation: "destination-out" }]);
+});

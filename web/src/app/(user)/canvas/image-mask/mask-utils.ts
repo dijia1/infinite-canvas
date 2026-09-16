@@ -27,13 +27,16 @@ export function drawImageMask(context: CanvasRenderingContext2D, mask: ImageMask
 
     const basis = Math.min(width, height);
     context.save();
+    context.globalAlpha = 1;
     context.lineCap = "round";
     context.lineJoin = "round";
     for (const stroke of normalized.strokes) {
         const radius = stroke.radius * basis;
         context.globalCompositeOperation = stroke.tool === "erase" ? "destination-out" : "source-over";
-        context.strokeStyle = color;
-        context.fillStyle = color;
+        // destination-out uses the source alpha; a translucent preview color
+        // would only fade the existing mask instead of clearing it.
+        context.strokeStyle = stroke.tool === "erase" ? "#000000" : color;
+        context.fillStyle = stroke.tool === "erase" ? "#000000" : color;
         context.lineWidth = radius * 2;
         const [first, ...rest] = stroke.points;
         if (!first) continue;
