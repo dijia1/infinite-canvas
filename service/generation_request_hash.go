@@ -13,7 +13,7 @@ import (
 
 var ErrGenerationRequestConflict = repository.ErrGenerationRequestConflict
 
-const imageRequestHashVersion = 2
+const imageRequestHashVersion = 3
 
 type imageTaskInputIdentity struct {
 	Name        string `json:"name"`
@@ -35,6 +35,7 @@ type imageTaskRequestIdentity struct {
 	Background        string                   `json:"background"`
 	ProviderOptions   ai.ImageRequestOptions   `json:"providerOptions"`
 	ReferenceMediaIDs []string                 `json:"referenceMediaIds"`
+	MaskMediaID       string                   `json:"maskMediaId,omitempty"`
 	UploadedInputs    []imageTaskInputIdentity `json:"uploadedInputs"`
 	Mask              *imageTaskInputIdentity  `json:"mask"`
 }
@@ -53,16 +54,23 @@ type videoTaskRequestIdentity struct {
 }
 
 func imageTaskRequestHash(request CreateImageTaskRequest) (string, error) {
+	return imageTaskRequestHashForVersion(request, imageRequestHashVersion)
+}
+
+func imageTaskRequestHashForVersion(request CreateImageTaskRequest, version int) (string, error) {
 	providerOptions := request.Request.Options
 	if providerOptions == nil {
 		providerOptions = ai.ImageRequestOptions{}
 	}
 	identity := imageTaskRequestIdentity{
-		Version: imageRequestHashVersion, Kind: "image", ProviderID: request.ProviderID, Mode: request.Mode,
+		Version: version, Kind: "image", ProviderID: request.ProviderID, Mode: request.Mode,
 		Prompt: request.Request.Prompt, Count: request.Request.Count, Quality: request.Request.Quality,
 		Size: request.Request.Size, Resolution: request.Request.Resolution, OutputFormat: request.Request.OutputFormat,
 		Background: request.Request.Background, ProviderOptions: providerOptions,
 		ReferenceMediaIDs: append([]string{}, request.ReferenceMediaIDs...), UploadedInputs: []imageTaskInputIdentity{},
+	}
+	if version >= 3 {
+		identity.MaskMediaID = request.MaskMediaID
 	}
 	if identity.ReferenceMediaIDs == nil {
 		identity.ReferenceMediaIDs = []string{}

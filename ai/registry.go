@@ -112,6 +112,7 @@ type ImageReference struct {
 	Name        string
 	ContentType string
 	Data        []byte
+	URL         string
 }
 
 type ImageResult struct {

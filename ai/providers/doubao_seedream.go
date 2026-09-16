@@ -200,6 +200,12 @@ func (provider *doubaoSeedreamProvider) imageRequestBody(request ai.ImageTaskReq
 }
 
 func doubaoSeedreamDataURL(reference ai.ImageReference, redacted bool) string {
+	if strings.TrimSpace(reference.URL) != "" {
+		if redacted {
+			return "<signed-url>"
+		}
+		return reference.URL
+	}
 	contentType := strings.ToLower(strings.TrimSpace(reference.ContentType))
 	if contentType == "" {
 		contentType = "image/png"

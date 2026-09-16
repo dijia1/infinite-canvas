@@ -3,7 +3,9 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -28,9 +30,27 @@ type imageStore interface {
 type imageObjectMetadata struct {
 	ContentType string
 	Bytes       int64
+	ETag        string
+	VersionID   string
 }
 
-var errDirectUploadUnsupported = errors.New("当前存储不支持浏览器直传")
+// versionedImageStore is required by image task snapshots. Implementations
+// must bind every read, copy, signature and delete to an object version.
+type versionedImageStore interface {
+	imageStore
+	EnsureVersioningEnabled(context.Context) error
+	HeadVersion(context.Context, string, string, string) (imageObjectMetadata, error)
+	ReadPrefixVersion(context.Context, string, string, string, int64) ([]byte, error)
+	CopyVersion(context.Context, string, string, string, string) (imageObjectMetadata, error)
+	SignedURLVersion(context.Context, string, string, time.Duration) (string, time.Time, error)
+	DeleteVersion(context.Context, string, string) error
+	DeletePrefixVersions(context.Context, string) error
+}
+
+var (
+	errDirectUploadUnsupported = errors.New("当前存储不支持浏览器直传")
+	errOSSVersioningRequired   = errors.New("OSS Bucket 必须启用版本控制")
+)
 
 type localImageStore struct{ directory string }
 
@@ -99,7 +119,12 @@ func (store localImageStore) Head(_ context.Context, key string) (imageObjectMet
 	if err != nil {
 		return imageObjectMetadata{}, err
 	}
-	return imageObjectMetadata{Bytes: info.Size()}, nil
+	data, err := os.ReadFile(store.path(key))
+	if err != nil {
+		return imageObjectMetadata{}, err
+	}
+	digest := sha256.Sum256(data)
+	return imageObjectMetadata{Bytes: info.Size(), ETag: fmt.Sprintf("%x", digest[:]), VersionID: "null"}, nil
 }
 func (store localImageStore) ReadPrefix(_ context.Context, key string, bytes int64) ([]byte, error) {
 	file, err := store.Open(key)
@@ -110,6 +135,45 @@ func (store localImageStore) ReadPrefix(_ context.Context, key string, bytes int
 	return io.ReadAll(io.LimitReader(file, bytes))
 }
 func (store localImageStore) Open(key string) (io.ReadCloser, error) { return os.Open(store.path(key)) }
+
+func (store localImageStore) EnsureVersioningEnabled(context.Context) error { return nil }
+func (store localImageStore) HeadVersion(ctx context.Context, key, versionID, etag string) (imageObjectMetadata, error) {
+	if versionID != "" && versionID != "null" {
+		return imageObjectMetadata{}, errors.New("local object version is unavailable")
+	}
+	metadata, err := store.Head(ctx, key)
+	if err == nil && etag != "" && etag != metadata.ETag {
+		return imageObjectMetadata{}, errors.New("object etag changed")
+	}
+	return metadata, err
+}
+func (store localImageStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, bytes int64) ([]byte, error) {
+	if _, err := store.HeadVersion(ctx, key, versionID, etag); err != nil {
+		return nil, err
+	}
+	return store.ReadPrefix(ctx, key, bytes)
+}
+func (store localImageStore) CopyVersion(ctx context.Context, source, versionID, etag, target string) (imageObjectMetadata, error) {
+	if _, err := store.HeadVersion(ctx, source, versionID, etag); err != nil {
+		return imageObjectMetadata{}, err
+	}
+	if err := store.Copy(ctx, source, target); err != nil {
+		return imageObjectMetadata{}, err
+	}
+	return store.Head(ctx, target)
+}
+func (store localImageStore) SignedURLVersion(ctx context.Context, key, versionID string, _ time.Duration) (string, time.Time, error) {
+	if _, err := store.HeadVersion(ctx, key, versionID, ""); err != nil {
+		return "", time.Time{}, err
+	}
+	return store.SignedURL(ctx, key, "")
+}
+func (store localImageStore) DeleteVersion(ctx context.Context, key, _ string) error {
+	return deleteImageObject(ctx, store, key)
+}
+func (store localImageStore) DeletePrefixVersions(_ context.Context, prefix string) error {
+	return os.RemoveAll(store.path(prefix))
+}
 
 type ossImageStore struct {
 	internal, public *oss.Client
@@ -172,7 +236,96 @@ func (store *ossImageStore) Head(ctx context.Context, key string) (imageObjectMe
 	if err != nil {
 		return imageObjectMetadata{}, err
 	}
-	return imageObjectMetadata{ContentType: strings.TrimSpace(oss.ToString(result.ContentType)), Bytes: result.ContentLength}, nil
+	return imageObjectMetadata{ContentType: strings.TrimSpace(oss.ToString(result.ContentType)), Bytes: result.ContentLength, ETag: strings.TrimSpace(oss.ToString(result.ETag)), VersionID: oss.ToString(result.VersionId)}, nil
+}
+
+func (store *ossImageStore) EnsureVersioningEnabled(ctx context.Context) error {
+	result, err := store.internal.GetBucketVersioning(ctx, &oss.GetBucketVersioningRequest{Bucket: oss.Ptr(store.bucket)})
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(oss.ToString(result.VersionStatus)) != "Enabled" {
+		return errOSSVersioningRequired
+	}
+	return nil
+}
+
+func (store *ossImageStore) HeadVersion(ctx context.Context, key, versionID, etag string) (imageObjectMetadata, error) {
+	request := &oss.HeadObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(versionID)}
+	if etag != "" {
+		request.IfMatch = oss.Ptr(etag)
+	}
+	result, err := store.internal.HeadObject(ctx, request)
+	if err != nil {
+		return imageObjectMetadata{}, err
+	}
+	return imageObjectMetadata{ContentType: strings.TrimSpace(oss.ToString(result.ContentType)), Bytes: result.ContentLength, ETag: strings.TrimSpace(oss.ToString(result.ETag)), VersionID: oss.ToString(result.VersionId)}, nil
+}
+
+func (store *ossImageStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, bytes int64) ([]byte, error) {
+	if bytes <= 0 {
+		return nil, nil
+	}
+	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(versionID), Range: oss.Ptr("bytes=0-" + fmt.Sprint(bytes-1))}
+	if etag != "" {
+		request.IfMatch = oss.Ptr(etag)
+	}
+	result, err := store.internal.GetObject(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	defer result.Body.Close()
+	return io.ReadAll(io.LimitReader(result.Body, bytes))
+}
+
+func (store *ossImageStore) CopyVersion(ctx context.Context, source, sourceVersionID, sourceETag, target string) (imageObjectMetadata, error) {
+	result, err := store.internal.CopyObject(ctx, &oss.CopyObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(target), SourceBucket: oss.Ptr(store.bucket), SourceKey: oss.Ptr(source), SourceVersionId: oss.Ptr(sourceVersionID), IfMatch: oss.Ptr(sourceETag), Acl: oss.ObjectACLPrivate})
+	if err != nil {
+		return imageObjectMetadata{}, err
+	}
+	versionID := oss.ToString(result.VersionId)
+	if versionID == "" {
+		return imageObjectMetadata{}, errors.New("OSS CopyObject 未返回目标 VersionID")
+	}
+	return store.HeadVersion(ctx, target, versionID, "")
+}
+
+func (store *ossImageStore) SignedURLVersion(ctx context.Context, key, versionID string, ttl time.Duration) (string, time.Time, error) {
+	result, err := store.public.Presign(ctx, &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(versionID)}, oss.PresignExpires(ttl))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return result.URL, result.Expiration, nil
+}
+
+func (store *ossImageStore) DeleteVersion(ctx context.Context, key, versionID string) error {
+	_, err := store.internal.DeleteObject(ctx, &oss.DeleteObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(versionID)})
+	return err
+}
+
+func (store *ossImageStore) DeletePrefixVersions(ctx context.Context, prefix string) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		result, err := store.internal.ListObjectVersions(ctx, &oss.ListObjectVersionsRequest{Bucket: oss.Ptr(store.bucket), Prefix: oss.Ptr(prefix), MaxKeys: 1000})
+		if err != nil {
+			return err
+		}
+		if len(result.ObjectVersions) == 0 && len(result.ObjectDeleteMarkers) == 0 {
+			return nil
+		}
+		for _, item := range result.ObjectVersions {
+			if err := store.DeleteVersion(ctx, oss.ToString(item.Key), oss.ToString(item.VersionId)); err != nil {
+				return err
+			}
+		}
+		for _, item := range result.ObjectDeleteMarkers {
+			if err := store.DeleteVersion(ctx, oss.ToString(item.Key), oss.ToString(item.VersionId)); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func (store *ossImageStore) ReadPrefix(ctx context.Context, key string, bytes int64) ([]byte, error) {

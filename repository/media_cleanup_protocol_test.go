@@ -10,12 +10,61 @@ import (
 
 	"github.com/basketikun/infinite-canvas/model"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type cleanupClaimResult struct {
 	item    model.Media
 	claimed bool
 	err     error
+}
+
+func TestMediaCleanupWaitsForImageSnapshotPreparationReference(t *testing.T) {
+	database, current := seedCleanupProtocolMedia(t, "cleanup_image_preparation")
+	transaction := database.Begin()
+	if transaction.Error != nil {
+		t.Fatal(transaction.Error)
+	}
+	var locked model.Media
+	if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", "image").Error; err != nil {
+		_ = transaction.Rollback()
+		t.Fatal(err)
+	}
+
+	result := make(chan cleanupClaimResult, 1)
+	go func() {
+		item, claimed, err := ClaimCanvasMediaCleanup("image", current, time.Minute)
+		result <- cleanupClaimResult{item: item, claimed: claimed, err: err}
+	}()
+	select {
+	case early := <-result:
+		_ = transaction.Rollback()
+		t.Fatalf("cleanup did not wait for media lock: %#v", early)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	task := model.ImageGenerationTask{ID: "preparing-task", OwnerUID: "owner", ClientRequestID: "preparing-request", Status: model.ImageTaskPreparing}
+	input := model.ImageGenerationTaskInput{ID: "preparing-input", TaskID: task.ID, Position: 0, Purpose: "image", SourceMediaID: "image", SourceObjectKey: "image", PreparationStatus: "pending"}
+	if err := transaction.Create(&task).Error; err != nil {
+		_ = transaction.Rollback()
+		t.Fatal(err)
+	}
+	if err := transaction.Create(&input).Error; err != nil {
+		_ = transaction.Rollback()
+		t.Fatal(err)
+	}
+	if err := transaction.Commit().Error; err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case claimed := <-result:
+		if claimed.err != nil || claimed.claimed {
+			t.Fatalf("cleanup claimed media used by preparing image task: %#v", claimed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("cleanup did not resume after image task transaction committed")
+	}
 }
 
 func seedCleanupProtocolMedia(t *testing.T, prefix string) (*gorm.DB, time.Time) {

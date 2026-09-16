@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"mime"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -159,95 +158,39 @@ func TestMaiziProviderBuildsRedactedRequestSummaries(t *testing.T) {
 
 	v2, err := summarizer.SummarizeImageTaskRequest(ai.ImageTaskRequest{
 		Request:    ai.ImageRequest{Prompt: "V2 遮罩编辑", Size: "1:1", Resolution: "1k", OutputFormat: "png", Background: "transparent"},
-		References: []ai.ImageReference{{Name: "main.png", ContentType: "image/png", Data: []byte("raw-main-image")}, {Name: "reference.jpg", ContentType: "image/jpeg", Data: []byte("raw-reference-image")}},
-		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", Data: []byte("raw-mask-image")},
+		References: []ai.ImageReference{{Name: "main.png", ContentType: "image/png", URL: "https://signed.example/main"}, {Name: "reference.jpg", ContentType: "image/jpeg", URL: "https://signed.example/reference"}},
+		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", URL: "https://signed.example/mask"},
 	})
 	if err != nil {
 		t.Fatalf("SummarizeImageTaskRequest(V2) error = %v", err)
 	}
-	if v2.Method != http.MethodPost || v2.Endpoint != maiziMaskedEditURL || !strings.HasPrefix(v2.ContentType, "multipart/form-data") || len(v2.MultipartFields) != 10 {
+	if v2.Method != http.MethodPost || v2.Endpoint != maiziBaseURL+"/images/generations" || v2.ContentType != "application/json" {
 		t.Fatalf("V2 summary metadata = %#v", v2)
 	}
-	if got := v2.MultipartFields[7]; got.Name != "image" || got.Value != "<base64>" || got.Filename != "main.png" || got.ContentType != "image/png" || got.Bytes != len("raw-main-image") {
-		t.Fatalf("V2 main image summary = %#v", got)
-	}
-	if got := v2.MultipartFields[9]; got.Name != "mask" || got.Value != "<base64>" || got.Filename != "mask.png" || got.ContentType != "image/png" || got.Bytes != len("raw-mask-image") {
-		t.Fatalf("V2 mask summary = %#v", got)
+	if got := string(v2.JSONBody); !strings.Contains(got, `"images":["<signed-url>","<signed-url>"]`) || !strings.Contains(got, `"mask_url":"<signed-url>"`) || strings.Contains(got, "signed.example") {
+		t.Fatalf("V2 summary body = %s", got)
 	}
 }
 
-func TestMaiziProviderSendsMaskedV2EditAsMultipartAndReturnsDirectURL(t *testing.T) {
+func TestMaiziProviderSendsMaskedEditAsVersionBoundURLs(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		if request.URL.Path != "/v2/images/edits" {
+		if request.URL.Path != "/v1/images/generations" {
 			t.Errorf("unexpected request: %s", request.URL)
-		}
-		mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
-		if err != nil || mediaType != "multipart/form-data" {
-			t.Fatalf("content type = %q, want multipart/form-data", request.Header.Get("Content-Type"))
-		}
-		if err := request.ParseMultipartForm(1 << 20); err != nil {
-			t.Fatalf("parse multipart form: %v", err)
 		}
 		if got := request.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Errorf("Authorization = %q, want bearer token", got)
 		}
-		if got := request.MultipartForm.Value["response_format"]; len(got) != 1 || got[0] != "url" {
-			t.Errorf("response_format = %#v, want url", got)
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
 		}
-		for field, want := range map[string]string{
-			"model":      "gpt-image-2",
-			"prompt":     "只修改遮罩区域",
-			"size":       "1:1",
-			"resolution": "1k",
-			"quality":    "high",
-		} {
-			if got := request.MultipartForm.Value[field]; len(got) != 1 || got[0] != want {
-				t.Errorf("%s = %#v, want %q", field, got, want)
-			}
+		images, _ := body["images"].([]any)
+		if len(images) != 2 || images[0] != "https://signed.example/image" || images[1] != "https://signed.example/reference" || body["mask_url"] != "https://signed.example/mask" {
+			t.Fatalf("request body = %#v", body)
 		}
-		if got := request.MultipartForm.Value["output_format"]; len(got) != 1 || got[0] != "png" {
-			t.Errorf("output_format = %#v, want png", got)
-		}
-		if got := request.MultipartForm.Value["background"]; len(got) != 1 || got[0] != "transparent" {
-			t.Errorf("background = %#v, want transparent", got)
-		}
-		if _, exists := request.MultipartForm.Value["images"]; exists {
-			t.Errorf("V2 multipart request unexpectedly includes V1 images field")
-		}
-		if _, exists := request.MultipartForm.Value["n"]; exists {
-			t.Errorf("V2 multipart request unexpectedly includes n")
-		}
-		images := request.MultipartForm.File["image"]
-		if len(images) != 2 {
-			t.Fatalf("image files = %d, want 2", len(images))
-		}
-		for index, want := range []string{"image", "reference"} {
-			file, err := images[index].Open()
-			if err != nil {
-				t.Fatalf("open image %d: %v", index, err)
-			}
-			data, err := io.ReadAll(file)
-			_ = file.Close()
-			if err != nil || string(data) != want {
-				t.Errorf("image %d = %q, %v; want %q", index, data, err, want)
-			}
-		}
-		masks := request.MultipartForm.File["mask"]
-		if len(masks) != 1 {
-			t.Fatalf("mask files = %d, want 1", len(masks))
-		}
-		mask, err := masks[0].Open()
-		if err != nil {
-			t.Fatalf("open mask: %v", err)
-		}
-		maskData, err := io.ReadAll(mask)
-		_ = mask.Close()
-		if err != nil || string(maskData) != "mask" {
-			t.Errorf("mask = %q, %v; want mask", maskData, err)
-		}
-		return jsonResponse(`{"created":1785123456,"data":[{"url":"https://cdn.example.com/masked.png"}]}`), nil
+		return jsonResponse(`{"data":[{"task_id":"masked-task","status":"processing"}]}`), nil
 	})
 
 	typeInfo, _ := ai.Type("maizi-image")
@@ -257,25 +200,25 @@ func TestMaiziProviderSendsMaskedV2EditAsMultipartAndReturnsDirectURL(t *testing
 	}
 	task, err := provider.(ai.ImageTaskProvider).CreateImageTask(context.Background(), ai.ImageTaskRequest{
 		Request:    ai.ImageRequest{Prompt: "只修改遮罩区域", Size: "1:1", Resolution: "1k", Quality: "high", OutputFormat: "png", Background: "transparent"},
-		References: []ai.ImageReference{{ContentType: "image/png", Data: []byte("image")}, {ContentType: "image/png", Data: []byte("reference")}},
-		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", Data: []byte("mask")},
+		References: []ai.ImageReference{{ContentType: "image/png", URL: "https://signed.example/image"}, {ContentType: "image/png", URL: "https://signed.example/reference"}},
+		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", URL: "https://signed.example/mask"},
 	})
 	if err != nil {
 		t.Fatalf("CreateImageTask() error = %v", err)
 	}
-	if task.ID != "" || task.Status != "completed" || len(task.ResultURLs) != 1 || task.ResultURLs[0] != "https://cdn.example.com/masked.png" {
+	if task.ID != "masked-task" || task.Status != ai.ImageTaskStatusRunning || len(task.ResultURLs) != 0 {
 		t.Fatalf("CreateImageTask() = %#v", task)
 	}
 }
 
-func TestMaiziProviderStartsPollingForMaskedV2EditAcceptedResponse(t *testing.T) {
+func TestMaiziProviderStartsPollingForMaskedEditResponse(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Method != http.MethodPost || request.URL.Path != "/v2/images/edits" {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/images/generations" {
 			t.Errorf("unexpected request: %s %s", request.Method, request.URL)
 		}
-		return jsonStatusResponse(http.StatusAccepted, `{"task_id":"task-v2-pending","status":"processing","message":"任务仍在处理中"}`), nil
+		return jsonStatusResponse(http.StatusAccepted, `{"data":[{"task_id":"task-v2-pending","status":"processing"}]}`), nil
 	})
 
 	typeInfo, _ := ai.Type("maizi-image")
@@ -292,11 +235,11 @@ func TestMaiziProviderStartsPollingForMaskedV2EditAcceptedResponse(t *testing.T)
 	}
 }
 
-func TestMaiziProviderFailsMaskedV2EditWithReturnedError(t *testing.T) {
+func TestMaiziProviderNormalizesRejectedMaskedSubmission(t *testing.T) {
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		return jsonResponse(`{"data":[{"error":"Generation failed"}]}`), nil
+		return jsonResponse(`{"data":[{"task_id":"rejected-task","status":"rejected"}]}`), nil
 	})
 
 	typeInfo, _ := ai.Type("maizi-image")
@@ -308,7 +251,7 @@ func TestMaiziProviderFailsMaskedV2EditWithReturnedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateImageTask() error = %v", err)
 	}
-	if task.Status != "failed" || task.Error != "Generation failed" || task.ID != "" {
+	if task.Status != ai.ImageTaskStatusFailed || task.ID != "rejected-task" {
 		t.Fatalf("CreateImageTask() = %#v", task)
 	}
 }
@@ -317,7 +260,7 @@ func TestMaiziProviderRejectsMaskedV2AcceptedResponseWithoutTaskID(t *testing.T)
 	originalTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = originalTransport })
 	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
-		return jsonStatusResponse(http.StatusAccepted, `{"status":"processing"}`), nil
+		return jsonStatusResponse(http.StatusAccepted, `{"data":[{"status":"processing"}]}`), nil
 	})
 
 	typeInfo, _ := ai.Type("maizi-image")
@@ -326,7 +269,7 @@ func TestMaiziProviderRejectsMaskedV2AcceptedResponseWithoutTaskID(t *testing.T)
 		t.Fatalf("New() error = %v", err)
 	}
 	_, err = provider.(ai.ImageTaskProvider).CreateImageTask(context.Background(), maskedV2TaskRequest())
-	if err == nil || !strings.Contains(err.Error(), "响应无效") {
+	if err == nil || !strings.Contains(err.Error(), "未返回任务 ID") {
 		t.Fatalf("CreateImageTask() error = %v, want invalid response", err)
 	}
 }
@@ -334,8 +277,8 @@ func TestMaiziProviderRejectsMaskedV2AcceptedResponseWithoutTaskID(t *testing.T)
 func maskedV2TaskRequest() ai.ImageTaskRequest {
 	return ai.ImageTaskRequest{
 		Request:    ai.ImageRequest{Prompt: "只修改遮罩区域", Size: "1:1", Resolution: "1k", Quality: "high", OutputFormat: "png", Background: "transparent"},
-		References: []ai.ImageReference{{ContentType: "image/png", Data: []byte("image")}},
-		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", Data: []byte("mask")},
+		References: []ai.ImageReference{{ContentType: "image/png", URL: "https://signed.example/image"}},
+		Mask:       &ai.ImageReference{Name: "mask.png", ContentType: "image/png", URL: "https://signed.example/mask"},
 	}
 }
 

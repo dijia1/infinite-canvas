@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -27,6 +28,7 @@ type CreateImageTaskRequest struct {
 	References        []ai.ImageReference
 	ReferenceMediaIDs []string
 	Mask              *ai.ImageReference
+	MaskMediaID       string
 }
 
 type ImageTaskView struct {
@@ -62,7 +64,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		if request.ProviderID == "" {
 			request.ProviderID = existing.ProviderID
 		}
-		if existing.RequestHashVersion != imageRequestHashVersion {
+		if existing.RequestHashVersion != 2 && existing.RequestHashVersion != imageRequestHashVersion {
 			return ImageTaskView{}, fmt.Errorf("图片任务幂等版本不受支持：%d", existing.RequestHashVersion)
 		}
 		schema, err := decodeImageTaskRequestSchema(existing.RequestSchemaJSON)
@@ -73,7 +75,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		if err != nil {
 			return ImageTaskView{}, err
 		}
-		requestHash, err := imageTaskRequestHash(hashRequest)
+		requestHash, err := imageTaskRequestHashForVersion(hashRequest, existing.RequestHashVersion)
 		if err != nil {
 			return ImageTaskView{}, err
 		}
@@ -100,12 +102,25 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	if err != nil {
 		return ImageTaskView{}, err
 	}
+	var sourceMedia []model.Media
 	if len(request.ReferenceMediaIDs) > 0 {
-		references, err := resolveImageTaskMediaReferences(ctx, user, request.ReferenceMediaIDs)
+		sourceMedia, err = resolveImageTaskMediaSources(ctx, user, request.ReferenceMediaIDs)
 		if err != nil {
 			return ImageTaskView{}, err
 		}
-		request.References = references
+		request.References = imageTaskMediaPlaceholders(sourceMedia)
+	}
+	if request.MaskMediaID != "" {
+		maskMedia, err := resolveImageTaskMediaSource(ctx, user, request.MaskMediaID)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		if !strings.EqualFold(strings.TrimSpace(maskMedia.ContentType), "image/png") {
+			return ImageTaskView{}, safeMessageError{message: "遮罩必须为 PNG 图片"}
+		}
+		sourceMedia = append(sourceMedia, maskMedia)
+		placeholder := imageTaskMediaPlaceholder(maskMedia)
+		request.Mask = &placeholder
 	}
 
 	request, err = normalizeImageTaskRequestForProvider(provider, request)
@@ -126,18 +141,27 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 	}
 	taskID := newID("image-task")
 	operationLogID := newID("operation")
-	inputs, err := SaveImageTaskInputs(ctx, taskID, request.References, request.Mask)
-	if err != nil {
-		return ImageTaskView{}, err
-	}
-	inputsJSON, err := json.Marshal(inputs)
-	if err != nil {
-		_ = DeleteImageTaskInputs(ctx, inputs)
-		return ImageTaskView{}, err
+	status := model.ImageTaskQueued
+	inputsJSON := []byte("[]")
+	var legacyInputs []ImageTaskInput
+	var snapshotInputs []model.ImageGenerationTaskInput
+	if len(sourceMedia) > 0 {
+		status = model.ImageTaskPreparing
+		snapshotInputs = imageTaskSnapshotInputs(taskID, request.ReferenceMediaIDs, request.MaskMediaID, sourceMedia)
+	} else {
+		legacyInputs, err = SaveImageTaskInputs(ctx, taskID, request.References, request.Mask)
+		if err != nil {
+			return ImageTaskView{}, err
+		}
+		inputsJSON, err = json.Marshal(legacyInputs)
+		if err != nil {
+			_ = DeleteImageTaskInputs(ctx, legacyInputs)
+			return ImageTaskView{}, err
+		}
 	}
 	item := model.ImageGenerationTask{
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, RequestHashVersion: imageRequestHashVersion, RequestSchemaJSON: schemaJSON, Mode: request.Mode,
-		Status: model.ImageTaskQueued, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
+		Status: status, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
 		Amount: amount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
 	}
@@ -146,15 +170,53 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		Action: imageTaskAction(item), Status: model.OperationStatusSubmitted, TargetType: "image_generation", TargetID: item.ID,
 		Prompt: item.Prompt, RequestSummary: requestSummary, CreatedAt: time.Now().UTC(),
 	}
-	created, inserted, err := repository.CreateImageGenerationTaskWithOperationLog(item, operation)
+	created, inserted, err := repository.CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, snapshotInputs)
 	if err != nil {
-		_ = DeleteImageTaskInputs(ctx, inputs)
+		_ = DeleteImageTaskInputs(ctx, legacyInputs)
 		return ImageTaskView{}, err
 	}
 	if !inserted {
-		_ = DeleteImageTaskInputs(ctx, inputs)
+		_ = DeleteImageTaskInputs(ctx, legacyInputs)
 	}
 	return imageTaskView(ctx, user, created)
+}
+
+func imageTaskMediaPlaceholders(items []model.Media) []ai.ImageReference {
+	references := make([]ai.ImageReference, 0, len(items))
+	for _, item := range items {
+		references = append(references, imageTaskMediaPlaceholder(item))
+	}
+	return references
+}
+
+func imageTaskMediaPlaceholder(item model.Media) ai.ImageReference {
+	name := filepath.Base(strings.TrimSpace(item.Filename))
+	if name == "" || name == "." {
+		name = "reference"
+	}
+	return ai.ImageReference{Name: name, ContentType: strings.TrimSpace(item.ContentType), URL: "https://snapshot.invalid/version-bound"}
+}
+
+func imageTaskSnapshotInputs(taskID string, referenceIDs []string, maskID string, media []model.Media) []model.ImageGenerationTaskInput {
+	inputs := make([]model.ImageGenerationTaskInput, 0, len(media))
+	createdAt := now()
+	for position, item := range media {
+		purpose := "image"
+		if position >= len(referenceIDs) && maskID != "" {
+			purpose = "mask"
+		}
+		name := filepath.Base(strings.TrimSpace(item.Filename))
+		if name == "" || name == "." {
+			name = "reference"
+		}
+		inputs = append(inputs, model.ImageGenerationTaskInput{
+			ID: newID("image-input"), TaskID: taskID, Position: position, Purpose: purpose, Name: name,
+			SourceMediaID: item.ID, SourceObjectKey: item.ObjectKey, SourceVersionID: item.ObjectVersionID, SourceETag: item.ObjectETag,
+			ContentType: item.ContentType, Bytes: item.Bytes,
+			PreparationStatus: "pending", CleanupKeysJSON: "[]", CreatedAt: createdAt, UpdatedAt: createdAt,
+		})
+	}
+	return inputs
 }
 
 func imageTaskAmount(provider model.AIProvider, resolution string) (decimal.Decimal, error) {
@@ -223,10 +285,17 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 			return CreateImageTaskRequest{}, safeMessageError{message: "参考图片无效"}
 		}
 	}
+	request.MaskMediaID = strings.TrimSpace(request.MaskMediaID)
+	if request.MaskMediaID != "" && len(request.MaskMediaID) > 128 {
+		return CreateImageTaskRequest{}, safeMessageError{message: "遮罩图片无效"}
+	}
+	if request.Mask != nil && request.MaskMediaID != "" {
+		return CreateImageTaskRequest{}, safeMessageError{message: "遮罩请求格式无效"}
+	}
 	if request.Mode == ImageTaskModeEdit && len(request.References) == 0 && len(request.ReferenceMediaIDs) == 0 {
 		return CreateImageTaskRequest{}, safeMessageError{message: "图像编辑需要参考图"}
 	}
-	if request.Mask != nil && request.Mode != ImageTaskModeEdit {
+	if (request.Mask != nil || request.MaskMediaID != "") && request.Mode != ImageTaskModeEdit {
 		return CreateImageTaskRequest{}, safeMessageError{message: "遮罩只能用于图像编辑"}
 	}
 	format := strings.ToLower(strings.TrimSpace(request.Request.OutputFormat))
@@ -362,6 +431,9 @@ func imageTaskView(ctx context.Context, user PortalUser, item model.ImageGenerat
 	view := ImageTaskView{
 		ID: item.ID, ClientRequestID: item.ClientRequestID, Status: string(item.Status), Progress: item.Progress,
 		Error: strings.TrimSpace(item.ErrorMessage), Images: []MediaAccess{},
+	}
+	if item.Status == model.ImageTaskPreparing {
+		view.Status = string(model.ImageTaskQueued)
 	}
 	if item.Status != model.ImageTaskSucceeded || strings.TrimSpace(item.ResultMediaIDsJSON) == "" {
 		return view, nil

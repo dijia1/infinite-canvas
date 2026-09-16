@@ -225,55 +225,39 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const size = (config.size || "").trim();
     const resolution = config.resolution.trim();
     const output = imageOutputSettings(config.outputFormat, config.background);
-    const formData = new FormData();
-    formData.set("clientRequestId", clientRequestId);
-    if (config.imageProviderId) formData.set("providerId", config.imageProviderId);
-    formData.set("prompt", prompt);
-    formData.set("n", "1");
-    formData.set("response_format", "b64_json");
-    formData.set("output_format", output.outputFormat);
-    formData.set("background", output.background);
-    formData.set("providerOptions", JSON.stringify(config.providerOptions || {}));
-    if (quality) {
-        formData.set("quality", quality);
-    }
-    if (size && size !== "auto") {
-        formData.set("size", size);
-    }
-    if (resolution) {
-        formData.set("resolution", resolution);
-    }
     const referenceError = imageEditReferenceError(references);
     if (referenceError) throw new Error(referenceError);
-    const useServerMediaReferences = canUseServerMediaReferences(references);
     const maskedReferences = references.filter((image) => image.mask?.strokes.length);
-    const files = useServerMediaReferences ? [] : await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
-    if (useServerMediaReferences) references.forEach((image) => formData.append("referenceMediaId", image.mediaId!));
-    else files.forEach((file) => formData.append("image", file));
+    const referenceMediaIds = await Promise.all(
+        references.map(async (image) => {
+            if (image.mediaId) return image.mediaId;
+            const file = dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) });
+            return (await uploadUserImage(file, "canvas")).mediaId;
+        }),
+    );
     const mask = maskedReferences[0];
-    if (mask?.mask) {
-        formData.set("mask", await createImageMaskFile(mask.mask, mask));
-    }
+    const maskMediaId = mask?.mask ? (await uploadUserImage(await createImageMaskFile(mask.mask, mask), "canvas")).mediaId : undefined;
+    const body = {
+        clientRequestId,
+        ...(config.imageProviderId ? { providerId: config.imageProviderId } : {}),
+        prompt,
+        n: 1,
+        ...(quality ? { quality } : {}),
+        ...(size && size !== "auto" ? { size } : {}),
+        ...(resolution ? { resolution } : {}),
+        output_format: output.outputFormat,
+        background: output.background,
+        providerOptions: config.providerOptions || {},
+        referenceMediaIds,
+        ...(maskMediaId ? { maskMediaId } : {}),
+    };
     debugApiRequest("image edit", {
         url: aiApiPath("/images/edits"),
-        body: {
-            clientRequestId,
-            prompt,
-            n: 1,
-            ...(quality ? { quality } : {}),
-            ...(size && size !== "auto" ? { size } : {}),
-            ...(resolution ? { resolution } : {}),
-            output_format: output.outputFormat,
-            background: output.background,
-            providerOptions: config.providerOptions || {},
-            response_format: "b64_json",
-        },
-        references: useServerMediaReferences ? references.map((image) => ({ mediaId: image.mediaId })) : files.map((file) => ({ name: file.name, type: file.type, size: file.size })),
-        mask: mask ? { name: "mask.png", type: "image/png" } : undefined,
+        body,
     });
 
     try {
-        const response = await axios.post<ImageApiResponse>(aiApiPath("/images/edits"), formData, { headers: aiHeaders() });
+        const response = await axios.post<ImageApiResponse>(aiApiPath("/images/edits"), body, { headers: aiHeaders("application/json") });
         return parseImageTask(response.data);
     } catch (error) {
         imageCreateError(error, "请求失败");

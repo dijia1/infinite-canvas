@@ -3,6 +3,7 @@ package repository
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/model"
@@ -17,6 +18,10 @@ var ErrImageLeaseLost = errors.New("image task lease lost")
 // submitted audit record together. A duplicate client request returns the
 // existing task without creating a second operation log.
 func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, operation model.OperationLog) (model.ImageGenerationTask, bool, error) {
+	return CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, nil)
+}
+
+func CreateImageGenerationTaskWithInputsAndOperationLog(item model.ImageGenerationTask, operation model.OperationLog, inputs []model.ImageGenerationTaskInput) (model.ImageGenerationTask, bool, error) {
 	database, err := DB()
 	if err != nil {
 		return model.ImageGenerationTask{}, false, err
@@ -24,6 +29,39 @@ func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, o
 	created := model.ImageGenerationTask{}
 	inserted := false
 	err = database.Transaction(func(transaction *gorm.DB) error {
+		mediaIDs := make([]string, 0, len(inputs))
+		seen := make(map[string]struct{}, len(inputs))
+		for _, input := range inputs {
+			if _, ok := seen[input.SourceMediaID]; !ok {
+				seen[input.SourceMediaID] = struct{}{}
+				mediaIDs = append(mediaIDs, input.SourceMediaID)
+			}
+		}
+		sort.Strings(mediaIDs)
+		if len(mediaIDs) > 0 {
+			var media []model.Media
+			if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id IN ?", mediaIDs).Order("id").Find(&media).Error; err != nil {
+				return err
+			}
+			if len(media) != len(mediaIDs) {
+				return ErrCanvasMediaUnavailable
+			}
+			byID := make(map[string]model.Media, len(media))
+			for _, item := range media {
+				byID[item.ID] = item
+			}
+			for index := range inputs {
+				mediaItem := byID[inputs[index].SourceMediaID]
+				if mediaItem.CleanupStatus != model.MediaCleanupActive || mediaItem.ObjectKey == "" {
+					return ErrCanvasMediaUnavailable
+				}
+				inputs[index].SourceObjectKey = mediaItem.ObjectKey
+				inputs[index].SourceVersionID = mediaItem.ObjectVersionID
+				inputs[index].SourceETag = mediaItem.ObjectETag
+				inputs[index].ContentType = mediaItem.ContentType
+				inputs[index].Bytes = mediaItem.Bytes
+			}
+		}
 		result := transaction.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "client_request_id"}}, DoNothing: true}).Create(&item)
 		if result.Error != nil {
 			return result.Error
@@ -31,6 +69,11 @@ func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, o
 		if result.RowsAffected > 0 {
 			if err := transaction.Create(&operation).Error; err != nil {
 				return err
+			}
+			if len(inputs) > 0 {
+				if err := transaction.Create(&inputs).Error; err != nil {
+					return err
+				}
 			}
 			created = item
 			inserted = true
@@ -48,6 +91,109 @@ func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, o
 		return model.ImageGenerationTask{}, false, err
 	}
 	return created, inserted, nil
+}
+
+func ListPreparingImageGenerationTasks() ([]model.ImageGenerationTask, error) {
+	database, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	var items []model.ImageGenerationTask
+	err = database.Where("status = ?", model.ImageTaskPreparing).Order("created_at asc").Order("id asc").Find(&items).Error
+	return items, err
+}
+
+func ListImageGenerationTaskInputs(taskID string) ([]model.ImageGenerationTaskInput, error) {
+	database, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	var items []model.ImageGenerationTaskInput
+	err = database.Where("task_id = ?", taskID).Order("position asc").Find(&items).Error
+	return items, err
+}
+
+func UpdatePreparingImageGenerationTaskInput(taskID, inputID string, updates map[string]any) error {
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	return database.Transaction(func(transaction *gorm.DB) error {
+		var task model.ImageGenerationTask
+		if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).First(&task, "id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if task.Status != model.ImageTaskPreparing {
+			return errors.New("image task is no longer preparing")
+		}
+		result := transaction.Model(&model.ImageGenerationTaskInput{}).Where("id = ? AND task_id = ?", inputID, taskID).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+}
+
+func QueuePreparedImageGenerationTask(taskID, referencesJSON, updatedAt string) error {
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	return database.Transaction(func(transaction *gorm.DB) error {
+		var pending int64
+		if err := transaction.Model(&model.ImageGenerationTaskInput{}).Where("task_id = ? AND preparation_status <> ?", taskID, "ready").Count(&pending).Error; err != nil {
+			return err
+		}
+		if pending != 0 {
+			return errors.New("image task inputs are not ready")
+		}
+		result := transaction.Model(&model.ImageGenerationTask{}).Where("id = ? AND status = ?", taskID, model.ImageTaskPreparing).Updates(map[string]any{
+			"status": model.ImageTaskQueued, "references_json": referencesJSON, "updated_at": updatedAt,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("image task is no longer preparing")
+		}
+		return nil
+	})
+}
+
+func FailPreparingImageGenerationTask(taskID, message, finishedAt string) error {
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	return database.Transaction(func(transaction *gorm.DB) error {
+		var item model.ImageGenerationTask
+		if err := transaction.Clauses(clause.Locking{Strength: "UPDATE"}).First(&item, "id = ?", taskID).Error; err != nil {
+			return err
+		}
+		if item.Status != model.ImageTaskPreparing {
+			return nil
+		}
+		if err := transaction.Model(&item).Updates(map[string]any{"status": model.ImageTaskFailed, "error_message": message, "updated_at": finishedAt, "finished_at": finishedAt}).Error; err != nil {
+			return err
+		}
+		if item.OperationLogID != "" {
+			return transaction.Model(&model.OperationLog{}).Where("id = ?", item.OperationLogID).Updates(map[string]any{"status": model.OperationStatusFailure, "error_message": message}).Error
+		}
+		return nil
+	})
+}
+
+func ListTerminalImageGenerationTasksWithInputs() ([]model.ImageGenerationTask, error) {
+	database, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	var items []model.ImageGenerationTask
+	err = database.Distinct("image_generation_tasks.*").Joins("JOIN image_generation_task_inputs ON image_generation_task_inputs.task_id = image_generation_tasks.id").Where("image_generation_tasks.status IN ?", []model.ImageGenerationTaskStatus{model.ImageTaskSucceeded, model.ImageTaskFailed}).Find(&items).Error
+	return items, err
 }
 
 func GetImageGenerationTask(id string) (model.ImageGenerationTask, bool, error) {
@@ -146,6 +292,26 @@ func UpdateClaimedImageGenerationTask(item model.ImageGenerationTask, updates ma
 	result := database.Model(&model.ImageGenerationTask{}).
 		Where("id = ? AND claim_id = ? AND lease_until IS NOT NULL AND lease_until > ?", item.ID, item.ClaimID, time.Now().UTC()).
 		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrImageLeaseLost
+	}
+	return nil
+}
+
+func BeginImageGenerationTaskSubmission(item model.ImageGenerationTask, updatedAt string) error {
+	if item.ClaimID == "" {
+		return ErrImageLeaseLost
+	}
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	result := database.Model(&model.ImageGenerationTask{}).
+		Where("id = ? AND claim_id = ? AND lease_until IS NOT NULL AND lease_until > ? AND status = ? AND provider_task_id = ''", item.ID, item.ClaimID, time.Now().UTC(), model.ImageTaskQueued).
+		Updates(map[string]any{"status": model.ImageTaskSubmitting, "updated_at": updatedAt})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -311,5 +477,10 @@ func DeleteImageGenerationTask(id string) error {
 	if err != nil {
 		return err
 	}
-	return database.Delete(&model.ImageGenerationTask{}, "id = ?", id).Error
+	return database.Transaction(func(transaction *gorm.DB) error {
+		if err := transaction.Delete(&model.ImageGenerationTaskInput{}, "task_id = ?", id).Error; err != nil {
+			return err
+		}
+		return transaction.Delete(&model.ImageGenerationTask{}, "id = ?", id).Error
+	})
 }

@@ -58,11 +58,17 @@ func prepareImageTaskResultMedia(ctx context.Context, images []ai.ImageResult) (
 			prepared.cleanup(ctx)
 			return preparedImageTaskResults{}, fmt.Errorf("保存图片失败: %w", err)
 		}
+		metadata, err := store.Head(ctx, key)
+		if err != nil {
+			prepared.cleanup(ctx)
+			return preparedImageTaskResults{}, fmt.Errorf("读取已保存图片版本失败: %w", err)
+		}
 		width, height := imageDimensions(data)
 		base := filepath.Base(filename)
 		prepared.media = append(prepared.media, model.Media{
 			ID: newID("media"), OwnerUID: user.UID, Source: model.MediaSourceGenerated,
-			ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height,
+			ObjectKey: key, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag,
+			ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height,
 			Filename: base, Title: strings.TrimSuffix(base, filepath.Ext(base)), CreatedAt: createdAt.Format(time.RFC3339),
 		})
 	}

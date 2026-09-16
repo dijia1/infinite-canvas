@@ -22,6 +22,8 @@ type Media struct {
 	OwnerUID          string             `json:"-" gorm:"index"`
 	Source            MediaSource        `json:"source" gorm:"index;index:idx_media_source_expires"`
 	ObjectKey         string             `json:"-" gorm:"uniqueIndex"`
+	ObjectVersionID   string             `json:"-"`
+	ObjectETag        string             `json:"-" gorm:"column:object_etag"`
 	ContentType       string             `json:"contentType"`
 	Bytes             int64              `json:"bytes"`
 	Duration          float64            `json:"duration"`

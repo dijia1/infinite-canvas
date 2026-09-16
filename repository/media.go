@@ -276,6 +276,13 @@ func ClaimCanvasMediaCleanupBatch(ids []string, current time.Time, lease time.Du
 				continue
 			}
 			referenced := public[item.ID]
+			if !referenced {
+				preparing, err := imageTaskPreparingMediaReferenced(tx, item.ID)
+				if err != nil {
+					return err
+				}
+				referenced = preparing
+			}
 			workflowHeld, err := workflowMediaReferenced(tx, item.ID)
 			if err != nil {
 				return err
@@ -405,6 +412,13 @@ func PreparePrivateMediaDeletion(id, ownerUID string, current time.Time) (model.
 		if item.CleanupStatus == model.MediaCleanupDeleting {
 			return ErrCanvasMediaUnavailable
 		}
+		preparing, err := imageTaskPreparingMediaReferenced(tx, item.ID)
+		if err != nil {
+			return err
+		}
+		if preparing {
+			return errors.New("素材正在被图片任务准备使用")
+		}
 		workflowHeld, err := workflowMediaReferenced(tx, id)
 		if err != nil {
 			return err
@@ -437,4 +451,13 @@ func PreparePrivateMediaDeletion(id, ownerUID string, current time.Time) (model.
 		return recordMediaLifecycle(tx, item, ownerUID, "delete_requested", "", "manual_private_delete")
 	})
 	return item, err
+}
+
+func imageTaskPreparingMediaReferenced(tx *gorm.DB, mediaID string) (bool, error) {
+	var count int64
+	err := tx.Model(&model.ImageGenerationTaskInput{}).
+		Joins("JOIN image_generation_tasks ON image_generation_tasks.id = image_generation_task_inputs.task_id").
+		Where("image_generation_task_inputs.source_media_id = ? AND image_generation_tasks.status = ?", mediaID, model.ImageTaskPreparing).
+		Count(&count).Error
+	return count > 0, err
 }

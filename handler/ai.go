@@ -19,16 +19,18 @@ const maxImageEditRequestBytes int64 = maxMultipartImageBytes*2 + multipartReque
 const workflowRequestIDPrefix = "workflow-"
 
 type imageRequest struct {
-	ClientRequestID string          `json:"clientRequestId"`
-	ProviderID      string          `json:"providerId"`
-	Prompt          string          `json:"prompt"`
-	N               int             `json:"n"`
-	Quality         string          `json:"quality"`
-	Size            string          `json:"size"`
-	Resolution      string          `json:"resolution"`
-	OutputFormat    string          `json:"output_format"`
-	Background      string          `json:"background"`
-	ProviderOptions json.RawMessage `json:"providerOptions"`
+	ClientRequestID   string          `json:"clientRequestId"`
+	ProviderID        string          `json:"providerId"`
+	Prompt            string          `json:"prompt"`
+	N                 int             `json:"n"`
+	Quality           string          `json:"quality"`
+	Size              string          `json:"size"`
+	Resolution        string          `json:"resolution"`
+	OutputFormat      string          `json:"output_format"`
+	Background        string          `json:"background"`
+	ProviderOptions   json.RawMessage `json:"providerOptions"`
+	ReferenceMediaIDs []string        `json:"referenceMediaIds"`
+	MaskMediaID       string          `json:"maskMediaId"`
 }
 
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
@@ -59,37 +61,28 @@ func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 }
 
 func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
-	limitMultipartRequestBody(w, r, maxImageEditRequestBytes)
-	if err := r.ParseMultipartForm(50 << 20); err != nil {
+	var payload imageRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&payload); err != nil {
 		Fail(w, "图像编辑请求无效")
 		return
 	}
-	if rejectReservedWorkflowRequestID(w, r.FormValue("clientRequestId")) {
+	if rejectReservedWorkflowRequestID(w, payload.ClientRequestID) {
 		return
 	}
-	references, err := readMultipartImageReferences(r.MultipartForm.File["image"], maxMultipartImageBytes)
-	if err != nil {
-		Fail(w, "参考图总大小无效")
-		return
-	}
-	mask, err := imageMaskFromForm(r)
-	if err != nil {
-		Fail(w, "遮罩文件无效")
-		return
-	}
-	options, err := imageRequestOptionsFromForm(r.FormValue("providerOptions"))
+	options, err := imageRequestOptionsFromJSON(payload.ProviderOptions)
 	if err != nil {
 		Fail(w, "供应商参数无效")
 		return
 	}
 	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
-		ClientRequestID:   r.FormValue("clientRequestId"),
-		ProviderID:        r.FormValue("providerId"),
+		ClientRequestID:   payload.ClientRequestID,
+		ProviderID:        payload.ProviderID,
 		Mode:              service.ImageTaskModeEdit,
-		Request:           ai.ImageRequest{Prompt: r.FormValue("prompt"), Count: number(r.FormValue("n")), Quality: r.FormValue("quality"), Size: r.FormValue("size"), Resolution: r.FormValue("resolution"), OutputFormat: r.FormValue("output_format"), Background: r.FormValue("background"), Options: options},
-		References:        references,
-		ReferenceMediaIDs: r.MultipartForm.Value["referenceMediaId"],
-		Mask:              mask,
+		Request:           ai.ImageRequest{Prompt: payload.Prompt, Count: payload.N, Quality: payload.Quality, Size: payload.Size, Resolution: payload.Resolution, OutputFormat: payload.OutputFormat, Background: payload.Background, Options: options},
+		ReferenceMediaIDs: payload.ReferenceMediaIDs,
+		MaskMediaID:       payload.MaskMediaID,
 	})
 	if err != nil {
 		failGenerationTaskError(w, err)

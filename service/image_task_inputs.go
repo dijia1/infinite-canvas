@@ -15,9 +15,18 @@ import (
 
 type ImageTaskInput struct {
 	ObjectKey   string `json:"objectKey"`
+	VersionID   string `json:"versionId,omitempty"`
 	Name        string `json:"name"`
 	ContentType string `json:"contentType"`
 	Purpose     string `json:"purpose,omitempty"`
+}
+
+func imageTaskInputPrefix(taskID string) string {
+	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
+	if prefix == "" {
+		prefix = "images"
+	}
+	return prefix + "/tasks/" + filepath.Base(taskID) + "/"
 }
 
 type ImageTaskInputs struct {
@@ -130,13 +139,9 @@ func DeleteImageTaskInputs(ctx context.Context, inputs []ImageTaskInput) error {
 }
 
 func taskInputObjectKey(taskID string, index int, extension string) string {
-	prefix := strings.Trim(strings.TrimSpace(config.Cfg.OSSObjectPrefix), "/")
-	if prefix == "" {
-		prefix = "images"
-	}
 	extension = strings.TrimSpace(strings.TrimPrefix(extension, "."))
 	if extension == "" {
 		extension = "png"
 	}
-	return prefix + "/tasks/" + filepath.Base(taskID) + "/inputs/reference-" + strconv.Itoa(index) + "." + extension
+	return imageTaskInputPrefix(taskID) + "inputs/reference-" + strconv.Itoa(index) + "." + extension
 }

@@ -79,6 +79,55 @@ func TestCreateImageGenerationTaskWithOperationLogIsIdempotentPerOwnerAndClientR
 	}
 }
 
+func TestIdempotentImageTaskReplayDoesNotReplaceSnapshotInputs(t *testing.T) {
+	database := useImageTaskTestDB(t)
+	media := model.Media{ID: "snapshot-media", OwnerUID: "owner", ObjectKey: "private/source.png", CleanupStatus: model.MediaCleanupActive}
+	if err := database.Create(&media).Error; err != nil {
+		t.Fatal(err)
+	}
+	item := model.ImageGenerationTask{ID: "snapshot-task", OwnerUID: "owner", ClientRequestID: "snapshot-request", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskPreparing, OperationLogID: "snapshot-operation"}
+	input := model.ImageGenerationTaskInput{ID: "snapshot-input", TaskID: item.ID, Position: 0, Purpose: "image", SourceMediaID: media.ID, SourceObjectKey: media.ObjectKey, PreparationStatus: "pending"}
+	created, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(item, model.OperationLog{ID: item.OperationLogID}, []model.ImageGenerationTaskInput{input})
+	if err != nil || !inserted || created.ID != item.ID {
+		t.Fatalf("create task = %#v, inserted=%t, err=%v", created, inserted, err)
+	}
+	duplicate := item
+	duplicate.ID, duplicate.OperationLogID = "replacement-task", "replacement-operation"
+	replacement := input
+	replacement.ID, replacement.TaskID = "replacement-input", duplicate.ID
+	replayed, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []model.ImageGenerationTaskInput{replacement})
+	if err != nil || inserted || replayed.ID != item.ID {
+		t.Fatalf("replay task = %#v, inserted=%t, err=%v", replayed, inserted, err)
+	}
+	var inputs []model.ImageGenerationTaskInput
+	if err := database.Find(&inputs).Error; err != nil || len(inputs) != 1 || inputs[0].ID != input.ID || inputs[0].TaskID != item.ID {
+		t.Fatalf("idempotent replay changed snapshot inputs: %#v, err=%v", inputs, err)
+	}
+}
+
+func TestPreparedImageTaskCannotQueueUntilEveryInputIsReady(t *testing.T) {
+	database := useImageTaskTestDB(t)
+	task := model.ImageGenerationTask{ID: "task-preparing-all-inputs", OwnerUID: "owner", ClientRequestID: "request-preparing-all-inputs", Status: model.ImageTaskPreparing, CreatedAt: "2026-09-16T00:00:00Z", UpdatedAt: "2026-09-16T00:00:00Z"}
+	if err := database.Create(&task).Error; err != nil {
+		t.Fatal(err)
+	}
+	inputs := []model.ImageGenerationTaskInput{
+		{ID: "input-ready", TaskID: task.ID, Position: 0, PreparationStatus: "ready"},
+		{ID: "input-copying", TaskID: task.ID, Position: 1, PreparationStatus: "copying"},
+	}
+	if err := database.Create(&inputs).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := QueuePreparedImageGenerationTask(task.ID, `[]`, "2026-09-16T00:00:01Z"); err == nil {
+		t.Fatal("task queued while one input was still copying")
+	}
+	stored, found, err := GetImageGenerationTask(task.ID)
+	if err != nil || !found || stored.Status != model.ImageTaskPreparing {
+		t.Fatalf("task after rejected queue = %#v, found=%t, err=%v", stored, found, err)
+	}
+}
+
 func TestCreateImageGenerationTaskRejectsDifferentOrMissingHashForHashedTask(t *testing.T) {
 	useImageTaskTestDB(t)
 	item := model.ImageGenerationTask{ID: "hashed-image", OwnerUID: "owner", ClientRequestID: "client", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskQueued, OperationLogID: "hashed-image-operation"}

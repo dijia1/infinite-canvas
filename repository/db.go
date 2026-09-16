@@ -43,6 +43,7 @@ func DB() (*gorm.DB, error) {
 			&model.Media{},
 			&model.MediaUploadIntent{},
 			&model.ImageGenerationTask{},
+			&model.ImageGenerationTaskInput{},
 			&model.VideoGenerationTask{},
 			&model.PrivateFolder{},
 			&model.PublicFolder{},

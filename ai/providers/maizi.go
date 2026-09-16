@@ -8,18 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
-	"mime/multipart"
 	"net/http"
-	"net/textproto"
-	"path/filepath"
 	"strings"
 
 	"github.com/basketikun/infinite-canvas/ai"
 )
 
 const maiziBaseURL = "https://www.maizitech.xyz/v1"
-const maiziMaskedEditURL = "https://www.maizitech.xyz/v2/images/edits"
 
 type maiziConfig struct {
 	APIKey string `json:"apiKey"`
@@ -27,9 +22,8 @@ type maiziConfig struct {
 }
 
 type maiziProvider struct {
-	config     maiziConfig
-	client     *http.Client
-	editClient *http.Client
+	config maiziConfig
+	client *http.Client
 }
 
 type maiziTaskCreateResponse struct {
@@ -45,19 +39,6 @@ type maiziTaskResponse struct {
 	Progress   int      `json:"progress"`
 	ResultURLs []string `json:"result_urls"`
 	Error      string   `json:"error_msg"`
-}
-
-type maiziV2EditResponse struct {
-	Data []struct {
-		URL   string `json:"url"`
-		Error string `json:"error"`
-	} `json:"data"`
-}
-
-type maiziV2PendingResponse struct {
-	TaskID  string `json:"task_id"`
-	Status  string `json:"status"`
-	Message string `json:"message"`
 }
 
 type maiziError struct{ message string }
@@ -148,7 +129,7 @@ func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
 	if config.APIKey == "" || config.Model == "" {
 		return nil, maiziError{message: "请填写 MaiziAI API Key 和模型名称"}
 	}
-	return &maiziProvider{config: config, client: &http.Client{}, editClient: &http.Client{}}, nil
+	return &maiziProvider{config: config, client: &http.Client{}}, nil
 }
 
 func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
@@ -159,10 +140,7 @@ func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.I
 }
 
 func (provider *maiziProvider) SummarizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequestSummary, error) {
-	if request.Mask != nil {
-		return provider.summarizeMaskedEdit(request.Request, request.References, *request.Mask), nil
-	}
-	body, err := marshalRedactedJSON(provider.v1ImageTaskBody(request.Request, request.References, true))
+	body, err := marshalRedactedJSON(provider.v1ImageTaskBody(request.Request, request.References, true, request.Mask))
 	if err != nil {
 		return ai.ImageTaskRequestSummary{}, err
 	}
@@ -181,10 +159,7 @@ func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.
 }
 
 func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference, mask *ai.ImageReference) (ai.ImageTask, error) {
-	if mask != nil {
-		return provider.createMaskedEdit(ctx, request, references, *mask)
-	}
-	data, err := json.Marshal(provider.v1ImageTaskBody(request, references, false))
+	data, err := json.Marshal(provider.v1ImageTaskBody(request, references, false, mask))
 	if err != nil {
 		return ai.ImageTask{}, err
 	}
@@ -218,7 +193,7 @@ func normalizeMaiziImageTaskStatus(rawStatus, errorMessage string) (string, stri
 	}
 }
 
-func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, references []ai.ImageReference, redacted bool) map[string]any {
+func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, references []ai.ImageReference, redacted bool, masks ...*ai.ImageReference) map[string]any {
 	body := map[string]any{"model": provider.config.Model, "prompt": request.Prompt}
 	outputFormat, background := maiziImageOutput(request)
 	body["output_format"] = outputFormat
@@ -235,150 +210,29 @@ func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, referenc
 	if len(references) > 0 {
 		images := make([]string, 0, len(references))
 		for _, reference := range references {
-			contentType := normalizedMaiziReferenceContentType(reference)
-			data := "<base64>"
-			if !redacted {
-				data = base64.StdEncoding.EncodeToString(reference.Data)
-			}
-			images = append(images, "data:"+contentType+";base64,"+data)
+			images = append(images, maiziImageReferenceValue(reference, redacted))
 		}
 		body["images"] = images
+	}
+	if len(masks) > 0 && masks[0] != nil {
+		body["mask_url"] = maiziImageReferenceValue(*masks[0], redacted)
 	}
 	return body
 }
 
-func (provider *maiziProvider) createMaskedEdit(ctx context.Context, request ai.ImageRequest, references []ai.ImageReference, mask ai.ImageReference) (ai.ImageTask, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	for _, field := range [][2]string{
-		{"model", provider.config.Model},
-		{"prompt", request.Prompt},
-		{"response_format", "url"},
-	} {
-		if err := writeMaiziMultipartField(writer, field[0], field[1]); err != nil {
-			return ai.ImageTask{}, err
+func maiziImageReferenceValue(reference ai.ImageReference, redacted bool) string {
+	if strings.TrimSpace(reference.URL) != "" {
+		if redacted {
+			return "<signed-url>"
 		}
-	}
-	if request.Size != "" {
-		if err := writeMaiziMultipartField(writer, "size", request.Size); err != nil {
-			return ai.ImageTask{}, err
-		}
-	}
-	if request.Resolution != "" {
-		if err := writeMaiziMultipartField(writer, "resolution", maiziResolution(request.Resolution)); err != nil {
-			return ai.ImageTask{}, err
-		}
-	}
-	outputFormat, background := maiziImageOutput(request)
-	if err := writeMaiziMultipartField(writer, "output_format", outputFormat); err != nil {
-		return ai.ImageTask{}, err
-	}
-	if err := writeMaiziMultipartField(writer, "background", background); err != nil {
-		return ai.ImageTask{}, err
-	}
-	if request.Quality != "" && request.Quality != "auto" {
-		if err := writeMaiziMultipartField(writer, "quality", request.Quality); err != nil {
-			return ai.ImageTask{}, err
-		}
-	}
-	for _, reference := range references {
-		if err := writeMaiziMultipartImage(writer, "image", reference); err != nil {
-			return ai.ImageTask{}, err
-		}
-	}
-	if err := writeMaiziMultipartImage(writer, "mask", mask); err != nil {
-		return ai.ImageTask{}, err
-	}
-	if err := writer.Close(); err != nil {
-		return ai.ImageTask{}, err
-	}
-	contentType := writer.FormDataContentType()
-
-	httpRequest, err := http.NewRequestWithContext(ctx, http.MethodPost, maiziMaskedEditURL, &body)
-	if err != nil {
-		return ai.ImageTask{}, err
-	}
-	httpRequest.Header.Set("Authorization", "Bearer "+provider.config.APIKey)
-	httpRequest.Header.Set("Content-Type", contentType)
-	response, err := provider.editClient.Do(httpRequest)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return ai.ImageTask{}, maiziError{message: "MaiziAI 任务等待超时"}
-		}
-		return ai.ImageTask{}, maiziError{message: "MaiziAI 请求失败"}
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(response.Body)
-	if err != nil {
-		return ai.ImageTask{}, err
-	}
-	switch response.StatusCode {
-	case http.StatusOK:
-		return parseMaiziV2CompletedEdit(data)
-	case http.StatusAccepted:
-		var pending maiziV2PendingResponse
-		if err := json.Unmarshal(data, &pending); err != nil || strings.TrimSpace(pending.TaskID) == "" {
-			return ai.ImageTask{}, maiziError{message: "MaiziAI 响应无效"}
-		}
-		status, message := normalizeMaiziImageTaskStatus(pending.Status, "")
-		return ai.ImageTask{ID: strings.TrimSpace(pending.TaskID), Status: status, Error: message}, nil
-	default:
-		return ai.ImageTask{}, maiziUpstreamError(response.StatusCode, data)
-	}
-}
-
-func (provider *maiziProvider) summarizeMaskedEdit(request ai.ImageRequest, references []ai.ImageReference, mask ai.ImageReference) ai.ImageTaskRequestSummary {
-	fields := make([]ai.ImageTaskRequestSummaryField, 0, len(references)+8)
-	for _, field := range [][2]string{{"model", provider.config.Model}, {"prompt", request.Prompt}, {"response_format", "url"}} {
-		fields = append(fields, ai.ImageTaskRequestSummaryField{Name: field[0], Value: field[1]})
-	}
-	if request.Size != "" {
-		fields = append(fields, ai.ImageTaskRequestSummaryField{Name: "size", Value: request.Size})
-	}
-	if request.Resolution != "" {
-		fields = append(fields, ai.ImageTaskRequestSummaryField{Name: "resolution", Value: maiziResolution(request.Resolution)})
-	}
-	outputFormat, background := maiziImageOutput(request)
-	fields = append(fields, ai.ImageTaskRequestSummaryField{Name: "output_format", Value: outputFormat}, ai.ImageTaskRequestSummaryField{Name: "background", Value: background})
-	if request.Quality != "" && request.Quality != "auto" {
-		fields = append(fields, ai.ImageTaskRequestSummaryField{Name: "quality", Value: request.Quality})
-	}
-	for _, reference := range references {
-		fields = append(fields, maiziMultipartSummaryField("image", reference))
-	}
-	fields = append(fields, maiziMultipartSummaryField("mask", mask))
-	return ai.ImageTaskRequestSummary{Method: http.MethodPost, Endpoint: maiziMaskedEditURL, ContentType: "multipart/form-data", MultipartFields: fields}
-}
-
-func writeMaiziMultipartField(writer *multipart.Writer, name, value string) error {
-	return writer.WriteField(name, value)
-}
-
-func writeMaiziMultipartImage(writer *multipart.Writer, field string, reference ai.ImageReference) error {
-	filename := filepath.Base(strings.TrimSpace(reference.Name))
-	if filename == "" || filename == "." {
-		filename = "image.png"
+		return reference.URL
 	}
 	contentType := normalizedMaiziReferenceContentType(reference)
-	header := make(textproto.MIMEHeader)
-	header.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": field, "filename": filename}))
-	header.Set("Content-Type", contentType)
-	part, err := writer.CreatePart(header)
-	if err != nil {
-		return err
+	data := "<base64>"
+	if !redacted {
+		data = base64.StdEncoding.EncodeToString(reference.Data)
 	}
-	if _, err = part.Write(reference.Data); err != nil {
-		return err
-	}
-	return nil
-}
-
-func maiziMultipartSummaryField(field string, reference ai.ImageReference) ai.ImageTaskRequestSummaryField {
-	filename := filepath.Base(strings.TrimSpace(reference.Name))
-	if filename == "" || filename == "." {
-		filename = "image.png"
-	}
-	return ai.ImageTaskRequestSummaryField{Name: field, Value: "<base64>", Filename: filename, ContentType: normalizedMaiziReferenceContentType(reference), Bytes: len(reference.Data)}
+	return "data:" + contentType + ";base64," + data
 }
 
 func normalizedMaiziReferenceContentType(reference ai.ImageReference) string {
@@ -387,26 +241,6 @@ func normalizedMaiziReferenceContentType(reference ai.ImageReference) string {
 		return "application/octet-stream"
 	}
 	return contentType
-}
-
-func parseMaiziV2CompletedEdit(data []byte) (ai.ImageTask, error) {
-	var response maiziV2EditResponse
-	if err := json.Unmarshal(data, &response); err != nil || len(response.Data) == 0 {
-		return ai.ImageTask{}, maiziError{message: "MaiziAI 响应无效"}
-	}
-	urls := make([]string, 0, len(response.Data))
-	for _, item := range response.Data {
-		if message := strings.TrimSpace(item.Error); message != "" {
-			return ai.ImageTask{Status: ai.ImageTaskStatusFailed, Error: message}, nil
-		}
-		if url := strings.TrimSpace(item.URL); url != "" {
-			urls = append(urls, url)
-		}
-	}
-	if len(urls) == 0 {
-		return ai.ImageTask{}, maiziError{message: "MaiziAI 响应无效"}
-	}
-	return ai.ImageTask{Status: ai.ImageTaskStatusCompleted, Progress: 100, ResultURLs: urls}, nil
 }
 
 func maiziImageOutput(request ai.ImageRequest) (string, string) {

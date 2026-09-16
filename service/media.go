@@ -174,12 +174,17 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 	if metadata.Bytes != intent.ExpectedBytes || normalizedImageContentType(metadata.ContentType) != intent.ContentType {
 		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
 	}
-	prefix, err := store.ReadPrefix(ctx, intent.ObjectKey, 512)
+	var prefix []byte
+	if versioned, ok := store.(versionedImageStore); ok && metadata.VersionID != "" && metadata.ETag != "" {
+		prefix, err = versioned.ReadPrefixVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag, 512)
+	} else {
+		prefix, err = store.ReadPrefix(ctx, intent.ObjectKey, 512)
+	}
 	if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
 		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
 	}
 	completedAt := time.Now().UTC()
-	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: model.MediaSourceUpload, ObjectKey: intent.ObjectKey, ContentType: intent.ContentType, Bytes: intent.ExpectedBytes, Filename: intent.Filename, Title: strings.TrimSuffix(intent.Filename, filepath.Ext(intent.Filename)), CreatedAt: completedAt.Format(time.RFC3339)}
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: model.MediaSourceUpload, ObjectKey: intent.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: intent.ContentType, Bytes: intent.ExpectedBytes, Filename: intent.Filename, Title: strings.TrimSuffix(intent.Filename, filepath.Ext(intent.Filename)), CreatedAt: completedAt.Format(time.RFC3339)}
 	if intent.ContentType == "video/mp4" {
 		intent, err = repository.ClaimVideoUploadCompletion(intent.ID, user.UID, privateImageObjectKey(user.UID, model.MediaSourceUpload, "mp4", completedAt), time.Now().UTC())
 		if err != nil {
@@ -219,6 +224,10 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 		if err := putVideoFile(ctx, store, item.ObjectKey, file); err != nil {
 			return MediaAccess{}, false, err
 		}
+		if metadata, err = store.Head(ctx, item.ObjectKey); err != nil {
+			return MediaAccess{}, false, err
+		}
+		item.ObjectVersionID, item.ObjectETag = metadata.VersionID, metadata.ETag
 	}
 	updatedIntent, media, created, err := repository.FinalizeMediaUploadIntent(intent.ID, user.UID, time.Now().UTC().Format(time.RFC3339Nano), item, intent.FinalizeClaimID)
 	// The intent owns the reserved object until publication or expiry. A DB
@@ -311,8 +320,13 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	if err := store.Put(ctx, key, data, contentType); err != nil {
 		return MediaAccess{}, fmt.Errorf("保存图片失败: %w", err)
 	}
+	metadata, err := store.Head(ctx, key)
+	if err != nil {
+		_ = store.Delete(ctx, key)
+		return MediaAccess{}, fmt.Errorf("读取已保存图片版本失败: %w", err)
+	}
 	width, height := imageDimensions(data)
-	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
+	item := model.Media{ID: newID("media"), OwnerUID: user.UID, Source: source, ObjectKey: key, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: contentType, Bytes: int64(len(data)), Width: width, Height: height, Filename: filepath.Base(filename), Title: strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename)), CreatedAt: now()}
 	saved, err := repository.SaveMedia(item, ctx)
 	if err != nil {
 		_ = store.Delete(ctx, key)

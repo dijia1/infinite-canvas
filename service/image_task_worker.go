@@ -21,6 +21,8 @@ const (
 	imageTaskLeaseDuration  = 45 * time.Second
 	imageTaskLeaseInterval  = 10 * time.Second
 	imageTaskRetention      = 30 * 24 * time.Hour
+	imageTaskSignedURLTTL   = 2*time.Hour + 10*time.Minute
+	imageTaskMinURLLifetime = 2 * time.Hour
 )
 
 func parseImageTaskWorkerConcurrency(value int) (int, error) {
@@ -59,6 +61,11 @@ func StartImageTaskWorker(parent context.Context) (func(), error) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	var waitGroup sync.WaitGroup
+	waitGroup.Add(1)
+	go func() {
+		defer waitGroup.Done()
+		runImageTaskPreparer(ctx, concurrency)
+	}()
 	for index := 0; index < concurrency; index++ {
 		waitGroup.Add(1)
 		go func(workerID int) {
@@ -178,7 +185,7 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 		return
 	}
 	if providerTaskID == "" {
-		loaded, readErr := ReadImageTaskInputs(ctx, inputs)
+		loaded, readErr := loadProviderImageTaskInputs(ctx, item, inputs)
 		if readErr != nil {
 			failImageTask(ctx, item, readErr)
 			return
@@ -201,7 +208,7 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 				return
 			}
 		}
-		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskSubmitting, "updated_at": now()}); err != nil {
+		if err := repository.BeginImageGenerationTaskSubmission(item, now()); err != nil {
 			log.Printf("image task %s enter submitting state failed: %v", item.ID, err)
 			return
 		}
@@ -276,6 +283,50 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 	}
 }
 
+func loadProviderImageTaskInputs(ctx context.Context, item model.ImageGenerationTask, legacy []ImageTaskInput) (ImageTaskInputs, error) {
+	rows, err := repository.ListImageGenerationTaskInputs(item.ID)
+	if err != nil {
+		return ImageTaskInputs{}, err
+	}
+	if len(rows) == 0 {
+		return ReadImageTaskInputs(ctx, legacy)
+	}
+	store, err := taskInputStoreFactory()
+	if err != nil {
+		return ImageTaskInputs{}, err
+	}
+	versioned, ok := store.(versionedImageStore)
+	if !ok {
+		return ImageTaskInputs{}, errors.New("当前存储不支持版本化图片快照")
+	}
+	loaded := ImageTaskInputs{References: make([]ai.ImageReference, 0, len(rows))}
+	for _, row := range rows {
+		if row.PreparationStatus != "ready" || row.SnapshotObjectKey == "" || row.SnapshotVersionID == "" {
+			return ImageTaskInputs{}, errors.New("图片任务输入尚未准备完成")
+		}
+		url, expiresAt, err := versioned.SignedURLVersion(ctx, row.SnapshotObjectKey, row.SnapshotVersionID, imageTaskSignedURLTTL)
+		if err != nil {
+			return ImageTaskInputs{}, err
+		}
+		if !expiresAt.IsZero() && expiresAt.Before(time.Now().UTC().Add(imageTaskMinURLLifetime)) {
+			return ImageTaskInputs{}, errors.New("参考图片签名有效期不足")
+		}
+		reference := ai.ImageReference{Name: row.Name, ContentType: row.ContentType, URL: url}
+		switch row.Purpose {
+		case "image":
+			loaded.References = append(loaded.References, reference)
+		case "mask":
+			if loaded.Mask != nil {
+				return ImageTaskInputs{}, errors.New("图片任务包含多个遮罩")
+			}
+			loaded.Mask = &reference
+		default:
+			return ImageTaskInputs{}, errors.New("图片任务输入类型无效")
+		}
+	}
+	return loaded, nil
+}
+
 func imageTaskProviderFailed(task ai.ImageTask) bool {
 	return strings.ToLower(strings.TrimSpace(task.Status)) == ai.ImageTaskStatusFailed
 }
@@ -339,6 +390,9 @@ func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTas
 	if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
 		log.Printf("image task %s input cleanup failed: %v", item.ID, err)
 	}
+	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
+		log.Printf("image task %s snapshot cleanup failed: %v", item.ID, err)
+	}
 }
 
 func providerImageResults(urls []string) []ai.ImageResult {
@@ -364,6 +418,9 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 		if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
 			log.Printf("image task %s input cleanup failed: %v", item.ID, err)
 		}
+	}
+	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
+		log.Printf("image task %s snapshot cleanup failed: %v", item.ID, err)
 	}
 	updateImageTaskOperationLog(item, model.OperationStatusFailure, nil, message)
 }
@@ -448,12 +505,26 @@ func runImageTaskRetention(ctx context.Context) {
 }
 
 func cleanupImageTasks(current time.Time) {
+	terminal, terminalErr := repository.ListTerminalImageGenerationTasksWithInputs()
+	if terminalErr != nil {
+		log.Printf("image task snapshot cleanup query failed: %v", terminalErr)
+	} else {
+		for _, item := range terminal {
+			if err := cleanupImageTaskSnapshotPrefix(context.Background(), item.ID); err != nil {
+				log.Printf("image task %s periodic snapshot cleanup failed: %v", item.ID, err)
+			}
+		}
+	}
 	items, err := repository.ListExpiredTerminalImageGenerationTasks(current.Add(-imageTaskRetention).Format(time.RFC3339))
 	if err != nil {
 		log.Printf("image task retention query failed: %v", err)
 		return
 	}
 	for _, item := range items {
+		if err := cleanupImageTaskSnapshotPrefix(context.Background(), item.ID); err != nil {
+			log.Printf("image task %s retention snapshot cleanup failed: %v", item.ID, err)
+			continue
+		}
 		inputs, inputErr := imageTaskInputs(item)
 		if inputErr == nil {
 			if err := DeleteImageTaskInputs(context.Background(), inputs); err != nil {

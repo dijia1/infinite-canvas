@@ -40,7 +40,7 @@ func (store *fakeImageStore) PresignPut(context.Context, string, string) (string
 	return "", time.Time{}, nil
 }
 func (store *fakeImageStore) Head(context.Context, string) (imageObjectMetadata, error) {
-	return imageObjectMetadata{}, nil
+	return imageObjectMetadata{ETag: "stored-etag", VersionID: "stored-version"}, nil
 }
 func (store *fakeImageStore) ReadPrefix(context.Context, string, int64) ([]byte, error) {
 	return nil, nil

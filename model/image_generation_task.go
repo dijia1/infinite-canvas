@@ -9,6 +9,7 @@ import (
 type ImageGenerationTaskStatus string
 
 const (
+	ImageTaskPreparing  ImageGenerationTaskStatus = "preparing"
 	ImageTaskQueued     ImageGenerationTaskStatus = "queued"
 	ImageTaskSubmitting ImageGenerationTaskStatus = "submitting"
 	ImageTaskRunning    ImageGenerationTaskStatus = "running"
@@ -52,4 +53,26 @@ type ImageGenerationTask struct {
 	CreatedAt           string                    `json:"createdAt" gorm:"index"`
 	UpdatedAt           string                    `json:"updatedAt" gorm:"index"`
 	FinishedAt          string                    `json:"finishedAt,omitempty" gorm:"index"`
+}
+
+type ImageGenerationTaskInput struct {
+	ID                string     `json:"-" gorm:"primaryKey"`
+	TaskID            string     `json:"-" gorm:"uniqueIndex:idx_image_task_input_position;index"`
+	Position          int        `json:"-" gorm:"uniqueIndex:idx_image_task_input_position"`
+	Purpose           string     `json:"-"`
+	Name              string     `json:"-"`
+	SourceMediaID     string     `json:"-" gorm:"index"`
+	SourceObjectKey   string     `json:"-"`
+	SourceETag        string     `json:"-" gorm:"column:source_etag"`
+	SourceVersionID   string     `json:"-"`
+	SnapshotObjectKey string     `json:"-" gorm:"index"`
+	SnapshotVersionID string     `json:"-"`
+	SnapshotETag      string     `json:"-" gorm:"column:snapshot_etag"`
+	ContentType       string     `json:"-"`
+	Bytes             int64      `json:"-"`
+	CopyStartedAt     *time.Time `json:"-"`
+	PreparationStatus string     `json:"-" gorm:"index"`
+	CleanupKeysJSON   string     `json:"-" gorm:"type:text"`
+	CreatedAt         string     `json:"-"`
+	UpdatedAt         string     `json:"-"`
 }

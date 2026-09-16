@@ -667,16 +667,8 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	}
 
 	editRequestID := "workflow-public-image-edit-request"
-	editBody := &bytes.Buffer{}
-	editWriter := multipart.NewWriter(editBody)
-	if err := editWriter.WriteField("clientRequestId", " "+editRequestID+" "); err != nil {
-		t.Fatal(err)
-	}
-	if err := editWriter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	editRequest := httptest.NewRequest(http.MethodPost, "/api/v1/images/edits", editBody)
-	editRequest.Header.Set("Content-Type", editWriter.FormDataContentType())
+	editRequest := httptest.NewRequest(http.MethodPost, "/api/v1/images/edits", strings.NewReader(`{"clientRequestId":" `+editRequestID+` "}`))
+	editRequest.Header.Set("Content-Type", "application/json")
 	editRequest.Header.Set("X-Portal-User-Uid", owner)
 	editResponse := httptest.NewRecorder()
 	New().ServeHTTP(editResponse, editRequest)
@@ -701,71 +693,58 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	}
 }
 
-func TestImageEditPersistsPNGMaskAndOutputSnapshot(t *testing.T) {
+func TestImageEditPersistsVersionedMediaSnapshotPlan(t *testing.T) {
 	saveServiceSettingsForTest(t, model.Settings{AI: model.AISettings{
 		Providers:       []model.AIProvider{{ID: "async-maizi-mask", Name: "Maizi", Type: "maizi-image", Enabled: true, AspectRatios: []string{"1:1", "16:9"}, ImagePrices: []model.ImageResolutionPrice{{Resolution: "2K", Amount: decimal.Zero}}, Config: json.RawMessage(`{"apiKey":"test-key","model":"gpt-image-2"}`)}},
 		ImageProviderID: "async-maizi-mask",
 	}})
 	clientRequestID := "async-mask-" + time.Now().Format("20060102150405.000000000")
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	_ = writer.WriteField("clientRequestId", clientRequestID)
-	_ = writer.WriteField("prompt", "只替换白色遮罩区域")
-	_ = writer.WriteField("n", "1")
-	_ = writer.WriteField("resolution", "2K")
-	_ = writer.WriteField("output_format", "png")
-	_ = writer.WriteField("background", "transparent")
+	owner := "async-mask-owner"
+	referenceIDs := make([]string, 0, 7)
 	for index := 0; index < 7; index++ {
-		referenceHeader := textproto.MIMEHeader{}
-		referenceHeader.Set("Content-Disposition", fmt.Sprintf(`form-data; name="image"; filename="reference-%d.png"`, index))
-		referenceHeader.Set("Content-Type", "image/png")
-		reference, err := writer.CreatePart(referenceHeader)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := reference.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
+		id := fmt.Sprintf("async-mask-reference-%d-%d", index, time.Now().UnixNano())
+		referenceIDs = append(referenceIDs, id)
+		if _, err := repository.SaveMedia(model.Media{ID: id, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "images/" + id + ".png", ObjectVersionID: "reference-version", ObjectETag: "reference-etag", ContentType: "image/png", Bytes: 8, Filename: fmt.Sprintf("reference-%d.png", index), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	maskHeader := textproto.MIMEHeader{}
-	maskHeader.Set("Content-Disposition", `form-data; name="mask"; filename="mask.png"`)
-	maskHeader.Set("Content-Type", "image/png")
-	mask, err := writer.CreatePart(maskHeader)
+	maskID := fmt.Sprintf("async-mask-media-%d", time.Now().UnixNano())
+	if _, err := repository.SaveMedia(model.Media{ID: maskID, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "images/" + maskID + ".png", ObjectVersionID: "mask-version", ObjectETag: "mask-etag", ContentType: "image/png", Bytes: 8, Filename: "mask.png", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(map[string]any{"clientRequestId": clientRequestID, "prompt": "只替换白色遮罩区域", "n": 1, "resolution": "2K", "output_format": "png", "background": "transparent", "referenceMediaIds": referenceIDs, "maskMediaId": maskID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mask.Write([]byte("\x89PNG\r\n\x1a\n")); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/edits", body)
-	request.Header.Set("Content-Type", writer.FormDataContentType())
-	request.Header.Set("X-Portal-User-Uid", "async-mask-owner")
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/edits", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", owner)
 	response := httptest.NewRecorder()
 	New().ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create masked image task = %d/%s", response.Code, response.Body.String())
 	}
-	task, found, err := repository.GetImageGenerationTaskByClientRequest("async-mask-owner", clientRequestID)
+	task, found, err := repository.GetImageGenerationTaskByClientRequest(owner, clientRequestID)
 	if err != nil || !found {
 		t.Fatalf("saved masked task = %#v, found=%t, err=%v", task, found, err)
 	}
 	if task.OutputFormat != "png" || task.Background != "transparent" {
 		t.Fatalf("task output = %q/%q, want png/transparent", task.OutputFormat, task.Background)
 	}
-	var inputs []service.ImageTaskInput
-	if err := json.Unmarshal([]byte(task.ReferencesJSON), &inputs); err != nil {
+	inputs, err := repository.ListImageGenerationTaskInputs(task.ID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if len(inputs) != 8 || inputs[7].Purpose != "mask" {
 		t.Fatalf("task inputs = %#v, want seven images and one mask", inputs)
 	}
 	for index := 0; index < 7; index++ {
-		if inputs[index].Purpose != "image" || inputs[index].Name != fmt.Sprintf("reference-%d.png", index) {
+		if inputs[index].Purpose != "image" || inputs[index].Name != fmt.Sprintf("reference-%d.png", index) || inputs[index].SourceVersionID != "reference-version" {
 			t.Fatalf("task image %d = %#v, want ordered reference", index, inputs[index])
 		}
+	}
+	if inputs[7].SourceMediaID != maskID || inputs[7].SourceVersionID != "mask-version" {
+		t.Fatalf("task mask = %#v, want version-bound mask media", inputs[7])
 	}
 }
 

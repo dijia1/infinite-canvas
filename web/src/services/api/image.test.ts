@@ -3,7 +3,7 @@ import test from "node:test";
 
 import axios from "axios";
 
-import { getImageGenerationTask, ImageRequestRejectedError, requestGeneration, uploadUserImage } from "./image";
+import { getImageGenerationTask, ImageRequestRejectedError, requestEdit, requestGeneration, uploadUserImage } from "./image";
 
 type AxiosPost = typeof axios.post;
 
@@ -150,6 +150,28 @@ test("classifies an image generation 409 as an explicit request rejection", asyn
             requestGeneration({ quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", background: "auto" } as never, "prompt", "client"),
             (error: unknown) => error instanceof ImageRequestRejectedError && error.message.includes("不同生成请求"),
         );
+    } finally {
+        restorePost();
+    }
+});
+
+test("submits image edits as JSON media identities without image bytes", async () => {
+    let submitted: unknown;
+    const restorePost = withAxiosPost((async (url: string, body: unknown) => {
+        assert.match(url, /\/images\/edits$/);
+        submitted = body;
+        return { data: { code: 0, data: { id: "task-1", clientRequestId: "client-1", status: "queued", progress: 0, images: [] } } };
+    }) as AxiosPost);
+    try {
+        await requestEdit(
+            { quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", background: "auto" } as never,
+            "edit prompt",
+            [{ id: "reference", name: "reference.png", type: "image/png", dataUrl: "data:image/png;base64,secret", mediaId: "media-1" }],
+            "client-1",
+        );
+        assert.ok(!(submitted instanceof FormData));
+        assert.deepEqual((submitted as { referenceMediaIds?: string[] }).referenceMediaIds, ["media-1"]);
+        assert.equal(JSON.stringify(submitted).includes("base64"), false);
     } finally {
         restorePost();
     }

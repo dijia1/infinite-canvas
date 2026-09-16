@@ -132,6 +132,13 @@ func PreparePublicImageDeletion(publicID string, current time.Time, actorUID ...
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&media, "id = ?", public.MediaID).Error; err != nil {
 			return err
 		}
+		preparing, err := imageTaskPreparingMediaReferenced(tx, media.ID)
+		if err != nil {
+			return err
+		}
+		if preparing {
+			return errors.New("素材正在被图片任务准备使用")
+		}
 		workflowHeld, err := workflowMediaReferenced(tx, media.ID)
 		if err != nil {
 			return err

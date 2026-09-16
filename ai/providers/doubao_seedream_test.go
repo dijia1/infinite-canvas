@@ -119,6 +119,34 @@ func TestDoubaoSeedreamNormalizesAndSubmitsACompleteImageRequest(t *testing.T) {
 	}
 }
 
+func TestDoubaoSeedreamSubmitsVersionBoundReferenceURL(t *testing.T) {
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	http.DefaultTransport = roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["image"] != "https://signed.example/source.png?versionId=version-1" {
+			t.Fatalf("request image = %#v", body["image"])
+		}
+		return jsonResponse(`{"data":[{"url":"https://images.example/result.png"}]}`), nil
+	})
+
+	typeInfo, _ := ai.Type("doubao-seedream-5-pro")
+	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"seedream"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = provider.(ai.ImageTaskProvider).CreateImageTask(context.Background(), ai.ImageTaskRequest{
+		Request:    ai.ImageRequest{Prompt: "编辑", Size: "2K", OutputFormat: "png", Background: "opaque"},
+		References: []ai.ImageReference{{ContentType: "image/png", URL: "https://signed.example/source.png?versionId=version-1"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestDoubaoSeedreamRejectsUnsupportedMaskAndReferenceCounts(t *testing.T) {
 	typeInfo, _ := ai.Type("doubao-seedream-5-pro")
 	provider, err := typeInfo.New(json.RawMessage(`{"apiKey":"test-key","model":"doubao-seedream-5-0-pro-260628"}`))
