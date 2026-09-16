@@ -214,10 +214,6 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 		}
 		item.Status = model.ImageTaskSubmitting
 		created, createErr := provider.CreateImageTask(ctx, providerRequest)
-		if createErr != nil {
-			markImageTaskUncertain(item, "图片提交结果不确定，请核对供应商任务，系统不会自动重复生成")
-			return
-		}
 		providerTaskID = strings.TrimSpace(created.ID)
 		if providerTaskID != "" {
 			if err := repository.SetImageGenerationTaskProviderTaskID(item, providerTaskID, now()); err != nil {
@@ -226,6 +222,22 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			}
 			item.ProviderTaskID = providerTaskID
 			item.Status = model.ImageTaskRunning
+		}
+		if createErr != nil {
+			if providerTaskID == "" {
+				var submission *ai.ImageSubmissionError
+				if errors.As(createErr, &submission) && submission.NotAccepted {
+					failImageTask(ctx, item, submission)
+				} else {
+					markImageTaskUncertain(item, "图片提交结果不确定，请核对供应商任务，系统不会自动重复生成")
+				}
+				return
+			}
+			// An accepted ID takes precedence over a contradictory submission error.
+			// Preserve a definite terminal result; otherwise query the original task.
+			if created.Status != ai.ImageTaskStatusFailed && created.Status != ai.ImageTaskStatusCompleted {
+				created.Status = ai.ImageTaskStatusRunning
+			}
 		}
 		if urls, failure, terminal := imageTaskTerminalResult(created); terminal {
 			if failure != nil {

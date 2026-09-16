@@ -30,6 +30,7 @@ type maiziTaskCreateResponse struct {
 	Data []struct {
 		TaskID string `json:"task_id"`
 		Status string `json:"status"`
+		Error  string `json:"error_msg"`
 	} `json:"data"`
 }
 
@@ -134,7 +135,7 @@ func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
 
 func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
 	if len(request.References) > 0 && strings.TrimSpace(request.Request.Prompt) == "" {
-		return ai.ImageTask{}, maiziError{message: "提示词不能为空"}
+		return ai.ImageTask{}, &ai.ImageSubmissionError{Message: "提示词不能为空", NotAccepted: true}
 	}
 	return provider.createAsyncTask(ctx, request.Request, request.References, request.Mask)
 }
@@ -164,14 +165,26 @@ func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.I
 		return ai.ImageTask{}, err
 	}
 	var result maiziTaskCreateResponse
-	if err := provider.doJSON(ctx, http.MethodPost, maiziBaseURL+"/images/generations", data, &result); err != nil {
-		return ai.ImageTask{}, err
+	submitErr := provider.doJSON(ctx, http.MethodPost, maiziBaseURL+"/images/generations", data, &result)
+	task := ai.ImageTask{}
+	if len(result.Data) > 0 {
+		task.ID = strings.TrimSpace(result.Data[0].TaskID)
+		task.Status, task.Error = normalizeMaiziImageTaskStatus(result.Data[0].Status, result.Data[0].Error)
+		task.Error = provider.safeSubmissionReason(task.Error, request, references, mask)
 	}
-	if len(result.Data) == 0 || result.Data[0].TaskID == "" {
-		return ai.ImageTask{}, maiziError{message: "MaiziAI 未返回任务 ID"}
+	if submitErr != nil {
+		var outcome *ai.ImageSubmissionError
+		rejected := errors.As(submitErr, &outcome) && outcome.NotAccepted && task.ID == ""
+		message := provider.safeSubmissionReason(submitErr.Error(), request, references, mask)
+		if task.Status == ai.ImageTaskStatusFailed && task.Error == "" {
+			task.Error = message
+		}
+		return task, &ai.ImageSubmissionError{Message: message, NotAccepted: rejected}
 	}
-	status, message := normalizeMaiziImageTaskStatus(result.Data[0].Status, "")
-	return ai.ImageTask{ID: result.Data[0].TaskID, Status: status, Error: message}, nil
+	if task.ID == "" {
+		return task, &ai.ImageSubmissionError{Message: "MaiziAI 未返回任务 ID"}
+	}
+	return task, nil
 }
 
 func normalizeMaiziImageTaskStatus(rawStatus, errorMessage string) (string, string) {
@@ -291,6 +304,17 @@ func (provider *maiziProvider) doJSON(ctx context.Context, method, url string, b
 	data, err := io.ReadAll(response.Body)
 	if err != nil {
 		return err
+	}
+	if created, ok := result.(*maiziTaskCreateResponse); ok {
+		// Parse acceptance evidence even on a non-2xx response, before classifying errors.
+		if err := json.Unmarshal(data, created); err != nil {
+			return &ai.ImageSubmissionError{Message: "MaiziAI 响应无效"}
+		}
+		rejected := maiziExplicitSubmissionRejection(response.StatusCode, data)
+		if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices || rejected {
+			return &ai.ImageSubmissionError{Message: maiziUpstreamError(response.StatusCode, data).Error(), NotAccepted: rejected}
+		}
+		return nil
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return maiziUpstreamError(response.StatusCode, data)

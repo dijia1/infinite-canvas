@@ -154,6 +154,16 @@ const (
 	ImageTaskStatusUncertain = "uncertain"
 )
 
+// ImageSubmissionError distinguishes a definite non-acceptance from an unknown
+// submission outcome. The zero value remains uncertain and must not be retried.
+type ImageSubmissionError struct {
+	Message     string
+	NotAccepted bool
+}
+
+func (e *ImageSubmissionError) Error() string       { return e.Message }
+func (e *ImageSubmissionError) SafeMessage() string { return e.Message }
+
 type ImageTaskProvider interface {
 	CreateImageTask(context.Context, ImageTaskRequest) (ImageTask, error)
 	GetImageTask(context.Context, string) (ImageTask, error)
