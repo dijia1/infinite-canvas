@@ -115,3 +115,60 @@ test("treats an aborted upload request as cancellation even when its client repo
     assert.deepEqual(failures, []);
     assert.equal(controller.isActive("node-1"), false);
 });
+
+test("first uploads, retries and restored uploads share three actual request slots", async () => {
+    const gates: Array<() => void> = [];
+    const started: string[] = [];
+    const completed: string[] = [];
+    let live = 0, peak = 0;
+    const controller = createCanvasLocalImageUploadController({
+        upload: async (file) => {
+            started.push(file.name);
+            peak = Math.max(peak, ++live);
+            await new Promise<void>(resolve => gates.push(resolve));
+            live--;
+            return { mediaId: file.name, url: "remote" };
+        },
+        promote: async image => image,
+        onProgress: () => undefined, onFailed: () => undefined,
+        onCompleted: (_id, _image, remote) => { completed.push(remote.mediaId); },
+    });
+    const start = (nodeId: string, name = nodeId) => controller.start({ nodeId, file: new File(["x"], name), image: localImage, intent: "library" });
+    const tasks = [start("first"), start("retry"), start("restore"), start("queued-cancel"), start("queued")];
+    assert.deepEqual(started, ["first", "retry", "restore"]);
+    controller.cancel("queued-cancel");
+    await tasks[3];
+    // Requests that ignore abort still occupy a slot until they actually settle.
+    tasks.push(start("first", "replacement"));
+    assert.equal(started.length, 3);
+    gates[1](); await tasks[1];
+    assert.deepEqual(started, ["first", "retry", "restore", "queued"]);
+    gates[0](); await tasks[0];
+    assert.equal(started.at(-1), "replacement");
+    gates[2](); gates[3](); gates[4]();
+    await Promise.all(tasks);
+    assert.equal(peak, 3);
+    assert.equal(completed.includes("first"), false);
+    assert.equal(completed.includes("queued-cancel"), false);
+    assert.equal(completed.includes("replacement"), true);
+});
+
+test("dispose settles queued work without starting requests and permits later recovery", async () => {
+    const gates: Array<() => void> = [];
+    let calls = 0;
+    const controller = createCanvasLocalImageUploadController({
+        upload: async () => { calls++; await new Promise<void>(resolve => gates.push(resolve)); return { mediaId: "m", url: "remote" }; },
+        promote: async image => image, onProgress: () => undefined, onFailed: () => undefined, onCompleted: () => undefined,
+    });
+    const start = (nodeId: string) => controller.start({ nodeId, file, image: localImage, intent: "library" });
+    const tasks = [start("a"), start("b"), start("c"), start("d")];
+    controller.dispose();
+    await tasks[3];
+    assert.equal(calls, 3);
+    const resumed = start("restored");
+    assert.equal(calls, 3);
+    gates[0](); await tasks[0];
+    assert.equal(calls, 4);
+    gates[1](); gates[2](); gates[3]();
+    await Promise.all([...tasks, resumed]);
+});
