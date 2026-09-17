@@ -63,6 +63,9 @@ python3 scripts/loadtest/database-snapshot.py "$container_name" "$run_dir/databa
 for users in "${user_stages[@]}"; do
   "$run_dir/loadtest" -mode client -manifest "$run_dir/manifest.json" -out "$run_dir/$users" -users "$users" -ramp 30s -hold 180s -down 30s || result=1
 done
+if [[ "${LOADTEST_CANVAS_RECOVERY:-0}" == "1" ]]; then
+  python3 scripts/loadtest/canvas-recovery.py "$run_dir" || result=1
+fi
 python3 scripts/loadtest/database-snapshot.py "$container_name" "$run_dir/database-after.json"
 python3 scripts/loadtest/finish.py "$run_dir" "$container_name" || result=1
 python3 scripts/loadtest/summarize.py "$run_dir"

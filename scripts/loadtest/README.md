@@ -23,6 +23,16 @@ LOADTEST_USERS=50 LOADTEST_BINARY=/tmp/before-loadtest bash scripts/loadtest/run
 LOADTEST_USERS=50 LOADTEST_BINARY=/tmp/after-loadtest bash scripts/loadtest/run.sh /tmp/loadtest-after
 ```
 
+仅跑 30 用户并追加 Canvas 保存恢复的并发专项：
+
+```sh
+LOADTEST_USERS=30 LOADTEST_CANVAS_RECOVERY=1 bash scripts/loadtest/run.sh /tmp/loadtest-30-recovery
+```
+
+专项在混合负载结束后单独执行，不混入稳态延迟：30 个独立账号同时保存各自的 250 节点画布，共 20 轮，并用相同 request ID 和正文重放已成功但被客户端丢弃的确认；随后在同一账号的一个画布上，分别执行 10 轮 30 会话同请求重放、10 轮不同请求竞争。后两组是同一所有者的多会话，不是跨用户共享写入。每轮通过同步屏障开始并检查实际在途请求峰值；预期竞争返回 409 单独计数。所有成功确认均核对正文及 revision，结束后重新读取验证。记录在 `canvas-recovery/requests.ndjson`、`metrics.ndjson`、`summary.json` 中。
+
+这组专项验证服务端在客户端丢弃确认后的 HTTP 重放语义，不运行真实浏览器刷新或 IndexedDB；浏览器恢复仍应由相应前端行为测试覆盖。
+
 两次必须顺序执行，使用相同 fixture、压测脚本和环境；压测时不要同时构建或跑其他压力任务。`binary-build.txt` 和 `binary-sha256.txt` 记录实际程序，目录内 `baseline.txt` 仅表示运行时仓库 HEAD，不能代替程序版本证明。
 
 脚本创建新的 `postgres:17-alpine` 容器，限制 2 CPU / 1 GiB、使用 Docker 磁盘卷；不使用 tmpfs、不关闭 WAL/fsync。数据库仅绑定 `127.0.0.1` 随机端口，名称固定 `infinite_canvas_test`。程序再创建唯一隔离 schema，拒绝其他主机及数据库。API 为本机独立进程，`GOMAXPROCS=4`；连接池沿用默认 20/10、30 分钟寿命。结束后只移除本次创建的进程、容器和卷，保留结果目录。
@@ -34,7 +44,7 @@ LOADTEST_USERS=50 LOADTEST_BINARY=/tmp/after-loadtest bash scripts/loadtest/run.
 - 50 个独立账号，每人三张 Canvas：30 / 150 / 250 节点，包含图片、配置、文本及连线。按用户分配三种活跃文档尺寸。
 - 每人一个 12 节点 Workflow，两条多输出分支汇合，合计 7 个输出槽。
 - 每人 200 条素材元数据、5 个文件夹、10 条带快照的历史运行。只有 Workflow 的两张输入需要本地小图文件，其余不下载原图。
-- 当前私有素材接口不分页，测试读取的是每账号完整列表；画布库接口也返回该用户三张画布的完整文档。图片节点复用本账号素材，三种尺寸画布分别涉及 15 / 50 / 50 个不同媒体 ID，未覆盖每节点都引用不同原图的最大素材多样性。
+- 当前私有素材接口不分页，测试读取的是每账号完整列表；画布库接口返回该用户三张画布的摘要，详情与保存接口处理完整文档。图片节点复用本账号素材，三种尺寸画布分别涉及 15 / 50 / 50 个不同媒体 ID，未覆盖每节点都引用不同原图的最大素材多样性。
 - 用户比例为普通浏览 50%、Canvas 编辑 30%、Workflow 操作 20%。编辑间隔随机 2～5 秒，发送完整文档并核对响应 revision 和内容，结束后重新读取核对持久化。
 - Workflow 用户最多每分钟创建一次 fake 运行，持续查询运行列表和详情。使用原有 Image Worker 和 Workflow Scheduler。
 - 每档中段额外进行 10 轮同一 Canvas、同一 revision 的双会话竞争写入，必须恰好一项成功、另一项 409，并读回验证胜出者文档。该短暂冲突会在基础用户之外增加最多两个请求。

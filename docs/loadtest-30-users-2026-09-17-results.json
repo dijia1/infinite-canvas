@@ -1,0 +1,884 @@
+{
+  "baseline": "221ad6fd7b5ba9801238d8c0eca42a87dda45729",
+  "environment": {
+    "machine": "MacBookPro18,1",
+    "cpu_logical": 10,
+    "memory_bytes": 34359738368,
+    "docker_cpu": 10,
+    "docker_memory_bytes": 8319504384,
+    "go": "go1.26.6 darwin/arm64",
+    "gomaxprocs": 4,
+    "postgres": "17.11",
+    "postgres_cpu_limit": 2,
+    "postgres_memory_gib": 1,
+    "pool_max_open": 20,
+    "pool_max_idle": 10,
+    "fsync": true,
+    "synchronous_commit": true,
+    "isolated_fake_provider": true,
+    "exit_code": 0
+  },
+  "mixed_load": {
+    "stage": {
+      "down_seconds": 30,
+      "hold_seconds": 180,
+      "ramp_seconds": 30,
+      "scenario_ratio": "50/30/20",
+      "seed": 1000,
+      "start": "2026-09-17T16:02:21.834905+08:00",
+      "users": 30
+    },
+    "checks": {
+      "assertion_failures": null,
+      "end": "2026-09-17T08:06:31.849721Z",
+      "peak_users": 30,
+      "requests": 9843,
+      "users": 30
+    },
+    "workload_all_phases": {
+      "requests": 9747,
+      "rps": 40.6125,
+      "successes": 9747,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 9747
+      },
+      "mean_ms": 3.869149649738379,
+      "p50_ms": 2.348917,
+      "p95_ms": 14.374,
+      "p99_ms": 22.59175,
+      "max_ms": 116.983208,
+      "response_bytes": 158988536
+    },
+    "steady": {
+      "requests": 8225,
+      "rps": 45.69444444444444,
+      "successes": 8225,
+      "expected_business": 0,
+      "unexpected_errors": 0,
+      "http_4xx": 0,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 0,
+      "statuses": {
+        "200": 8225
+      },
+      "mean_ms": 3.8570345167173183,
+      "p50_ms": 2.327625,
+      "p95_ms": 14.303708,
+      "p99_ms": 22.581125,
+      "max_ms": 116.983208,
+      "response_bytes": 133889079
+    },
+    "api_steady": {
+      "Asset list": {
+        "requests": 865,
+        "rps": 4.805555555555555,
+        "successes": 865,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 865
+        },
+        "mean_ms": 3.0824967260115623,
+        "p50_ms": 2.577208,
+        "p95_ms": 5.243666,
+        "p99_ms": 10.90775,
+        "max_ms": 61.394459,
+        "response_bytes": 46236845
+      },
+      "Canvas GET": {
+        "requests": 773,
+        "rps": 4.294444444444444,
+        "successes": 773,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 773
+        },
+        "mean_ms": 2.6818729987063374,
+        "p50_ms": 2.446583,
+        "p95_ms": 5.44275,
+        "p99_ms": 7.945375,
+        "max_ms": 36.621291,
+        "response_bytes": 37189707
+      },
+      "Canvas PUT": {
+        "requests": 721,
+        "rps": 4.0055555555555555,
+        "successes": 721,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 721
+        },
+        "mean_ms": 15.05997931622746,
+        "p50_ms": 14.324875,
+        "p95_ms": 25.175834,
+        "p99_ms": 36.385709,
+        "max_ms": 116.983208,
+        "response_bytes": 34614983
+      },
+      "Canvas list": {
+        "requests": 773,
+        "rps": 4.294444444444444,
+        "successes": 773,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 773
+        },
+        "mean_ms": 4.806098539456669,
+        "p50_ms": 3.835792,
+        "p95_ms": 9.991459,
+        "p99_ms": 13.752833,
+        "max_ms": 39.487917,
+        "response_bytes": 455222
+      },
+      "Folder list": {
+        "requests": 773,
+        "rps": 4.294444444444444,
+        "successes": 773,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 773
+        },
+        "mean_ms": 1.0585234411384223,
+        "p50_ms": 0.843667,
+        "p95_ms": 1.928292,
+        "p99_ms": 5.538167,
+        "max_ms": 12.094083,
+        "response_bytes": 429788
+      },
+      "Session": {
+        "requests": 168,
+        "rps": 0.9333333333333333,
+        "successes": 168,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 168
+        },
+        "mean_ms": 3.3689514166666665,
+        "p50_ms": 2.404333,
+        "p95_ms": 9.273584,
+        "p99_ms": 13.262833,
+        "max_ms": 16.419875,
+        "response_bytes": 32256
+      },
+      "Workflow GET": {
+        "requests": 1079,
+        "rps": 5.9944444444444445,
+        "successes": 1079,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1079
+        },
+        "mean_ms": 1.2709670926784071,
+        "p50_ms": 0.952666,
+        "p95_ms": 2.988167,
+        "p99_ms": 6.081791,
+        "max_ms": 11.949084,
+        "response_bytes": 3182480
+      },
+      "Workflow PUT": {
+        "requests": 437,
+        "rps": 2.4277777777777776,
+        "successes": 437,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 437
+        },
+        "mean_ms": 7.684107924485126,
+        "p50_ms": 6.351333,
+        "p95_ms": 13.084958,
+        "p99_ms": 31.087792,
+        "max_ms": 104.879209,
+        "response_bytes": 1289032
+      },
+      "Workflow Run create": {
+        "requests": 16,
+        "rps": 0.08888888888888889,
+        "successes": 16,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 16
+        },
+        "mean_ms": 15.712007875,
+        "p50_ms": 13.701417,
+        "p95_ms": 27.736708,
+        "p99_ms": 27.736708,
+        "max_ms": 27.736708,
+        "response_bytes": 75819
+      },
+      "Workflow Run list": {
+        "requests": 306,
+        "rps": 1.7,
+        "successes": 306,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 306
+        },
+        "mean_ms": 1.7063383529411762,
+        "p50_ms": 1.446125,
+        "p95_ms": 3.29175,
+        "p99_ms": 6.383208,
+        "max_ms": 11.581875,
+        "response_bytes": 1539629
+      },
+      "Workflow Run poll": {
+        "requests": 1541,
+        "rps": 8.561111111111112,
+        "successes": 1541,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 1541
+        },
+        "mean_ms": 2.8181626833225213,
+        "p50_ms": 2.416583,
+        "p95_ms": 4.932041,
+        "p99_ms": 10.224208,
+        "max_ms": 34.8345,
+        "response_bytes": 8629646
+      },
+      "Workflow list": {
+        "requests": 773,
+        "rps": 4.294444444444444,
+        "successes": 773,
+        "expected_business": 0,
+        "unexpected_errors": 0,
+        "http_4xx": 0,
+        "http_5xx": 0,
+        "transport_errors": 0,
+        "http_200_body_failures": 0,
+        "statuses": {
+          "200": 773
+        },
+        "mean_ms": 1.5283708602846067,
+        "p50_ms": 1.32475,
+        "p95_ms": 2.754209,
+        "p99_ms": 5.252917,
+        "max_ms": 10.041333,
+        "response_bytes": 213672
+      }
+    },
+    "business_and_conflict": {
+      "requests": 36,
+      "rps": 0.15,
+      "successes": 21,
+      "expected_business": 15,
+      "unexpected_errors": 0,
+      "http_4xx": 12,
+      "http_5xx": 0,
+      "transport_errors": 0,
+      "http_200_body_failures": 3,
+      "statuses": {
+        "401": 1,
+        "403": 1,
+        "200": 24,
+        "409": 10
+      },
+      "mean_ms": 5.654679444444445,
+      "p50_ms": 6.7385,
+      "p95_ms": 11.800584,
+      "p99_ms": 15.178958,
+      "max_ms": 15.178958,
+      "response_bytes": 219868
+    },
+    "scenario_requests": {
+      "browse": 6956,
+      "canvas_edit": 1285,
+      "workflow": 1506
+    },
+    "server": {
+      "samples": 125,
+      "api_cpu_one_core_percent_mean": 8.280922918083656,
+      "goroutines_start": 17,
+      "goroutines_end": 22,
+      "goroutines_peak": 33,
+      "heap_alloc_start": 2652768,
+      "heap_alloc_end": 5177192,
+      "heap_alloc_peak": 9103608,
+      "heap_inuse_peak": 11681792,
+      "go_sys_start": 18827528,
+      "go_sys_end": 27216136,
+      "rss_kib_start": 30608,
+      "rss_kib_end": 35968,
+      "rss_kib_peak": 38848,
+      "pg_container_cpu_percent_mean": 5.134736842105263,
+      "pg_container_cpu_percent_peak": 10.89,
+      "pg_container_memory_mib_peak": 115.8,
+      "pool_open_peak": 7,
+      "pool_in_use_peak": 4,
+      "pool_wait_count": 0,
+      "pool_wait_ms": 0.0,
+      "pg_active_peak": 1,
+      "pg_connections_peak": 7,
+      "pg_lock_waiters_peak": 0,
+      "pg_blocked_peak": 0,
+      "pg_query_calls": 66082,
+      "pg_exec_mean_ms": 0.10107701209103834,
+      "gorm_query_count": 52304,
+      "gorm_query_mean_ms": 0.8433913507953503,
+      "gorm_over_200ms": 0,
+      "gorm_errors": 0,
+      "fake_submissions": 168,
+      "blocked_http": 0,
+      "runs_end": [
+        {
+          "count": 524,
+          "status": "completed"
+        }
+      ],
+      "attempts_end": [
+        {
+          "count": 168,
+          "status": "succeeded"
+        }
+      ],
+      "observer_errors": []
+    }
+  },
+  "canvas_recovery": {
+    "users": 30,
+    "max_inflight_requests": 30,
+    "duration_seconds": 10.88946275,
+    "verified_users": 30,
+    "same_request_rounds": 10,
+    "competing_writer_rounds": 10,
+    "assertion_failures": [],
+    "all_requests": {
+      "requests": 1881,
+      "p50_ms": 76.14283299999957,
+      "p95_ms": 161.6029999999995,
+      "p99_ms": 245.00858299999885,
+      "max_ms": 365.72491599999955,
+      "mean_ms": 77.51122912014885,
+      "unexpected_errors": 0,
+      "http_409": 290,
+      "http_5xx": 0,
+      "transport_errors": 0
+    },
+    "by_kind": {
+      "competing_write": {
+        "requests": 300,
+        "p50_ms": 101.36758400000012,
+        "p95_ms": 268.4657080000008,
+        "p99_ms": 341.05133300000114,
+        "max_ms": 365.72491599999955,
+        "mean_ms": 116.40148541333332,
+        "unexpected_errors": 0,
+        "http_409": 290,
+        "http_5xx": 0,
+        "transport_errors": 0
+      },
+      "concurrent_replay": {
+        "requests": 300,
+        "p50_ms": 79.93849999999992,
+        "p95_ms": 122.47187500000045,
+        "p99_ms": 136.44466699999924,
+        "max_ms": 154.33183300000053,
+        "mean_ms": 79.47221611999998,
+        "unexpected_errors": 0,
+        "http_409": 0,
+        "http_5xx": 0,
+        "transport_errors": 0
+      },
+      "initial_get": {
+        "requests": 30,
+        "p50_ms": 11.519124999999992,
+        "p95_ms": 30.661499999999993,
+        "p99_ms": 32.98875000000001,
+        "max_ms": 32.98875000000001,
+        "mean_ms": 16.042047266666668,
+        "unexpected_errors": 0,
+        "http_409": 0,
+        "http_5xx": 0,
+        "transport_errors": 0
+      },
+      "replay_after_discarded_ack": {
+        "requests": 600,
+        "p50_ms": 26.63062500000013,
+        "p95_ms": 50.83537500000001,
+        "p99_ms": 66.44604199999992,
+        "max_ms": 75.24008299999974,
+        "mean_ms": 27.89904974333334,
+        "unexpected_errors": 0,
+        "http_409": 0,
+        "http_5xx": 0,
+        "transport_errors": 0
+      },
+      "save": {
+        "requests": 600,
+        "p50_ms": 114.41283300000005,
+        "p95_ms": 170.98720800000012,
+        "p99_ms": 188.92670899999996,
+        "max_ms": 203.25066700000028,
+        "mean_ms": 115.00231000333335,
+        "unexpected_errors": 0,
+        "http_409": 0,
+        "http_5xx": 0,
+        "transport_errors": 0
+      },
+      "verify": {
+        "requests": 51,
+        "p50_ms": 10.408041999999895,
+        "p95_ms": 37.45454199999987,
+        "p99_ms": 39.88641599999987,
+        "max_ms": 39.88641599999987,
+        "mean_ms": 15.969299000000115,
+        "unexpected_errors": 0,
+        "http_409": 0,
+        "http_5xx": 0,
+        "transport_errors": 0
+      }
+    },
+    "canvases_before_shared_probes": [
+      {
+        "uid": "load-user-00",
+        "id": "load-user-00-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-01",
+        "id": "load-user-01-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-02",
+        "id": "load-user-02-canvas-250",
+        "initial_revision": 21,
+        "final_revision": 41,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-03",
+        "id": "load-user-03-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-04",
+        "id": "load-user-04-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-05",
+        "id": "load-user-05-canvas-250",
+        "initial_revision": 62,
+        "final_revision": 82,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-06",
+        "id": "load-user-06-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-07",
+        "id": "load-user-07-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-08",
+        "id": "load-user-08-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-09",
+        "id": "load-user-09-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-10",
+        "id": "load-user-10-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-11",
+        "id": "load-user-11-canvas-250",
+        "initial_revision": 21,
+        "final_revision": 41,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-12",
+        "id": "load-user-12-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-13",
+        "id": "load-user-13-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-14",
+        "id": "load-user-14-canvas-250",
+        "initial_revision": 20,
+        "final_revision": 40,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-15",
+        "id": "load-user-15-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-16",
+        "id": "load-user-16-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-17",
+        "id": "load-user-17-canvas-250",
+        "initial_revision": 61,
+        "final_revision": 81,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-18",
+        "id": "load-user-18-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-19",
+        "id": "load-user-19-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-20",
+        "id": "load-user-20-canvas-250",
+        "initial_revision": 21,
+        "final_revision": 41,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-21",
+        "id": "load-user-21-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-22",
+        "id": "load-user-22-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-23",
+        "id": "load-user-23-canvas-250",
+        "initial_revision": 21,
+        "final_revision": 41,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-24",
+        "id": "load-user-24-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-25",
+        "id": "load-user-25-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-26",
+        "id": "load-user-26-canvas-250",
+        "initial_revision": 59,
+        "final_revision": 79,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-27",
+        "id": "load-user-27-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-28",
+        "id": "load-user-28-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      },
+      {
+        "uid": "load-user-29",
+        "id": "load-user-29-canvas-250",
+        "initial_revision": 1,
+        "final_revision": 21,
+        "node_count": 250
+      }
+    ]
+  },
+  "canvas_recovery_resources": {
+    "samples": 12,
+    "resource_samples": 2,
+    "start": "2026-09-17T08:06:31.977218Z",
+    "end": "2026-09-17T08:06:42.855938Z",
+    "api_cpu_one_core_percent_mean": 122.73054131976136,
+    "pool_wait_count": 2043,
+    "pool_wait_ms": 14835.78577,
+    "pool_open_peak": 20,
+    "pool_in_use_peak": 20,
+    "pg_lock_waiters_peak": 2,
+    "rss_mib_peak": 65.53125,
+    "gorm_errors": 0
+  },
+  "consistency": {
+    "canvas_revision_mismatches": 0,
+    "completed_run_wrong_outputs": 0,
+    "completed_output_missing_media": 0,
+    "output_owner_mismatches": 0,
+    "duplicate_attempt_tasks": 0,
+    "run_statuses": {
+      "completed": 524
+    },
+    "attempt_statuses": {
+      "succeeded": 168
+    },
+    "canvas_count": 151,
+    "save_request_count": 1476,
+    "workflow_count": 50,
+    "media_count": 10168,
+    "media_lifecycle_audit": {
+      "media_created": 168,
+      "media_reference_added": 6081
+    },
+    "media_expiry_states": {
+      "retained": 10168
+    },
+    "pg_settings": {
+      "deadlock_timeout": "100",
+      "effective_cache_size": "524288",
+      "fsync": "on",
+      "log_lock_waits": "on",
+      "log_min_duration_statement": "200",
+      "max_connections": "100",
+      "max_wal_size": "1024",
+      "server_version": "17.11",
+      "shared_buffers": "16384",
+      "synchronous_commit": "on",
+      "track_io_timing": "on",
+      "work_mem": "4096"
+    }
+  },
+  "session_verification": {
+    "accounts": 50,
+    "passed": true
+  },
+  "cooldown_start": {
+    "attempts": [
+      {
+        "count": 168,
+        "status": "succeeded"
+      }
+    ],
+    "blocked_http": 0,
+    "cpu_system_s": 8.807317,
+    "cpu_user_s": 26.876194,
+    "fake_submissions": 168,
+    "gc_count": 2315,
+    "gc_pause_ns": 342712849,
+    "go_sys": 57104664,
+    "go_version": "go1.26.6",
+    "gomaxprocs": 4,
+    "goroutines": 21,
+    "heap_alloc": 6644360,
+    "heap_inuse": 10141696,
+    "heap_objects": 77697,
+    "observer_error": "",
+    "pg_active": 0,
+    "pg_blocked": 0,
+    "pg_calls": 87316,
+    "pg_connections": 10,
+    "pg_exec_ms": 19960.516347000004,
+    "pg_lock_waiters": 0,
+    "pool": {
+      "MaxOpenConnections": 20,
+      "OpenConnections": 10,
+      "InUse": 0,
+      "Idle": 10,
+      "WaitCount": 2221,
+      "WaitDuration": 15985990819,
+      "MaxIdleClosed": 434,
+      "MaxIdleTimeClosed": 0,
+      "MaxLifetimeClosed": 0
+    },
+    "query": {
+      "count": 69379,
+      "errors": 0,
+      "max_ms": 215.993625,
+      "mean_ms": 1.878620099208694,
+      "percentile_upper_bounds": {
+        "p50_ms": 1,
+        "p95_ms": 8,
+        "p99_ms": 27
+      },
+      "slow_over_200ms": 8
+    },
+    "runs": [
+      {
+        "count": 524,
+        "status": "completed"
+      }
+    ],
+    "time": "2026-09-17T08:06:43.291381Z"
+  },
+  "cooldown_end": {
+    "attempts": [
+      {
+        "count": 168,
+        "status": "succeeded"
+      }
+    ],
+    "blocked_http": 0,
+    "cpu_system_s": 8.979101,
+    "cpu_user_s": 27.058887,
+    "fake_submissions": 168,
+    "gc_count": 2322,
+    "gc_pause_ns": 343358144,
+    "go_sys": 57104664,
+    "go_version": "go1.26.6",
+    "gomaxprocs": 4,
+    "goroutines": 21,
+    "heap_alloc": 5016000,
+    "heap_inuse": 7716864,
+    "heap_objects": 47734,
+    "observer_error": "",
+    "pg_active": 0,
+    "pg_blocked": 0,
+    "pg_calls": 89575,
+    "pg_connections": 10,
+    "pg_exec_ms": 20174.269054000004,
+    "pg_lock_waiters": 0,
+    "pool": {
+      "MaxOpenConnections": 20,
+      "OpenConnections": 10,
+      "InUse": 0,
+      "Idle": 10,
+      "WaitCount": 2221,
+      "WaitDuration": 15985990819,
+      "MaxIdleClosed": 434,
+      "MaxIdleTimeClosed": 0,
+      "MaxLifetimeClosed": 0
+    },
+    "query": {
+      "count": 70398,
+      "errors": 0,
+      "max_ms": 215.993625,
+      "mean_ms": 1.877530894997017,
+      "percentile_upper_bounds": {
+        "p50_ms": 1,
+        "p95_ms": 8,
+        "p99_ms": 26
+      },
+      "slow_over_200ms": 8
+    },
+    "runs": [
+      {
+        "count": 524,
+        "status": "completed"
+      }
+    ],
+    "time": "2026-09-17T08:07:43.446922Z"
+  },
+  "request_total_excluding_observers_and_postload_sessions": 11724,
+  "limitations": [
+    "HTTP clients, no real browser rendering, refresh or IndexedDB execution",
+    "Portal trusted identity headers, no gateway, login or TLS load",
+    "Local fake media and provider, no OSS, large-file transfer or paid generation",
+    "Closed-loop load, not maximum open-loop throughput; 180 seconds steady, not a soak test",
+    "Same-canvas probes use 30 sessions of one owner, not cross-user shared writes"
+  ]
+}
