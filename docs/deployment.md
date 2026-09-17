@@ -8,6 +8,23 @@ https://www.semetaloa.com/apps/infinite-canvas/canvas
 
 应用容器不公开宿主机端口；Portal Gateway 负责登录、应用访问权限和身份头注入。
 
+## 启动与恢复
+
+应用启动先等待数据库连接，最长 60 秒，每次连接尝试最多 2 秒；连接失败不会提前触发数据库迁移或任务 Worker。连接恢复后才按原有顺序初始化，密码或数据库名错误会直接失败。
+
+容器等待 Go API 的 `/api/healthz` 就绪后才启动前端，整体就绪等待最多 120 秒。任一子进程退出会停止另一个进程并以失败状态退出容器，由现有 `restart: unless-stopped` 策略重启。正常停止会向两个进程发送 SIGTERM，8 秒后仍未退出的进程会被终止。该机制不重新提交任务，任务恢复仍使用现有状态与上游任务 ID。
+
+本地更新应用（保留现有数据库和数据目录）：
+
+```bash
+cd /Users/Admin/codexprogram/infinite-canvas
+docker compose -f docker-compose.local.yml up -d --build --no-deps app
+docker compose -f docker-compose.local.yml ps app
+docker compose -f docker-compose.local.yml logs --tail=100 app
+```
+
+若只是旧版本在 Docker 同时启动时后端退出，数据库恢复健康后可用 `docker compose -f docker-compose.local.yml restart app` 临时恢复。新版镜像会管理前后端退出联动；健康检查失败本身不会触发 Docker 重启，不能把 healthcheck 当作进程监护。
+
 ## 一次性生产初始化
 
 1. 启动 Portal，并确认外部 Docker 网络 `portal_gateway`、`internal_tools_database` 与 `portal_directory` 已存在。

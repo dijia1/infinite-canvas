@@ -45,6 +45,13 @@ jobs:
           trap 'rm -f "$env_file"' EXIT
           INFINITE_CANVAS_IMAGE=ghcr.io/dijia1/infinite-canvas:sha-${{ github.sha }} INFINITE_CANVAS_ENV_FILE="$env_file" docker compose config -q
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test container startup lifecycle
+        run: node --test scripts/start-app.test.mjs
+
       - run: go test ./...
 
       - working-directory: web

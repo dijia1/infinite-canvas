@@ -44,6 +44,9 @@ COPY --from=api-build /server /app/server
 COPY --from=web-build /app/web /app/web
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
 
+COPY scripts/start-app.mjs /app/start-app.mjs
+
 EXPOSE 3000
-# 先启动内部 Go API，再由 Next.js 提供页面并代理 /api/*。
-CMD ["sh", "-c", "PORT=8082 /app/server & cd /app/web && HOSTNAME=0.0.0.0 PORT=3000 ./node_modules/.bin/next start"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=75s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+# 后端就绪后才启动前端；任一子进程退出都会终止容器。
+CMD ["node", "/app/start-app.mjs"]

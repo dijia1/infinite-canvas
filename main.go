@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"time"
 
 	_ "github.com/basketikun/infinite-canvas/ai/providers"
 	"github.com/basketikun/infinite-canvas/config"
@@ -14,6 +15,13 @@ import (
 func main() {
 	if err := config.Load(); err != nil {
 		log.Fatal(err)
+	}
+	log.Print("waiting for database before application initialization")
+	databaseContext, cancelDatabaseWait := context.WithTimeout(context.Background(), 60*time.Second)
+	databaseErr := repository.WaitForDatabase(databaseContext, config.Cfg.DatabaseDSN)
+	cancelDatabaseWait()
+	if databaseErr != nil {
+		log.Fatal(databaseErr)
 	}
 	if _, err := repository.PromoteLegacyCanvasTemporaryMedia(); err != nil {
 		log.Fatalf("migrate legacy canvas media: %v", err)
