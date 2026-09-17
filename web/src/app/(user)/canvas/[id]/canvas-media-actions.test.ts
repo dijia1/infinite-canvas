@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { canSaveNodeAsAsset } from "../components/canvas-node-actions";
 import { CanvasNodeType } from "../types";
 
 function callback(name: string, dependencies: Record<string, unknown>) {
@@ -18,23 +17,41 @@ function callback(name: string, dependencies: Record<string, unknown>) {
     return new Function(...Object.keys(dependencies), js + ";return callback;")(...Object.values(dependencies));
 }
 
-test("saving a remote image preserves its reference without adding content to the node", async () => {
-    const image = { id: "remote", type: CanvasNodeType.Image, width: 100, height: 100, metadata: { mediaId: "media-1" } };
-    const saved: any[] = [];
-    const messages: string[] = [];
-    const save = callback("saveNodeAsset", {
-        canSaveNodeAsAsset,
-        canvasImageSource: () => "blob:runtime",
-        addAsset: (asset: unknown) => saved.push(asset),
-        getDataUrlByteSize: () => 0,
-        message: { error: () => undefined, success: (text: string) => messages.push(text) },
+test("downloading a remote image preserves its reference without adding content to the node", async () => {
+    const image = Object.freeze({
+        id: "remote",
+        type: CanvasNodeType.Image,
+        metadata: Object.freeze({ mediaId: "media-1", mimeType: "image/webp" }),
     });
-    await save(image);
-    assert.equal(saved[0].metadata.mediaId, "media-1");
-    assert.equal(saved[0].coverUrl, "blob:runtime");
-    assert.equal(saved[0].data.dataUrl, "");
+    const original = structuredClone(image);
+    const saved: Array<[string, string]> = [];
+    let finishAccess!: (url: string) => void;
+    const access = new Promise<string>((resolve) => { finishAccess = resolve; });
+    const download = callback("downloadNodeImage", {
+        CanvasNodeType,
+        loadMediaImage: async (id: string, resolve: () => Promise<string>) => {
+            assert.equal(id, "media-1");
+            assert.equal(await resolve(), "signed-original-url");
+            return { url: "blob:original-image" };
+        },
+        resolveRemoteImage: (id: string) => {
+            assert.equal(id, "media-1");
+            return access;
+        },
+        saveAs: (url: string, filename: string) => saved.push([url, filename]),
+        imageExtension: (mimeType: string) => {
+            assert.equal(mimeType, "image/webp");
+            return "webp";
+        },
+    });
+    const pending = download(image);
+    assert.deepEqual(saved, []);
+    assert.deepEqual(image, original);
+    finishAccess("signed-original-url");
+    await pending;
+    assert.deepEqual(saved, [["blob:original-image", "canvas-image-remote.webp"]]);
+    assert.deepEqual(image, original);
     assert.equal("content" in image.metadata, false);
-    assert.equal(messages.length, 1);
 });
 
 test("downloads resolve remote and public references and propagate access failures", async () => {
