@@ -1,6 +1,7 @@
 import type { MouseEventHandler, PointerEventHandler } from "react";
 
 import type { Position } from "@/app/(user)/canvas/types";
+import { CanvasNodeSelectionOutline } from "./canvas-node-primitives";
 import { CanvasReadyImage } from "./canvas-ready-image";
 
 type CanvasOverviewNodeProps = {
@@ -50,14 +51,14 @@ export function CanvasOverviewNode({
         <div
             {...dataAttributes}
             data-node-id={nodeId}
-            className={`node-element absolute select-none ${selected ? "z-50" : "z-10"}`}
+            className={`node-element absolute select-none rounded-3xl ${selected ? "z-50" : "z-10"}`}
             style={{ transform: `translate(${position.x}px, ${position.y}px)`, width, height, contain: "layout paint style" }}
             onPointerDown={onPointerDown}
             onContextMenu={onContextMenu}
         >
             <div
                 className="relative h-full w-full overflow-hidden rounded-3xl border"
-                style={{ background: media ? "transparent" : fill, borderColor: selected ? selectionStroke : stroke }}
+                style={{ background: media ? "transparent" : fill, borderColor: selected ? "transparent" : stroke }}
                 title={title}
                 onMouseDown={onMouseDown}
             >
@@ -77,6 +78,7 @@ export function CanvasOverviewNode({
                     <div className="h-full w-full" style={{ background: placeholderFill }} />
                 )}
             </div>
+            {selected ? <CanvasNodeSelectionOutline color={selectionStroke} /> : null}
         </div>
     );
 }

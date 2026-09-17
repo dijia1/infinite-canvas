@@ -136,6 +136,7 @@ export function WorkflowNodeCard({
             }}
         >
             <CanvasNodeFrame
+                selected={selected}
                 style={{ background: hasMedia ? "transparent" : theme.node.fill, borderColor: selected ? canvasNodeSelectionColor : theme.node.stroke, boxShadow: selected ? `0 0 0 1px ${canvasNodeSelectionColor}55` : undefined, color: theme.node.text }}
             >
                 <div className="relative flex h-full w-full items-center justify-center overflow-hidden rounded-[inherit]">
@@ -341,6 +342,7 @@ export function WorkflowOutputCard({
             onMouseLeave={leaveHover}
         >
             <CanvasNodeFrame
+                selected={selected}
                 style={{
                     background: hasMedia ? "transparent" : theme.node.fill,
                     borderColor: selected ? canvasNodeSelectionColor : theme.node.stroke,

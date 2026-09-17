@@ -24,7 +24,7 @@ test("overview node keeps the full node geometry and rounded media shell", () =>
     assert.equal(element.props.style.width, 320);
     assert.equal(element.props.style.height, 240);
 
-    const shell = element.props.children;
+    const shell = element.props.children[0];
     assert.match(shell.props.className, /rounded-3xl/);
     assert.equal(shell.props.style.background, "transparent");
     assert.equal(shell.props.children.type, CanvasReadyImage);
@@ -39,5 +39,5 @@ test("overview node carries caller data attributes and renders a lightweight pla
     });
     assert.equal(element.props["data-workflow-object"], "");
     assert.equal(element.props["data-workflow-node-id"], "workflow-node");
-    assert.equal(element.props.children.props.children.props.style.background, "#333");
+    assert.equal(element.props.children[0].props.children.props.style.background, "#333");
 });

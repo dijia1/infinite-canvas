@@ -10,10 +10,29 @@ export type { CanvasResizeCorner } from "@/lib/canvas-resize";
 export const canvasResizeCorners: CanvasResizeCorner[] = ["top-left", "top-right", "bottom-left", "bottom-right"];
 export const canvasNodeSelectionColor = "#2f80ff";
 
-export function CanvasNodeFrame({ children, ...props }: HTMLAttributes<HTMLDivElement>) {
+// Draw inside the card so overview paint containment cannot clip the selection.
+// The scene updates inverse scale in the same RAF as its viewport transform.
+export function CanvasNodeSelectionOutline({ color = canvasNodeSelectionColor, inset = 0 }: { color?: string; inset?: number }) {
+    return <div
+        aria-hidden="true"
+        data-canvas-selection-outline
+        className="pointer-events-none absolute z-40 rounded-[inherit]"
+        style={{
+            inset,
+            boxShadow: `inset 0 0 0 calc(2px * var(--canvas-inverse-scale, 1)) ${color}`,
+        }}
+    />;
+}
+
+export function CanvasNodeFrame({ children, selected = false, ...props }: HTMLAttributes<HTMLDivElement> & { selected?: boolean }) {
     return (
-        <div {...props} className={`relative h-full w-full overflow-visible rounded-3xl border-2 ${props.className || ""}`}>
+        <div
+            {...props}
+            className={`relative h-full w-full overflow-visible rounded-3xl border-2 ${props.className || ""}`}
+            style={{ ...props.style, ...(selected ? { borderColor: "transparent", boxShadow: "none" } : {}) }}
+        >
             {children}
+            {selected ? <CanvasNodeSelectionOutline inset={-2} /> : null}
         </div>
     );
 }
