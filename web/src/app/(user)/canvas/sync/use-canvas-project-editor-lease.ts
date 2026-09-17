@@ -35,6 +35,7 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
         readPendingDocumentRef.current = readPendingDocument;
     }, [readPendingDocument]);
     const setProjectSyncBlocked = useCanvasStore((state) => state.setProjectSyncBlocked);
+    const releaseProjectEditor = useCanvasStore((state) => state.releaseProjectEditor);
     const ensureProjectDetail = useCanvasStore((state) => state.ensureProjectDetail);
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
@@ -186,6 +187,7 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
         };
 
         const releaseOwnership = () => {
+            releaseProjectEditor(projectId);
             if (!ownsEditor) return;
             publish("released");
             if (usingFallback && readCanvasProjectEditorLease(window.localStorage, leaseKey)?.tabId === tabId) window.localStorage.removeItem(leaseKey);
@@ -217,7 +219,6 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
             window.removeEventListener("storage", onStorage);
             window.removeEventListener("focus", onFocus);
             window.removeEventListener("pagehide", releaseOwnership);
-            setProjectSyncBlocked(projectId, false);
         };
-    }, [projectId, readyForCanvasMutations, ensureProjectDetail, refreshProjectFromServer, setProjectSyncBlocked, tabId, loadAttempt]);
+    }, [projectId, readyForCanvasMutations, ensureProjectDetail, refreshProjectFromServer, setProjectSyncBlocked, releaseProjectEditor, tabId, loadAttempt]);
 }

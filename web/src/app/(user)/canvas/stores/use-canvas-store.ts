@@ -1,9 +1,9 @@
 import { nanoid } from "nanoid";
 import { create, type StoreApi, type UseBoundStore } from "zustand";
-import { persist, type PersistStorage, type StateStorage, type StorageValue } from "zustand/middleware";
+import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import { canvasDocumentStorage } from "@/lib/localforage-storage";
+import { canvasDocumentStorage, type CanvasDocumentStorage } from "@/lib/localforage-storage";
 import { canvasProjectsApi, type CanvasProjectDocument, type CanvasProjectDetail, type CanvasSummary, type CanvasProjectsApi, type CanvasProjectWriteTrace } from "@/services/api/canvas-projects";
 import { ApiRequestError } from "@/services/api/request";
 import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
@@ -39,6 +39,8 @@ export type CanvasProjectSync = {
     operation: "save" | "delete";
     deletedProject?: CanvasProject;
     unknownRequest?: CanvasProjectSaveRequestSnapshot;
+    needsRevalidation?: boolean;
+    pauseReason?: "rejected" | "permission" | "recovery";
 };
 
 type CanvasProjectSaveRequestSnapshot = {
@@ -71,13 +73,14 @@ export type CanvasStore = {
     retryBootstrap: () => Promise<void>;
     startSync: (scope: string) => void;
     setProjectSyncBlocked: (id: string, blocked: boolean) => void;
+    releaseProjectEditor: (id: string) => void;
     adoptImportedProjects: (projects: CanvasProjectDetail[], snapshots: Map<string, CanvasProject>) => void;
     applyLegacyImageNormalization: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean;
     replaceProjectsFromServer: (projects: CanvasProjectDetail[], notifyEditor?: boolean) => void;
     mergeProjectSummaries: (summaries: CanvasSummary[]) => void;
     ensureProjectDetail: (id: string, options?: { revalidate?: boolean }) => Promise<CanvasProject>;
     refreshProjectFromServer: (id: string) => Promise<void>;
-    retryPendingSaves: () => Promise<void>;
+    retryPendingSaves: (projectId?: string) => Promise<void>;
     createProject: (title?: string) => string;
     duplicateProject: (id: string) => string | null;
     openProject: (id: string) => CanvasProject | null;
@@ -179,13 +182,46 @@ function preserveLocalImageUploads(server: CanvasProject, local: CanvasProject):
     return { ...server, nodes: [...server.nodes, ...localNodes], connections: [...server.connections, ...localConnections] };
 }
 
+function validSaveRequest(value: CanvasProjectSaveRequestSnapshot) {
+    try {
+        return (
+            Number.isInteger(value.baseRevision) &&
+            value.baseRevision >= 1 &&
+            typeof value.title === "string" &&
+            value.title.length > 0 &&
+            typeof value.trace?.requestId === "string" &&
+            value.trace.requestId.length > 0 &&
+            typeof value.trace.tabId === "string" &&
+            Number.isInteger(value.trace.requestSeq) &&
+            ["autosave", "retry", "delete"].includes(value.trace.reason) &&
+            Array.isArray(value.document?.nodes) &&
+            Array.isArray(value.document.connections) &&
+            sameCanvasJSON(value.document, sanitizeCanvasProjectDocument(value.document))
+        );
+    } catch {
+        return false;
+    }
+}
+
+function restoredSync(sync: Record<string, CanvasProjectSync>) {
+    return Object.fromEntries(
+        Object.entries(sync || {}).map(([id, metadata]) => {
+            if (metadata.unknownRequest && !validSaveRequest(metadata.unknownRequest)) {
+                return [id, { ...metadata, saving: false, dirty: true, pending: false, pauseReason: "recovery", error: "画布保存请求损坏或不兼容，请保留草稿并核对服务器副本" }];
+            }
+            if (!metadata.saving && !metadata.unknownRequest) return [id, metadata];
+            return [id, { ...metadata, saving: false, dirty: true, pending: !metadata.conflict && !metadata.pauseReason, ...(!metadata.unknownRequest ? { needsRevalidation: true } : {}) }];
+        }),
+    ) as Record<string, CanvasProjectSync>;
+}
+
 function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
     value.state.projects = (value.state.projects || []).map(sanitizeCanvasProject);
-    value.state.projectSync = Object.fromEntries(Object.entries(value.state.projectSync || {}).map(([id, metadata]) => [id, metadata.saving ? { ...metadata, saving: false, dirty: true, pending: true } : metadata]));
+    value.state.projectSync = restoredSync(value.state.projectSync);
     return value;
 }
 
-export function createCanvasStorage(storage: StateStorage = canvasDocumentStorage): PersistStorage<CanvasStore> {
+export function createCanvasStorage(storage: CanvasDocumentStorage = canvasDocumentStorage): PersistStorage<CanvasStore> {
     const cachedSummaries = new Map<string, CanvasSummary[]>();
     const cachedProjects = new Map<string, CanvasStore["projects"]>();
     const projectsKey = (name: string) => `${name}:projects`;
@@ -194,7 +230,7 @@ export function createCanvasStorage(storage: StateStorage = canvasDocumentStorag
 
     return {
         getItem: async (name) => {
-            const [storedProjects, storedSync, storedSummaries] = await Promise.all([storage.getItem(projectsKey(name)), storage.getItem(syncKey(name)), storage.getItem(summariesKey(name))]);
+            const [storedProjects, storedSync, storedSummaries, legacyValue] = await storage.getItems([projectsKey(name), syncKey(name), summariesKey(name), name]);
             if (storedProjects) {
                 const projects = JSON.parse(storedProjects) as CanvasStore["projects"];
                 const projectSync = storedSync ? (JSON.parse(storedSync) as CanvasStore["projectSync"]) : {};
@@ -205,21 +241,18 @@ export function createCanvasStorage(storage: StateStorage = canvasDocumentStorag
                 return parsed;
             }
 
-            const legacyValue = await storage.getItem(name);
             if (!legacyValue) return null;
             return sanitizeStoredCanvasValue(JSON.parse(legacyValue) as StorageValue<CanvasStore>);
         },
         setItem: async (name, value) => {
             const state = value.state as Pick<CanvasStore, "projects" | "projectSync" | "summaries">;
-            if (cachedProjects.get(name) !== state.projects) {
-                await storage.setItem(projectsKey(name), JSON.stringify(state.projects));
-                cachedProjects.set(name, state.projects);
-            }
-            if (cachedSummaries.get(name) !== state.summaries) {
-                await storage.setItem(summariesKey(name), JSON.stringify(state.summaries || []));
-                cachedSummaries.set(name, state.summaries || []);
-            }
-            await storage.setItem(syncKey(name), JSON.stringify(state.projectSync));
+            const entries: [string, string][] = [];
+            if (cachedProjects.get(name) !== state.projects) entries.push([projectsKey(name), JSON.stringify(state.projects)]);
+            if (cachedSummaries.get(name) !== state.summaries) entries.push([summariesKey(name), JSON.stringify(state.summaries || [])]);
+            entries.push([syncKey(name), JSON.stringify(state.projectSync)]);
+            await storage.setItems(entries);
+            cachedProjects.set(name, state.projects);
+            cachedSummaries.set(name, state.summaries);
         },
         removeItem: async (name) => {
             cachedProjects.delete(name);
@@ -243,17 +276,12 @@ function withPersistenceBarrier(storage: PersistStorage<CanvasStore>) {
                     });
                 writeQueue = write;
                 latestWrite = write;
-                return write;
+                // Zustand ignores set() promises; the barrier retains the error.
+                return write.catch(() => undefined);
             },
             removeItem: (name: string) => storage.removeItem(name),
         } satisfies PersistStorage<CanvasStore>,
-        waitForLatestWrite: async () => {
-            while (latestWrite) {
-                const observed = latestWrite;
-                await observed;
-                if (latestWrite === observed) return;
-            }
-        },
+        waitForLatestWrite: () => latestWrite || Promise.resolve(),
     };
 }
 
@@ -334,6 +362,9 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
     const detailLoads = new Map<string, Promise<CanvasProject>>();
     const detailGenerations = new Map<string, number>();
     let catalogGeneration = 0;
+    let sessionGeneration = 0;
+    const writerGenerations = new Map<string, number>();
+    const releasedEditors = new Set<string>();
     const persistence = withPersistenceBarrier(options.storage || createCanvasStorage());
     let subscribedToOnline = false;
 
@@ -365,162 +396,193 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     );
                 };
 
-                const queueChange = (id: string, operation: CanvasProjectSync["operation"] = "save", deletedProject?: CanvasProject) => {
-                    const state = get();
-                    const tracksAuthenticatedChanges = Boolean(state.syncScope) && state.syncScope !== CANVAS_GUEST_SCOPE;
-                    if (!tracksAuthenticatedChanges) return;
-                    let conflict = false;
-                    updateSync(id, (current) => {
-                        conflict = current?.conflict || false;
-                        const next = pendingSyncState(current, operation, deletedProject);
-                        const offline = current?.offline || state.bootstrapStatus === "offline" || !isOnline();
-                        return conflict ? { ...next, pending: false, offline } : { ...next, offline };
-                    });
-                    if (state.syncEnabled && !conflict && !state.blockedProjectSync[id]) scheduleSave(id);
+                const changedSync = (state: CanvasStore, id: string, operation: CanvasProjectSync["operation"] = "save", deletedProject?: CanvasProject) => {
+                    if (!state.syncScope || state.syncScope === CANVAS_GUEST_SCOPE) return state.projectSync;
+                    const previous = state.projectSync[id] || (state.summaries.find((item) => item.id === id) ? cleanSyncState(state.summaries.find((item) => item.id === id)!.revision) : undefined);
+                    const next = pendingSyncState(previous, operation, deletedProject);
+                    if (next.pauseReason === "rejected") delete next.pauseReason;
+                    if (next.conflict || next.pauseReason) {
+                        next.pending = false;
+                        next.error = previous?.error || null;
+                    }
+                    next.offline = previous?.offline || state.bootstrapStatus === "offline" || !isOnline();
+                    return { ...state.projectSync, [id]: next };
+                };
+
+                const queueChange = (id: string) => {
+                    // An explicit library mutation may start a new operation after leaving an editor.
+                    releasedEditors.delete(id);
+                    const state = get(),
+                        sync = state.projectSync[id];
+                    if (state.syncEnabled && sync && !sync.conflict && !sync.pauseReason && !state.blockedProjectSync[id]) scheduleSave(id);
                 };
 
                 const saveProject = async (id: string) => {
-                    let state = get();
-                    let metadata = state.projectSync[id];
-                    if (refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
-                    if (!isOnline()) {
-                        updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
+                    let state = get(),
+                        metadata = state.projectSync[id];
+                    if (releasedEditors.has(id) || refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || metadata.pauseReason || (!metadata.dirty && !metadata.pending && !metadata.unknownRequest))
                         return;
-                    }
-                    if (inFlight.has(id)) {
-                        updateSync(id, (current) => (current ? { ...current, pending: true } : current));
-                        return;
-                    }
-
-                    try {
-                        await persistence.waitForLatestWrite();
-                    } catch (error) {
-                        updateSync(id, (current) =>
-                            current
-                                ? {
-                                      ...current,
-                                      saving: false,
-                                      dirty: true,
-                                      pending: true,
-                                      error: error instanceof Error ? error.message : "画布本地保存失败",
-                                  }
-                                : current,
-                        );
-                        return;
-                    }
-
-                    state = get();
-                    metadata = state.projectSync[id];
-                    if (refreshing.has(id) || !state.syncEnabled || isProjectSyncBlocked(id) || !metadata || metadata.conflict || (!metadata.dirty && !metadata.pending)) return;
-                    if (!isOnline()) {
-                        updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
-                        return;
-                    }
-                    if (inFlight.has(id)) {
-                        updateSync(id, (current) => (current ? { ...current, pending: true } : current));
-                        return;
-                    }
-
-                    const operation = metadata.operation;
-                    const project = state.projects.find((item) => item.id === id);
-                    if (operation === "save" && !project) return;
-                    const unknownRequest = operation === "save" ? metadata.unknownRequest : undefined;
-                    const submittedDocument = unknownRequest?.document || (project ? canvasDocument(project) : undefined);
-                    const submittedTitle = unknownRequest?.title || project?.title;
-                    const submittedRevision = unknownRequest?.baseRevision ?? metadata.serverRevision;
-                    const trace = unknownRequest?.trace || writeTracer.next(operation === "delete" ? "delete" : metadata.offline ? "retry" : "autosave");
-
+                    if (inFlight.has(id)) return;
+                    const scope = state.syncScope,
+                        session = sessionGeneration,
+                        writer = writerGenerations.get(id) || 0;
+                    const ownsOperation = () => get().syncScope === scope && sessionGeneration === session && (writerGenerations.get(id) || 0) === writer;
+                    const maySend = () => ownsOperation() && !releasedEditors.has(id) && get().syncEnabled && !isProjectSyncBlocked(id) && !refreshing.has(id);
                     inFlight.add(id);
-                    inFlightDone.set(
-                        id,
-                        new Promise<void>((resolve) => {
-                            finishInFlight.set(id, resolve);
-                        }),
-                    );
-                    updateSync(id, (current) => (current ? { ...current, saving: true, dirty: false, pending: false, offline: false, error: null } : current));
-                    let completed = false;
+                    inFlightDone.set(id, new Promise<void>((resolve) => finishInFlight.set(id, resolve)));
+                    let operation = metadata.operation;
+                    let request = metadata.unknownRequest;
+                    const replaying = Boolean(request);
+                    let completed = false,
+                        sent = false,
+                        confirming = false;
+                    let submittedDocument: CanvasProjectDocument | undefined;
+                    let submittedTitle: string | undefined;
+                    let submittedRevision = metadata.serverRevision;
                     try {
+                        if (!isOnline()) {
+                            updateSync(id, (current) => (current ? { ...current, offline: true, pending: true, saving: false } : current));
+                            return;
+                        }
+                        if (metadata.needsRevalidation && !request && metadata.serverRevision !== null) {
+                            const remote = await api.get(id);
+                            if (!maySend()) return;
+                            if (remote.revision !== metadata.serverRevision) throw new ApiRequestError("画布已在其他位置更新，请保留草稿并核对", 409, 1);
+                            updateSync(id, (current) => {
+                                if (!current) return current;
+                                const { needsRevalidation: _, ...rest } = current;
+                                return rest;
+                            });
+                        }
+                        state = get();
+                        metadata = state.projectSync[id];
+                        if (!maySend() || !metadata || metadata.conflict || metadata.pauseReason) return;
+                        // Resolve an unknown PUT before a queued deletion uses its revision.
+                        operation = request ? "save" : metadata.operation;
+                        const project = state.projects.find((item) => item.id === id) || metadata.deletedProject;
+                        if (operation === "save" && !project) return;
+                        if (request && !validSaveRequest(request)) {
+                            updateSync(id, (current) => (current ? { ...current, pauseReason: "recovery", error: "画布保存请求损坏或不兼容，请保留草稿并核对服务器副本" } : current));
+                            return;
+                        }
+                        submittedDocument = request?.document || (project ? (JSON.parse(JSON.stringify(canvasDocument(project))) as CanvasProjectDocument) : undefined);
+                        submittedTitle = request?.title ?? project?.title;
+                        submittedRevision = request?.baseRevision ?? metadata.serverRevision;
+                        const trace = request?.trace || writeTracer.next(operation === "delete" ? "delete" : metadata.offline ? "retry" : "autosave");
+                        if (!request && operation === "save" && submittedRevision !== null && submittedDocument && submittedTitle) {
+                            request = { trace, baseRevision: submittedRevision, title: submittedTitle, document: submittedDocument };
+                        }
+                        updateSync(id, (current) => (current ? { ...current, ...(request ? { unknownRequest: request } : {}), saving: true, dirty: false, pending: false, offline: false, error: null } : current));
+                        await persistence.waitForLatestWrite();
+                        const matchesRequest = () => !request || get().projectSync[id]?.unknownRequest?.trace.requestId === request.trace.requestId;
+                        if (!maySend() || !matchesRequest() || get().projectSync[id]?.conflict) return;
+                        sent = true;
                         if (operation === "delete") {
-                            await api.delete(id, metadata.serverRevision ?? 1, trace);
-                            set((state) => ({ summaries: state.summaries.filter((item) => item.id !== id) }));
-                            updateSync(id, () => undefined);
+                            await api.delete(id, submittedRevision ?? 1, trace);
+                            if (!ownsOperation()) return;
+                            set((state) => {
+                                const projectSync = { ...state.projectSync };
+                                delete projectSync[id];
+                                return { projectSync, summaries: state.summaries.filter((item) => item.id !== id) };
+                            });
                         } else if (project && submittedDocument) {
                             const record =
-                                metadata.serverRevision === null
-                                    ? await api.create({
-                                          id: project.id,
-                                          title: project.title,
-                                          document: submittedDocument,
-                                          createdAt: project.createdAt,
-                                          updatedAt: project.updatedAt,
-                                      })
-                                    : await api.update(
-                                          id,
-                                          {
-                                              revision: submittedRevision ?? 1,
-                                              title: submittedTitle || project.title,
-                                              document: submittedDocument,
-                                          },
-                                          trace,
-                                      );
-                            set((state) => ({ summaries: [...state.summaries.filter((item) => item.id !== id), summarizeCanvasProject(record)] }));
-                            updateSync(id, (current) => {
-                                if (!current) return cleanSyncState(record.revision);
-                                const latestProject = get().projects.find((item) => item.id === id);
-                                const changedWhileSaving =
-                                    current.dirty ||
-                                    current.pending ||
+                                submittedRevision === null
+                                    ? await api.create({ id, title: submittedTitle!, document: submittedDocument, createdAt: project.createdAt, updatedAt: project.updatedAt })
+                                    : await api.update(id, { revision: submittedRevision, title: submittedTitle!, document: submittedDocument }, trace);
+                            if (!ownsOperation() || !matchesRequest()) return;
+                            if (record.id !== id || !Number.isInteger(record.revision) || (submittedRevision !== null && record.revision !== submittedRevision + 1)) throw new Error("画布保存回执无效，请重试确认");
+                            if ((get().projectSync[id]?.serverRevision ?? 0) > record.revision) throw new ApiRequestError("画布已在其他位置更新，请保留草稿并核对", 409, 1);
+                            confirming = true;
+                            set((state) => {
+                                const current = state.projectSync[id];
+                                if (!current) return state;
+                                const latest = state.projects.find((item) => item.id === id);
+                                const changed =
                                     current.operation !== operation ||
-                                    !latestProject ||
-                                    latestProject.title !== submittedTitle ||
-                                    !sameCanvasJSON(canvasDocument(latestProject), submittedDocument) ||
-                                    (metadata.serverRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument));
-                                const { unknownRequest: _unknownRequest, ...synced } = current;
+                                    !latest ||
+                                    latest.title !== submittedTitle ||
+                                    !sameCanvasJSON(canvasDocument(latest), submittedDocument) ||
+                                    (submittedRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument!));
+                                const { unknownRequest: _, needsRevalidation: _validation, ...synced } = current;
+                                const summary = state.summaries.find((item) => item.id === id);
                                 return {
-                                    ...synced,
-                                    serverRevision: record.revision,
-                                    saving: false,
-                                    dirty: changedWhileSaving,
-                                    pending: changedWhileSaving,
-                                    offline: false,
-                                    error: null,
+                                    summaries: !latest || (summary && summary.revision > record.revision) ? state.summaries : [...state.summaries.filter((item) => item.id !== id), summarizeCanvasProject(record)],
+                                    projectSync: { ...state.projectSync, [id]: { ...synced, serverRevision: record.revision, saving: false, dirty: changed, pending: changed, offline: false, error: null } },
                                 };
                             });
                         }
+                        await persistence.waitForLatestWrite();
                         completed = true;
                     } catch (error) {
+                        if (!ownsOperation()) return;
                         const conflict = error instanceof ApiRequestError && error.status === 409;
-                        const resultUnknown = operation === "save" && !conflict && (!(error instanceof ApiRequestError) || error.status >= 500);
+                        const code = error instanceof ApiRequestError && error.data && typeof error.data === "object" ? (error.data as { code?: string }).code : undefined;
+                        // A rejection of a retry alone cannot disprove an earlier acceptance.
+                        const rejected = sent && !confirming && !replaying && code === "canvas_save_rejected";
+                        const permission = error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+                        const recovery = code === "canvas_save_request_mismatch";
+                        const resultUnknown = sent && !conflict && !rejected && !permission && !recovery;
                         set((state) => {
                             const current = state.projectSync[id];
                             if (!current) return state;
-                            const projectSync = {
-                                ...state.projectSync,
-                                [id]: {
-                                    ...current,
-                                    saving: false,
-                                    dirty: true,
-                                    pending: !conflict,
-                                    offline: resultUnknown || !isOnline(),
-                                    error: error instanceof Error ? error.message : "画布保存失败",
-                                    conflict,
-                                    unknownRequest:
-                                        resultUnknown && submittedDocument && submittedTitle && submittedRevision !== null ? { trace, baseRevision: submittedRevision, title: submittedTitle, document: submittedDocument } : current.unknownRequest,
-                                },
+                            const next: CanvasProjectSync = {
+                                ...current,
+                                saving: false,
+                                dirty: true,
+                                pending: !conflict && !rejected && !permission && !recovery,
+                                offline: resultUnknown || !isOnline(),
+                                error: error instanceof Error ? error.message : "画布保存失败",
+                                conflict,
                             };
-                            const shouldRestoreDelete = conflict && operation === "delete" && current.deletedProject && !state.projects.some((item) => item.id === id);
-                            return {
-                                projectSync,
-                                projects: shouldRestoreDelete ? [current.deletedProject as CanvasProject, ...state.projects] : state.projects,
-                            };
+                            if (confirming) next.serverRevision = submittedRevision;
+                            if (request) next.unknownRequest = request;
+                            if (rejected) {
+                                delete next.unknownRequest;
+                                next.pauseReason = "rejected";
+                            }
+                            if (permission) next.pauseReason = "permission";
+                            if (recovery) next.pauseReason = "recovery";
+                            const restoreDeleted = conflict && operation === "delete" && current.deletedProject && !state.projects.some((item) => item.id === id);
+                            return { projectSync: { ...state.projectSync, [id]: next }, projects: restoreDeleted ? [current.deletedProject!, ...state.projects] : state.projects };
                         });
+                        try {
+                            await persistence.waitForLatestWrite();
+                            completed = rejected;
+                        } catch (storageError) {
+                            if (!ownsOperation()) return;
+                            updateSync(id, (current) =>
+                                current
+                                    ? {
+                                          ...current,
+                                          ...(request ? { unknownRequest: request } : {}),
+                                          saving: false,
+                                          dirty: true,
+                                          pending: false,
+                                          error: storageError instanceof Error ? storageError.message : "画布本地保存失败",
+                                      }
+                                    : current,
+                            );
+                        }
                     } finally {
                         inFlight.delete(id);
                         finishInFlight.get(id)?.();
                         finishInFlight.delete(id);
                         inFlightDone.delete(id);
                         const current = get().projectSync[id];
-                        if (current && !current.offline && !isProjectSyncBlocked(id) && !current.conflict && (current.dirty || current.pending) && (completed || current.operation !== operation)) scheduleSave(id);
+                        if (ownsOperation() && current?.saving) updateSync(id, (sync) => (sync ? { ...sync, saving: false, pending: true } : sync));
+                        if (
+                            !releasedEditors.has(id) &&
+                            get().syncScope === scope &&
+                            current &&
+                            !current.offline &&
+                            !current.pauseReason &&
+                            !isProjectSyncBlocked(id) &&
+                            !current.conflict &&
+                            (current.dirty || current.pending || current.unknownRequest) &&
+                            (completed || current.operation !== operation || !ownsOperation())
+                        )
+                            scheduleSave(id);
                     }
                 };
 
@@ -545,7 +607,16 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             await store.persist.rehydrate();
                         } finally {
                             const guest = !scope || scope === CANVAS_GUEST_SCOPE;
-                            set({ hydrated: true, syncScope: scope, syncEnabled: false, bootstrapStatus: guest ? "ready" : "loading", bootstrapError: null, readyForCanvasMutations: guest });
+                            const projectSync = restoredSync(get().projectSync);
+                            const blockedProjectSync =
+                                typeof window === "undefined"
+                                    ? {}
+                                    : Object.fromEntries(
+                                          Object.entries(projectSync)
+                                              .filter(([, sync]) => hasUnsyncedChanges(sync))
+                                              .map(([id]) => [id, true as const]),
+                                      );
+                            set({ projectSync, blockedProjectSync, hydrated: true, syncScope: scope, syncEnabled: false, bootstrapStatus: guest ? "ready" : "loading", bootstrapError: null, readyForCanvasMutations: guest });
                         }
                     },
                     markBootstrapUnavailable: (scope, error) => {
@@ -567,6 +638,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     startSync: (scope) => {
                         const enabled = Boolean(scope) && scope !== CANVAS_GUEST_SCOPE;
+                        if (get().syncScope !== scope) sessionGeneration++;
                         set({ syncScope: scope || null, syncEnabled: enabled, bootstrapStatus: "ready", bootstrapError: null, readyForCanvasMutations: true });
                         if (!enabled) return;
                         if (!subscribedToOnline) {
@@ -576,6 +648,8 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         get().retryPendingSaves();
                     },
                     setProjectSyncBlocked: (id, blocked) => {
+                        if (!blocked) releasedEditors.delete(id);
+                        if (blocked && !get().blockedProjectSync[id]) writerGenerations.set(id, (writerGenerations.get(id) || 0) + 1);
                         const timer = saveTimers.get(id);
                         if (blocked && timer) clearTimeout(timer);
                         if (blocked) saveTimers.delete(id);
@@ -587,6 +661,19 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         });
                         const sync = get().projectSync[id];
                         if (!blocked && get().syncEnabled && sync && !sync.conflict && (sync.dirty || sync.pending)) scheduleSave(id);
+                    },
+                    releaseProjectEditor: (id) => {
+                        releasedEditors.add(id);
+                        writerGenerations.set(id, (writerGenerations.get(id) || 0) + 1);
+                        const timer = saveTimers.get(id);
+                        if (timer) clearTimeout(timer);
+                        saveTimers.delete(id);
+                        set((state) => {
+                            const blockedProjectSync = { ...state.blockedProjectSync };
+                            delete blockedProjectSync[id];
+                            const current = state.projectSync[id];
+                            return { blockedProjectSync, projectSync: current?.saving ? { ...state.projectSync, [id]: { ...current, saving: false, dirty: true, pending: true } } : state.projectSync };
+                        });
                     },
                     adoptImportedProjects: (records, snapshots) => {
                         set((state) => {
@@ -609,18 +696,15 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     applyLegacyImageNormalization: (id, capturedNodes, normalizedNodes) => {
                         if (isProjectSyncBlocked(id)) return false;
-                        let complete = false;
-                        let changed = false;
-                        set((state) => ({
-                            projects: state.projects.map((project) => {
-                                if (project.id !== id) return project;
-                                const merged = mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes);
-                                complete = merged.complete;
-                                changed = merged.nodes !== project.nodes;
-                                return changed ? { ...project, nodes: merged.nodes, updatedAt: new Date().toISOString() } : project;
-                            }),
-                        }));
-                        if (changed) queueChange(id);
+                        const state = get();
+                        const project = state.projects.find((item) => item.id === id);
+                        if (!project) return false;
+                        const merged = mergeNormalizedLegacyNodes(project.nodes, capturedNodes, normalizedNodes);
+                        const complete = merged.complete;
+                        if (merged.nodes !== project.nodes) {
+                            set({ projects: state.projects.map((item) => (item.id === id ? { ...item, nodes: merged.nodes, updatedAt: new Date().toISOString() } : item)), projectSync: changedSync(state, id) });
+                            queueChange(id);
+                        }
                         return complete;
                     },
                     mergeProjectSummaries: (records) => {
@@ -729,34 +813,21 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             }
                         }
                     },
-                    retryPendingSaves: async () => {
+                    retryPendingSaves: async (projectId) => {
                         if (!get().syncEnabled || !isOnline()) return;
-                        const pending = Object.entries(get().projectSync);
-                        set((state) => ({
-                            projectSync: Object.fromEntries(Object.entries(state.projectSync).map(([id, metadata]) => [id, { ...metadata, offline: false }])),
-                        }));
-                        for (const [id, previous] of pending) {
+                        const scope = get().syncScope,
+                            session = sessionGeneration;
+                        const pending = Object.entries(get().projectSync).filter(([id]) => !projectId || id === projectId);
+                        for (const [id] of pending) {
                             const metadata = get().projectSync[id];
-                            if (!metadata) continue;
-                            if (get().blockedProjectSync[id] || metadata.conflict || (!metadata.dirty && !metadata.pending)) continue;
-                            if (metadata.unknownRequest) {
-                                await saveProject(id);
-                                continue;
-                            }
-                            if (metadata.serverRevision === null || !previous.offline) {
-                                scheduleSave(id, 0);
-                                continue;
-                            }
-                            try {
-                                const server = await api.get(id);
-                                if (server.revision !== metadata.serverRevision) {
-                                    updateSync(id, (current) => (current ? { ...current, conflict: true, pending: false, error: "画布已在其他位置更新，请刷新后重试" } : current));
-                                    continue;
-                                }
-                                scheduleSave(id, 0);
-                            } catch (error) {
-                                updateSync(id, (current) => (current ? { ...current, offline: true, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
-                            }
+                            if (!metadata || get().blockedProjectSync[id] || metadata.conflict || metadata.pauseReason === "recovery" || (metadata.pauseReason && !projectId) || (!metadata.dirty && !metadata.pending && !metadata.unknownRequest)) continue;
+                            if (get().syncScope !== scope || sessionGeneration !== session) return;
+                            updateSync(id, (current) => {
+                                if (!current) return current;
+                                const { pauseReason: _, ...next } = current;
+                                return { ...next, offline: false, ...(!current.unknownRequest && current.offline && current.serverRevision !== null ? { needsRevalidation: true } : {}) };
+                            });
+                            await saveProject(id);
                         }
                     },
                     createProject: (title = "未命名画布") => {
@@ -774,7 +845,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             showImageInfo: false,
                             viewport: initialViewport,
                         };
-                        set((state) => ({ projects: [project, ...state.projects] }));
+                        set((state) => ({ projects: [project, ...state.projects], projectSync: changedSync(state, id) }));
                         queueChange(id);
                         return id;
                     },
@@ -791,7 +862,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             ),
                             now,
                         });
-                        set((state) => ({ projects: [project, ...state.projects] }));
+                        set((state) => ({ projects: [project, ...state.projects], projectSync: changedSync(state, id) }));
                         queueChange(id);
                         return id;
                     },
@@ -807,6 +878,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                 if (project.id !== id) return project;
                                 return { ...project, title: nextTitle, updatedAt: new Date().toISOString() };
                             }),
+                            projectSync: changedSync(state, id),
                         }));
                         queueChange(id);
                     },
@@ -814,19 +886,21 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         const current = get();
                         const deletableIDs = ids.filter((id) => !isProjectSyncBlocked(id));
                         if (deletableIDs.length === 0) return;
-                        set((state) => ({ projects: state.projects.filter((project) => !deletableIDs.includes(project.id)) }));
+                        let projectSync = current.projectSync;
                         for (const id of deletableIDs) {
                             const timer = saveTimers.get(id);
                             if (timer) clearTimeout(timer);
                             saveTimers.delete(id);
-                            const syncScope = get().syncScope;
-                            if (!syncScope || syncScope === CANVAS_GUEST_SCOPE) continue;
                             detailGenerations.set(id, (detailGenerations.get(id) || 0) + 1);
-                            const deletedProject = current.projects.find((project) => project.id === id);
-                            const summary = current.summaries.find((item) => item.id === id);
-                            if (!get().projectSync[id] && summary) updateSync(id, () => cleanSyncState(summary.revision));
-                            queueChange(id, "delete", deletedProject);
+                            projectSync = changedSync(
+                                { ...current, projectSync },
+                                id,
+                                "delete",
+                                current.projects.find((item) => item.id === id),
+                            );
                         }
+                        set({ projects: current.projects.filter((item) => !deletableIDs.includes(item.id)), projectSync });
+                        deletableIDs.forEach(queueChange);
                     },
                     updateProject: (id, patch) => {
                         if (isProjectSyncBlocked(id)) return;
@@ -839,6 +913,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                 if (project.id !== id) return project;
                                 return nextProject;
                             }),
+                            projectSync: changesServerDocument ? changedSync(state, id) : state.projectSync,
                         }));
                         if (changesServerDocument) queueChange(id);
                     },

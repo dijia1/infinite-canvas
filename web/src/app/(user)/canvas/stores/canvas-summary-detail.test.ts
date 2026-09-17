@@ -1,3 +1,4 @@
+import { sanitizeCanvasProjectDocument } from "@/services/canvas-project-document";
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { CanvasProjectDetail, CanvasProjectsApi } from "@/services/api/canvas-projects";
@@ -191,7 +192,7 @@ test("a real summary bootstrap retains rehydrated dirty content, replay metadata
         error: "response lost",
         conflict: false,
         operation: "save" as const,
-        unknownRequest: { baseRevision: 1, title: "original request", document: record.document, trace: { tabId: "tab", requestId: "request", requestSeq: 1, reason: "autosave" as const } },
+        unknownRequest: { baseRevision: 1, title: "original request", document: sanitizeCanvasProjectDocument(record.document), trace: { tabId: "tab", requestId: "request", requestSeq: 1, reason: "autosave" as const } },
     };
     let gets = 0;
     let imports = 0;

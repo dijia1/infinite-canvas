@@ -126,7 +126,7 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 		writeLog("failed", 0, r.UserAgent())
-		writeCanvasProjectError(w, err)
+		writeCanvasSaveError(w, err)
 		return
 	}
 	outcome := "saved"
@@ -171,4 +171,16 @@ func writeCanvasProjectError(w http.ResponseWriter, err error) {
 		return
 	}
 	FailError(w, err)
+}
+
+func writeCanvasSaveError(w http.ResponseWriter, err error) {
+	if code := service.CanvasSaveErrorCode(err); code != "" {
+		status := http.StatusBadRequest
+		if errors.Is(err, service.ErrCanvasProjectDocumentTooLarge) {
+			status = http.StatusRequestEntityTooLarge
+		}
+		FailDataStatus(w, status, err.Error(), map[string]any{"code": code})
+		return
+	}
+	writeCanvasProjectError(w, err)
 }

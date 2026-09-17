@@ -87,7 +87,13 @@ const summaries = [
 async function restoredSummaryStore() {
     const backing = memoryStateStorage();
     const storageName = "infinite-canvas:canvas_store:owner";
-    const seed = createCanvasStorage(backing);
+    const seed = createCanvasStorage({
+        ...backing,
+        getItems: async (keys) => Promise.all(keys.map((key) => backing.getItem(key))),
+        setItems: async (entries) => {
+            for (const [key, value] of entries) await backing.setItem(key, value);
+        },
+    });
     await seed.setItem(storageName, {
         state: {
             projects: [project],
@@ -108,7 +114,13 @@ async function restoredSummaryStore() {
     } as StorageValue<CanvasStore>);
 
     const store = createCanvasStore({
-        storage: createCanvasStorage(backing),
+        storage: createCanvasStorage({
+            ...backing,
+            getItems: async (keys) => Promise.all(keys.map((key) => backing.getItem(key))),
+            setItems: async (entries) => {
+                for (const [key, value] of entries) await backing.setItem(key, value);
+            },
+        }),
         isOnline: () => false,
         api: {
             list: async () => ({ items: [], total: 0 }),

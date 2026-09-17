@@ -86,6 +86,7 @@ export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { pro
     const sync = useCanvasStore((state) => state.projectSync[projectId]);
     const blocked = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
+    const retryPendingSaves = useCanvasStore((state) => state.retryPendingSaves);
     const [refreshing, setRefreshing] = useState(false);
 
     if (!syncEnabled || !sync) return null;
@@ -101,11 +102,26 @@ export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { pro
         }
     };
 
-    return <EditorSyncStatus kind={description.kind} label={description.label}>
-        {description.refreshable ? (
-            <Button type="link" size="small" loading={refreshing} icon={<RefreshCw className="size-3" />} className="h-6 px-1 text-xs" onClick={() => void refresh()}>
-                加载服务器版本
-            </Button>
-        ) : null}
-    </EditorSyncStatus>;
+    const retry = async () => {
+        setRefreshing(true);
+        try {
+            await retryPendingSaves(projectId);
+        } finally {
+            setRefreshing(false);
+        }
+    };
+    return (
+        <EditorSyncStatus kind={description.kind} label={description.label} detail={sync.error || undefined}>
+            {!blocked && !sync.conflict && sync.pauseReason !== "recovery" && (description.kind === "error" || description.kind === "offline") ? (
+                <Button type="link" size="small" loading={refreshing} icon={<RefreshCw className="size-3" />} className="h-6 px-1 text-xs" onClick={() => void retry()}>
+                    重试保存
+                </Button>
+            ) : null}
+            {description.refreshable ? (
+                <Button type="link" size="small" loading={refreshing} icon={<RefreshCw className="size-3" />} className="h-6 px-1 text-xs" onClick={() => void refresh()}>
+                    加载服务器版本
+                </Button>
+            ) : null}
+        </EditorSyncStatus>
+    );
 }

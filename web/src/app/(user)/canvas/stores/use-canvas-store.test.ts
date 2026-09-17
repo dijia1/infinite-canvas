@@ -372,7 +372,13 @@ test("does not reserialize project documents when only save metadata changes", a
             values.delete(name);
         },
     };
-    const storage = createCanvasStorage(backingStorage);
+    const storage = createCanvasStorage({
+        ...backingStorage,
+        getItems: async (keys) => Promise.all(keys.map((key) => backingStorage.getItem(key))),
+        setItems: async (entries) => {
+            for (const [key, value] of entries) await backingStorage.setItem(key, value);
+        },
+    });
     const projects = [
         {
             ...serverProject().document,
@@ -384,7 +390,9 @@ test("does not reserialize project documents when only save metadata changes", a
     ];
 
     await storage.setItem("canvas", { state: { projects, projectSync: {} } } as unknown as StorageValue<CanvasStore>);
-    await storage.setItem("canvas", { state: { projects, projectSync: { "project-1": { serverRevision: 1, dirty: true, pending: true, saving: false, offline: false, error: null, conflict: false, operation: "save" } } } } as unknown as StorageValue<CanvasStore>);
+    await storage.setItem("canvas", {
+        state: { projects, projectSync: { "project-1": { serverRevision: 1, dirty: true, pending: true, saving: false, offline: false, error: null, conflict: false, operation: "save" } } },
+    } as unknown as StorageValue<CanvasStore>);
 
     assert.equal(writes.filter((name) => name === "canvas:projects").length, 1);
     assert.equal(writes.filter((name) => name === "canvas:sync").length, 2);
@@ -451,8 +459,14 @@ test("keeps locally uploading images when a fresh server snapshot replaces a cle
     ]);
 
     const project = store.getState().openProject("project-1");
-    assert.deepEqual(project?.nodes.map((node) => node.id), ["server-text", "local-upload"]);
-    assert.deepEqual(project?.connections.map((connection) => connection.id), ["local-connection"]);
+    assert.deepEqual(
+        project?.nodes.map((node) => node.id),
+        ["server-text", "local-upload"],
+    );
+    assert.deepEqual(
+        project?.connections.map((connection) => connection.id),
+        ["local-connection"],
+    );
     assert.equal(store.getState().projectSync["project-1"]?.serverRevision, 2);
     assert.equal(store.getState().projectSync["project-1"]?.dirty, false);
 });
@@ -552,6 +566,8 @@ test("keeps the debounce delay after an in-flight save receives more drag update
         store.getState().renameProject("project-1", "拖动结束");
         firstSave.resolve();
         await firstSettled.promise;
+        // The acknowledgement must finish its local persistence barrier first.
+        await new Promise<void>((resolve) => setImmediate(resolve));
         mock.timers.tick(49);
         await new Promise<void>((resolve) => setImmediate(resolve));
         assert.deepEqual(titles, ["拖动开始"]);
@@ -881,14 +897,16 @@ test("an older document acknowledgement stays pending until the latest nodes, ed
     const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const saved: CanvasProjectDetail[] = [];
     let request = 0;
-    const { api } = apiDouble({ update: async (id, input) => {
-        const index = request++;
-        started[index].resolve();
-        await acknowledgements[index].promise;
-        const record = serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
-        saved.push(record);
-        return record;
-    } });
+    const { api } = apiDouble({
+        update: async (id, input) => {
+            const index = request++;
+            started[index].resolve();
+            await acknowledgements[index].promise;
+            const record = serverProject({ id, title: input.title, document: input.document, revision: input.revision + 1 });
+            saved.push(record);
+            return record;
+        },
+    });
     const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
     store.getState().replaceProjectsFromServer([serverProject()]);
     store.getState().startSync("portal-user");
@@ -916,5 +934,7 @@ test("an older document acknowledgement stays pending until the latest nodes, ed
         assert.deepEqual(reopened.getState().projects[0].nodes, latest.nodes);
         assert.deepEqual(reopened.getState().projects[0].connections, latest.connections);
         assert.deepEqual(reopened.getState().projects[0].viewport, latest.viewport);
-    } finally { acknowledgements.forEach((ack) => ack.resolve()); }
+    } finally {
+        acknowledgements.forEach((ack) => ack.resolve());
+    }
 });
