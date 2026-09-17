@@ -27,6 +27,7 @@ import { createWorkflowAutosave, type WorkflowAutosaveState } from "./workflow-a
 import { useWorkflowEditorLease } from "./workflow-editor-lease";
 import { defaultWorkflowView, readWorkflowView, writeWorkflowView } from "./workflow-view-preferences";
 import { useWorkflowInteractions } from "./use-workflow-interactions";
+import { useWorkflowImageDrop } from "./use-workflow-image-drop";
 import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes } from "./workflow-canvas-adapter";
 import { resizeCanvasNode } from "@/lib/canvas-resize";
 import type { CanvasResizeCorner } from "@/components/canvas-node-primitives";
@@ -681,6 +682,12 @@ function WorkflowEditorContent() {
         canvas.setSelectedConnectionId(null);
         interactions.resetInteractionState();
     };
+    const imageDrop = useWorkflowImageDrop({
+        readOnly: editBlocked,
+        setGraph,
+        onSelected: (ids) => { canvas.setSelectedNodeIds(ids); canvas.setSelectedConnectionId(null); setTargetFrameId(undefined); },
+        notify: (text, warning) => { if (warning) message.warning(text); else message.success(text); },
+    });
     const startNodeDrag = (event: ReactPointerEvent, node: WorkflowNode) => {
         if (event.button !== 0 || (event.target as Element).closest("button,input,textarea,.ant-select,[contenteditable=true],[data-canvas-no-drag]")) return;
         if (!editBlockedRef.current) canvas.handleNodeMouseDown(event, workflowVisualNodeId(node.id));
@@ -971,6 +978,11 @@ function WorkflowEditorContent() {
                         onCanvasMouseDown={readOnly ? undefined : (event) => { setTargetFrameId(undefined); interactions.handleCanvasMouseDown(event); }}
                         onCanvasDeselect={deselect}
                         onContextMenu={(event) => event.preventDefault()}
+                        onDrop={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            void imageDrop.importFiles(Array.from(event.dataTransfer.files), screenToWorld(event.clientX, event.clientY));
+                        }}
                     >
                         {visibleFrames.map((frame) => <CanvasFrame key={frame.id} frame={frame} selected={targetFrameId === frame.id} readOnly={editBlocked}
                             onSelect={() => { setTargetFrameId(frame.id); canvas.setSelectedNodeIds(new Set()); canvas.setSelectedConnectionId(null); }}
@@ -1143,6 +1155,9 @@ function WorkflowEditorContent() {
                             />
                         ) : null}
                     </InfiniteCanvas>
+                    {imageDrop.progress ? <div role="status" aria-live="polite" className="pointer-events-none absolute left-1/2 top-3 z-[70] -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
+                        正在导入图片 {imageDrop.progress.completed}/{imageDrop.progress.total}
+                    </div> : null}
                     {readOnly ? <div className="pointer-events-none absolute inset-x-0 bottom-24 z-40 text-center text-xs opacity-60">{lease.status === "readonly" ? "当前流程由另一标签页编辑" : "正在确认编辑权限"}</div> : null}
                     <CanvasToolbar
                         homeLabel={home.label}
