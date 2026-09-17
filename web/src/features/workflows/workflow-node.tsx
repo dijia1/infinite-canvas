@@ -35,6 +35,7 @@ export function WorkflowNodeCard({
     onImageLoaded,
     onImageDimensions,
     onDragStart,
+    onContextMenu,
     onResizeStart,
     onRemove,
     onChooseMedia,
@@ -63,6 +64,7 @@ export function WorkflowNodeCard({
     onImageLoaded: (storageKey: string) => void;
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, node: WorkflowNode) => void;
+    onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
     onResizeStart?: ResizeStart;
     onRemove: () => void;
     onChooseMedia: () => void;
@@ -111,6 +113,7 @@ export function WorkflowNodeCard({
             dataAttributes={{ "data-workflow-object": "", "data-workflow-node-id": node.id }}
             onPointerDown={(event) => onDragStart(event, node)}
             onImageLoaded={onImageLoaded}
+            onContextMenu={onContextMenu}
         />;
     }
     return (
@@ -122,6 +125,7 @@ export function WorkflowNodeCard({
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${selected ? "z-50" : "z-10"}`}
             style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)`, width, height, contain: "layout style" }}
             onPointerDown={(event) => onDragStart(event, node)}
+            onContextMenu={onContextMenu}
             onMouseEnter={keepHover}
             onMouseLeave={leaveHover}
             onDoubleClick={(event) => {
@@ -259,6 +263,7 @@ export function WorkflowOutputCard({
     onImageLoaded,
     onImageDimensions,
     onDragStart,
+    onContextMenu,
     onResizeStart,
     onRemove,
     onPreviewMedia,
@@ -286,6 +291,7 @@ export function WorkflowOutputCard({
     onImageLoaded?: (storageKey: string) => void;
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, parent: WorkflowNode, slot: WorkflowOutputSlot) => void;
+    onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
     onResizeStart?: ResizeStart;
     onRemove: () => void;
     onPreviewMedia?: () => void;
@@ -317,6 +323,7 @@ export function WorkflowOutputCard({
             dataAttributes={{ "data-workflow-object": "", "data-workflow-node-id": parent.id, "data-workflow-slot-id": slot.id }}
             onPointerDown={(event) => onDragStart(event, parent, slot)}
             onImageLoaded={onImageLoaded}
+            onContextMenu={onContextMenu}
         />;
     }
     return (
@@ -329,6 +336,7 @@ export function WorkflowOutputCard({
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${selected ? "z-50" : "z-10"}`}
             style={{ transform: `translate(${position.x}px, ${position.y}px)`, width, height, contain: "layout style" }}
             onPointerDown={(event) => onDragStart(event, parent, slot)}
+            onContextMenu={onContextMenu}
             onMouseEnter={keepHover}
             onMouseLeave={leaveHover}
         >

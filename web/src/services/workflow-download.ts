@@ -1,3 +1,6 @@
+import { saveAs } from "file-saver";
+import { getImageBlob, loadMediaImage, resolveRemoteImage } from "./image-storage";
+import type { WorkflowImageDownloadTarget } from "@/features/workflows/workflow-image-download";
 import { appApiPath } from "@/lib/app-path";
 import { apiGet } from "./api/request";
 
@@ -21,4 +24,28 @@ export async function downloadWorkflowImages(runId: string, signal?: AbortSignal
     } finally {
         pendingDownloads.delete(runId);
     }
+}
+
+// Always resolve the original variant; a displayed overview URL can be a thumbnail.
+export async function downloadSelectedWorkflowImages(targets: readonly WorkflowImageDownloadTarget[], signal: AbortSignal) {
+    const snapshot = targets.map(target => ({ ...target }));
+    let saved = 0, failed = 0;
+    for (const target of snapshot) {
+        signal.throwIfAborted();
+        try {
+            const image = await loadMediaImage(target.mediaId, () => resolveRemoteImage(target.mediaId), { signal });
+            const blob = await getImageBlob(image.storageKey);
+            signal.throwIfAborted();
+            if (!blob) throw new Error("图片原图缓存不可用");
+            const mime = (blob.type || image.mimeType).toLowerCase().split(";")[0]!;
+            const extension = mime === "image/jpeg" ? "jpg" : mime.replace(/^image\//, "").replace(/\+xml$/, "");
+            if (!mime.startsWith("image/") || !/^[a-z0-9]+$/.test(extension)) throw new Error("无法识别图片格式");
+            saveAs(blob, `${target.filename}.${extension}`);
+            saved++;
+        } catch (error) {
+            if (signal.aborted) throw error;
+            failed++;
+        }
+    }
+    return { saved, failed };
 }

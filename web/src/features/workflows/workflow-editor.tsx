@@ -14,7 +14,7 @@ import { useWorkflowFrameGestures } from "./use-workflow-frames";
 import { EditorSyncStatus } from "@/components/editor-sync-status";
 import { useEditorNavigation } from "@/components/layout/editor-navigation";
 import { useNavigationRoute } from "@/components/layout/use-navigation-route";
-import { downloadWorkflowImages } from "@/services/workflow-download";
+import { downloadSelectedWorkflowImages, downloadWorkflowImages } from "@/services/workflow-download";
 import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
 import { CanvasEditorTopBar } from "@/components/canvas-editor-top-bar";
 import { CanvasToolbar } from "@/app/(user)/canvas/components/canvas-toolbar";
@@ -28,7 +28,9 @@ import { useWorkflowEditorLease } from "./workflow-editor-lease";
 import { defaultWorkflowView, readWorkflowView, writeWorkflowView } from "./workflow-view-preferences";
 import { useWorkflowInteractions } from "./use-workflow-interactions";
 import { useWorkflowImageDrop } from "./use-workflow-image-drop";
-import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes } from "./workflow-canvas-adapter";
+import { workflowImageDownloadState, workflowImageMenuSelection, type WorkflowImageMenu } from "./workflow-image-download";
+import { WorkflowImageContextMenu } from "./workflow-image-context-menu";
+import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes, parseWorkflowVisualId } from "./workflow-canvas-adapter";
 import { resizeCanvasNode } from "@/lib/canvas-resize";
 import type { CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { ScopedVideoResourceProvider } from "@/app/(user)/canvas/components/canvas-video-content";
@@ -79,6 +81,7 @@ function WorkflowEditorContent() {
     const editorNavigation = useEditorNavigation();
     const { home } = useNavigationRoute();
     const [downloading, setDownloading] = useState(false);
+    const [imageMenu, setImageMenu] = useState<WorkflowImageMenu | null>(null);
     const downloadController = useRef<AbortController | null>(null);
     useEffect(() => () => downloadController.current?.abort(), []);
     const queryClient = useQueryClient();
@@ -164,8 +167,12 @@ function WorkflowEditorContent() {
         const ids = new Set(graph.nodes.filter((node) => (node.outputs || []).some((slot) => isCanvasNodeNearViewport({ id: node.id, type: CanvasNodeType.Image, title: "", position: slot.position || node.position, width: slot.width || 340, height: slot.height || 240 }, viewport, viewportSize, 384))).map((node) => node.id));
         if (previewNodeId) for (const connection of graph.connections) if (connection.targetNodeId === previewNodeId && connection.sourceSlotId !== "output") ids.add(connection.sourceNodeId);
         if (mediaPreview?.slot) ids.add(mediaPreview.node.id);
+        for (const id of imageMenu?.selectedIds || []) {
+            const visual = parseWorkflowVisualId(id);
+            if (visual?.kind === "output") ids.add(visual.nodeId);
+        }
         return ids;
-    }, [graph.nodes, graph.connections, viewport, viewportSize, previewNodeId, mediaPreview]);
+    }, [graph.nodes, graph.connections, viewport, viewportSize, previewNodeId, mediaPreview, imageMenu]);
     const runs = useWorkflowRuns({ ownerUID: draftOwnerUID, workflowId: workflow.data ? workflowId : undefined, graph, visibleNodeIds: visibleRunNodeIds });
     const currentRun = { data: runs.selectedDetail, isError: !runs.selectedDetail && Boolean(runs.selectedError), error: runs.selectedError, refetch: runs.refresh };
     const compatibleOutputs = useMemo(() => indexWorkflowRunOutputsByNode(runs.detailByNode, graph), [runs.detailByNode, graph]);
@@ -688,6 +695,38 @@ function WorkflowEditorContent() {
         onSelected: (ids) => { canvas.setSelectedNodeIds(ids); canvas.setSelectedConnectionId(null); setTargetFrameId(undefined); },
         notify: (text, warning) => { if (warning) message.warning(text); else message.success(text); },
     });
+    const selectedImageDownload = useMemo(() => imageMenu ? workflowImageDownloadState(graph, imageMenu.selectedIds, compatibleOutputs, runs.overview?.nodeRunIds, new Set(runs.detailsByRunId.keys())) : null,
+        [imageMenu, graph, compatibleOutputs, runs.overview, runs.detailsByRunId]);
+    const imageDownloadLoading = Boolean(selectedImageDownload?.pendingOverview || selectedImageDownload?.pendingRunIds.length);
+    const imageDownloadFailed = Boolean((selectedImageDownload?.pendingOverview && runs.overviewError) || selectedImageDownload?.pendingRunIds.some(id => runs.detailErrorsByRunId.has(id)));
+    const openImageMenu = (event: React.MouseEvent, visualId: string) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const selectedIds = workflowImageMenuSelection(canvas.selectedNodeIds, visualId);
+        canvas.setSelectedNodeIds(selectedIds);
+        canvas.setSelectedConnectionId(null);
+        setTargetFrameId(undefined);
+        setImageMenu({ x: event.clientX, y: event.clientY, selectedIds });
+    };
+    const downloadImageSelection = async () => {
+        if (!selectedImageDownload?.targets.length || imageDownloadLoading || imageDownloadFailed || downloadController.current) return;
+        const controller = new AbortController();
+        downloadController.current = controller;
+        setDownloading(true);
+        setImageMenu(null);
+        try {
+            const result = await downloadSelectedWorkflowImages(selectedImageDownload.targets, controller.signal);
+            if (!controller.signal.aborted) {
+                if (result.failed) message.warning(`已发起 ${result.saved} 张图片下载；${result.failed} 张下载失败`);
+                else message.success(`已开始下载 ${result.saved} 张图片`);
+            }
+        } catch (error) {
+            if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "图片下载失败");
+        } finally {
+            if (downloadController.current === controller) downloadController.current = null;
+            if (!controller.signal.aborted) setDownloading(false);
+        }
+    };
     const startNodeDrag = (event: ReactPointerEvent, node: WorkflowNode) => {
         if (event.button !== 0 || (event.target as Element).closest("button,input,textarea,.ant-select,[contenteditable=true],[data-canvas-no-drag]")) return;
         if (!editBlockedRef.current) canvas.handleNodeMouseDown(event, workflowVisualNodeId(node.id));
@@ -974,7 +1013,7 @@ function WorkflowEditorContent() {
                         containerRef={containerRef}
                         viewport={viewport}
                         backgroundMode={backgroundMode}
-                        onViewportChange={setViewport}
+                        onViewportChange={(next) => { setViewport(next); setImageMenu(null); }}
                         onCanvasMouseDown={readOnly ? undefined : (event) => { setTargetFrameId(undefined); interactions.handleCanvasMouseDown(event); }}
                         onCanvasDeselect={deselect}
                         onContextMenu={(event) => event.preventDefault()}
@@ -1059,6 +1098,7 @@ function WorkflowEditorContent() {
                                 onImageLoaded={(storageKey) => imageResources.acknowledgeRendered(node.id, storageKey)}
                                 onImageDimensions={(dimensions) => node.mediaId && fitLoadedImage(node.id, node.mediaId, dimensions)}
                                 onDragStart={startNodeDrag}
+                                onContextMenu={node.type === "image_input" ? (event) => openImageMenu(event, workflowVisualNodeId(node.id)) : undefined}
                                 onRemove={() => {
                                     if (!editBlockedRef.current) setGraph((current) => removeWorkflowNode(current, node.id));
                                 }}
@@ -1113,6 +1153,7 @@ function WorkflowEditorContent() {
                                     onResizeStart={startResize}
                                     onPreviewMedia={() => setMediaPreview({ node, slot })}
                                     onDragStart={startOutputDrag}
+                                    onContextMenu={slot.type === "image" ? (event) => openImageMenu(event, workflowVisualOutputId(node.id, slot.id)) : undefined}
                                     onRemove={() => {
                                         if (editBlockedRef.current) return;
                                         try {
@@ -1155,6 +1196,8 @@ function WorkflowEditorContent() {
                             />
                         ) : null}
                     </InfiniteCanvas>
+                    {imageMenu ? <WorkflowImageContextMenu menu={imageMenu} count={selectedImageDownload?.targets.length || 0} loading={imageDownloadLoading} failed={imageDownloadFailed} busy={downloading}
+                        onClose={() => setImageMenu(null)} onDownload={() => void downloadImageSelection()} onRetry={() => void runs.refresh()} /> : null}
                     {imageDrop.progress ? <div role="status" aria-live="polite" className="pointer-events-none absolute left-1/2 top-3 z-[70] -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
                         正在导入图片 {imageDrop.progress.completed}/{imageDrop.progress.total}
                     </div> : null}

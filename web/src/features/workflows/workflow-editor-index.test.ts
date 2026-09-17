@@ -270,6 +270,7 @@ test("opened previews keep exact generated output details relevant while their c
     );
     const visibleRunNodeIds = sourceBehavior(editorURL, {
         graph,
+        imageMenu: null,
         previewNodeId: target.id,
         mediaPreview: { node: media, slot: media.outputs![0] },
         viewport: { x: 0, y: 0, k: 1 },
@@ -291,4 +292,18 @@ test("preview grouping reads each connection once before serving every target", 
     const preview = previewCallback(graph, new Map());
     for (let index = 0; index < 9; index++) assert.equal(preview(`target-${index}`).length, nodes.length);
     assert.ok(reads <= entries.length * 2, `connection reads: ${reads}`);
+});
+
+
+test("image context selection requests offscreen output details but not every generation node", () => {
+    const node = workflowGraph.createWorkflowNode("image_generation", { x: 9000, y: 9000 }, "selected");
+    const graph = { version: 1, nodes: [node, workflowGraph.createWorkflowNode("image_generation", { x: 9900, y: 9900 }, "other")], connections: [] };
+    const ids = sourceBehavior(editorURL, {
+        graph, imageMenu: { selectedIds: new Set([adapter.workflowVisualOutputId(node.id, node.outputs![0]!.id), adapter.workflowVisualNodeId("other")]) },
+        parseWorkflowVisualId: adapter.parseWorkflowVisualId,
+        previewNodeId: undefined, mediaPreview: undefined,
+        viewport: { x: 0, y: 0, k: 1 }, viewportSize: { width: 800, height: 600 },
+        CanvasNodeType: { Image: "image" }, isCanvasNodeNearViewport: () => false, useMemo: (create: () => unknown) => create(),
+    }).named("visibleRunNodeIds") as Set<string>;
+    assert.deepEqual([...ids], ["selected"]);
 });
