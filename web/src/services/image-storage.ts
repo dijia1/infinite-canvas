@@ -6,6 +6,7 @@ import { nanoid } from "nanoid";
 import { appApiPath } from "@/lib/app-path";
 import { readImageMeta } from "@/lib/image-utils";
 import { portalStorageScope } from "@/lib/portal-storage-scope";
+import { retainedImageCacheKeys } from "./image-cache-retention";
 import { imageBlobFromResponse } from "./image-blob";
 import { coalesceMediaLoad, resolveOriginal, resolvePreview } from "./media-cache-policy";
 
@@ -47,6 +48,7 @@ export type MediaLoadOptions = {
 export type ImageStorageOperationsOptions = {
     scope: string;
     scopeVersion: number;
+    retainedStorageKeys?: () => ReadonlySet<string>;
     store: ImageCacheStore;
     cacheIndexStore?: ImageCacheStore;
     objectUrls: Map<string, string>;
@@ -668,6 +670,8 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
             Array.from(new Set(keys)).map((key) =>
                 withStorageMutation(key, async () => {
                     if (shouldDelete && !shouldDelete(key)) return;
+                    const retained = options.retainedStorageKeys?.() ?? retainedImageCacheKeys(options.scope);
+                    if (retained.has("*") || retained.has(key)) return;
                     await deleteExactKey(key);
                 }),
             ),

@@ -27,7 +27,7 @@ import { createWorkflowAutosave, type WorkflowAutosaveState } from "./workflow-a
 import { useWorkflowEditorLease } from "./workflow-editor-lease";
 import { defaultWorkflowView, readWorkflowView, writeWorkflowView } from "./workflow-view-preferences";
 import { useWorkflowInteractions } from "./use-workflow-interactions";
-import { useWorkflowImageDrop } from "./use-workflow-image-drop";
+import { useWorkflowLocalImages } from "./use-workflow-local-images";
 import { workflowImageDownloadState, workflowImageMenuSelection, type WorkflowImageMenu } from "./workflow-image-download";
 import { WorkflowImageContextMenu } from "./workflow-image-context-menu";
 import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes, parseWorkflowVisualId } from "./workflow-canvas-adapter";
@@ -39,10 +39,8 @@ import { useCanvasImageResources } from "@/app/(user)/canvas/media/use-canvas-im
 import { getCanvasRenderDetail } from "@/app/(user)/canvas/media/canvas-media-policy";
 import { isCanvasNodeNearViewport } from "@/app/(user)/canvas/utils/canvas-node-visibility";
 import { appPath } from "@/lib/app-path";
-import { readImageMeta } from "@/lib/image-utils";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isEditableTarget } from "@/lib/editable-target";
-import { uploadUserImage } from "@/services/api/image";
 import { ApiRequestError } from "@/services/api/request";
 import { uploadVideoMedia } from "@/services/api/video-media";
 import { fetchWorkflow, fetchWorkflowVideos, updateWorkflow } from "@/services/api/workflows";
@@ -196,20 +194,30 @@ function WorkflowEditorContent() {
     const currentSnapshot = useMemo(() => workflowEditorSnapshot({ name, graph }), [graph, name]);
     editorDocumentRef.current = { name, graph };
     const dirty = Boolean(savedSnapshot && currentSnapshot !== savedSnapshot);
+    const localImages = useWorkflowLocalImages({
+        uid: draftOwnerUID, workflowId, revision, savedSnapshot, readOnly: editBlocked, ready: Boolean(savedSnapshot), document: { name, graph }, setGraph,
+        onSelected: ids => { canvas.setSelectedNodeIds(ids); canvas.setSelectedConnectionId(null); setTargetFrameId(undefined); },
+        notify: (text, warning) => { if (warning) message.warning(text); else message.success(text); },
+        onUploaded: () => { void refreshAssets().catch(error => message.error(error instanceof Error ? error.message : "素材加载失败")); },
+        beforeEdit: () => { history.pause(); history.resume(); },
+        retainedHistory: () => { const retained = history.getRetainedHistory(); return [...retained.history.past, ...retained.history.future, ...(retained.lastHistory ? [retained.lastHistory] : [])]; },
+    });
     const history = useCanvasHistory({
-        snapshot: currentSnapshot,
+        snapshot: localImages.snapshot({ name, graph }),
         applySnapshot: (snapshot: string) => {
-            const document = JSON.parse(snapshot) as WorkflowEditorDocument;
+            const document = localImages.applyHistory(snapshot);
             setName(document.name);
             setGraph(document.graph);
         },
         isReady: Boolean(savedSnapshot),
     });
     const applyRemoteWorkflow = useCallback(
-        (remote: NonNullable<typeof workflow.data>, restoreDraft = true) => {
+        (remote: NonNullable<typeof workflow.data>, restoreDraft = true, canRestore = !editBlockedRef.current) => {
             const remoteState = remoteWorkflowEditorState("", 0, false, remote)!;
-            const draft = restoreDraft && draftOwnerUID && typeof window !== "undefined" ? readWorkflowDraft(window.sessionStorage, draftOwnerUID, remote.id) : undefined;
-            const restore = draft?.revision === remote.revision && workflowEditorSnapshot(draft.document) !== remoteState.savedSnapshot;
+            const imageRecovery = restoreDraft && canRestore ? localImages.readRecovery() : undefined;
+            const imageDraft = imageRecovery ? { revision: imageRecovery.revision, document: localImages.restoreDocument(imageRecovery) } : undefined;
+            const draft = imageDraft || (restoreDraft && canRestore && draftOwnerUID && typeof window !== "undefined" ? readWorkflowDraft(window.sessionStorage, draftOwnerUID, remote.id) : undefined);
+            const restore = draft?.revision === remote.revision && (Boolean(imageRecovery) || workflowEditorSnapshot(draft.document) !== remoteState.savedSnapshot);
             if (draft && !restore && draft.revision !== remote.revision && draftRecoveryKey.current !== `${remote.id}:${draft.revision}`) {
                 draftRecoveryKey.current = `${remote.id}:${draft.revision}`;
                 setDraftRecoveryPending(true);
@@ -221,24 +229,28 @@ function WorkflowEditorContent() {
                     closable: false,
                     maskClosable: false,
                     onOk: () => {
+                        localImages.recover(imageRecovery);
                         setName(draft.document.name);
                         setGraph(draft.document.graph);
-                        history.replaceBaseline(workflowEditorSnapshot(draft.document));
+                        history.replaceBaseline(localImages.snapshot(draft.document));
                         setDraftRecoveryPending(false);
                     },
                     onCancel: () => {
+                        localImages.recover();
+                        localImages.persist(remoteState.document, remote.revision);
                         if (draftOwnerUID) clearWorkflowDraft(window.sessionStorage, draftOwnerUID, remote.id);
                         setDraftRecoveryPending(false);
                     },
                 });
             }
+            localImages.recover(restore ? imageRecovery : undefined);
             loadedRef.current = remote.id;
             setName(restore ? draft.document.name : remoteState.document.name);
             setGraph(restore ? draft.document.graph : remoteState.document.graph);
             setRevision(remoteState.revision);
             setSavedSnapshot(remoteState.savedSnapshot);
             autosave.reset(remoteState.document, remote.revision);
-            history.replaceBaseline(workflowEditorSnapshot(restore ? draft.document : remoteState.document));
+            history.replaceBaseline(localImages.snapshot(restore ? draft.document : remoteState.document));
             if (restore) message.info("已恢复未保存的流程修改");
         },
         [autosave, draftOwnerUID, message],
@@ -252,7 +264,7 @@ function WorkflowEditorContent() {
         const remote = await fetchWorkflow(workflowId!);
         if (signal?.aborted) return;
         cacheSavedWorkflow(queryClient, remote);
-        applyRemoteWorkflow(remote);
+        applyRemoteWorkflow(remote, true, true);
     };
     useLayoutEffect(() => observeWorkflowViewport(containerRef.current, setViewportSize, (update) => new ResizeObserver(update)), [Boolean(workflow.data), Boolean(savedSnapshot)]);
     useEffect(() => {
@@ -311,7 +323,8 @@ function WorkflowEditorContent() {
             cacheSavedWorkflow(queryClient, saved);
             loadedRef.current = saved.id;
             setName(result.document.name);
-            setGraph(result.document.graph);
+            // Upload callbacks and this response can share a React batch; merge against the queued graph too.
+            setGraph(current => applyWorkflowSaveResult({ ...editorDocumentRef.current, graph: current }, submittedSnapshot, saved).document.graph);
             setRevision(result.revision);
             setSavedSnapshot(result.savedSnapshot);
         },
@@ -326,9 +339,13 @@ function WorkflowEditorContent() {
         try {
             let confirmedRevision = revision;
             if (!runs.pendingByScope.has(key)) {
+                const pending = localImages.pending(scope);
+                if (pending.length) throw new Error(`图片尚未上传完成：${pending.map(image => image.fileName).join("、")}。请等待上传或重试失败图片。`);
                 autosave.update(editorDocumentRef.current);
                 confirmedRevision = await autosave.flush();
             }
+            if (editBlockedRef.current) throw new Error("当前流程不可编辑，请重新确认编辑权限");
+            if (!runs.pendingByScope.has(key) && localImages.pending(scope).length) throw new Error("图片仍在上传，请等待上传完成后运行");
             await runs.start(scope, confirmedRevision);
             message.success("流程已开始运行");
         } catch (error) { message.error(error instanceof Error ? error.message : "运行请求结果待确认，可再次点击确认"); }
@@ -372,7 +389,8 @@ function WorkflowEditorContent() {
     const screenToWorld = useCallback(
         (clientX: number, clientY: number) => {
             const rect = containerRef.current?.getBoundingClientRect();
-            return { x: (clientX - (rect?.left || 0) - viewport.x) / viewport.k, y: (clientY - (rect?.top || 0) - viewport.y) / viewport.k };
+            const live = canvasRef.current?.getViewport() || viewport;
+            return { x: (clientX - (rect?.left || 0) - live.x) / live.k, y: (clientY - (rect?.top || 0) - live.y) / live.k };
         },
         [viewport],
     );
@@ -414,26 +432,11 @@ function WorkflowEditorContent() {
         setAssetPickerOpen(true);
     };
     const uploadImage = async (file: File) => {
-        setUploading(true);
-        try {
-            const localUrl = URL.createObjectURL(file);
-            let dimensions: { width: number; height: number };
-            try {
-                dimensions = await readImageMeta(localUrl);
-            } finally {
-                URL.revokeObjectURL(localUrl);
-            }
-            const uploaded = await uploadUserImage(file, "canvas");
-            if (editBlockedRef.current) return;
-            if (mediaTarget?.nodeId) updateNode(mediaTarget.nodeId, (node) => fitWorkflowImage({ ...node, mediaId: uploaded.mediaId }, dimensions, true));
-            else addNode("image_input", uploaded.mediaId, dimensions);
-            setAssetPickerOpen(false);
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "图片上传失败");
-        } finally {
-            setUploading(false);
-            setMediaTarget(undefined);
-        }
+        const target = mediaTarget?.nodeId;
+        const center = centerPosition();
+        setAssetPickerOpen(false);
+        setMediaTarget(undefined);
+        await localImages.importFiles([file], center, target);
     };
     const uploadVideo = async (file: File) => {
         setUploading(true);
@@ -451,6 +454,7 @@ function WorkflowEditorContent() {
         }
     };
     const selectAsset = (mediaId: string) => {
+        if (mediaTarget?.nodeId) localImages.forget(mediaTarget.nodeId);
         const asset = assets.find((item) => item.kind === "image" && item.metadata?.mediaId === mediaId);
         const dimensions = asset?.kind === "image" ? asset.data : undefined;
         if (mediaTarget?.nodeId)
@@ -543,8 +547,8 @@ function WorkflowEditorContent() {
     );
     const imageTargets = useMemo(() => {
         const inputTargets = graph.nodes.flatMap((node) => {
-            if (node.type !== "image_input" || !node.mediaId) return [];
-            const canvasNode = { id: node.id, type: CanvasNodeType.Image, title: "", position: node.position, width: node.width || 340, height: node.height || 240, metadata: { mediaId: node.mediaId } } satisfies CanvasNodeData;
+            if (node.type !== "image_input" || !node.mediaId || localImages.get(node.id)?.state === "uploading" || localImages.get(node.id)?.state === "failed") return [];
+            const canvasNode = { id: node.id, type: CanvasNodeType.Image, title: "", position: node.position, width: node.width || 340, height: node.height || 240, metadata: { mediaId: node.mediaId, content: localImages.get(node.id)?.url } } satisfies CanvasNodeData;
             const visible = isCanvasNodeNearViewport(canvasNode, viewport, viewportSize);
             const preview = previewImageNodeIds.has(node.id);
             const pinned = preview || selectedImageResourceIds.has(node.id);
@@ -575,7 +579,7 @@ function WorkflowEditorContent() {
             }),
         );
         return [...inputTargets, ...outputTargets];
-    }, [compatibleOutputs, graph.nodes, previewImageNodeIds, selectedImageResourceIds, viewport, viewportSize]);
+    }, [compatibleOutputs, graph.nodes, previewImageNodeIds, selectedImageResourceIds, viewport, viewportSize, localImages.version]);
     const imageResources = useCanvasImageResources({ targets: imageTargets, scale: viewport.k, resolveAccess: resolveImageAccess });
     const previewInputs = useCallback(
         (targetId: string): WorkflowPreviewInput[] =>
@@ -588,7 +592,8 @@ function WorkflowEditorContent() {
                     const execution = connection.sourceSlotId === "output" ? undefined : compatibleOutputs.get(workflowOutputKey(source.id, connection.sourceSlotId));
                     const resourceNodeId = execution ? workflowOutputResourceNodeId(execution.runId, source.id, connection.sourceSlotId) : source.id;
                     const mediaId = source.mediaId || execution?.mediaId;
-                    const resource = imageResources.resources.get(resourceNodeId);
+                    const local = !execution ? localImages.get(source.id) : undefined;
+                    const resource = local?.url ? { url: local.url, storageKey: local.image.storageKey } : imageResources.resources.get(resourceNodeId);
                     return [
                         {
                             key: connection.targetPortId,
@@ -600,7 +605,7 @@ function WorkflowEditorContent() {
                         },
                     ];
                 }),
-        [compatibleOutputs, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources],
+        [compatibleOutputs, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources, localImages.version],
     );
     const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
     const outputLinks = useMemo(() => workflowOutputLinks(graph), [graph]);
@@ -689,12 +694,6 @@ function WorkflowEditorContent() {
         canvas.setSelectedConnectionId(null);
         interactions.resetInteractionState();
     };
-    const imageDrop = useWorkflowImageDrop({
-        readOnly: editBlocked,
-        setGraph,
-        onSelected: (ids) => { canvas.setSelectedNodeIds(ids); canvas.setSelectedConnectionId(null); setTargetFrameId(undefined); },
-        notify: (text, warning) => { if (warning) message.warning(text); else message.success(text); },
-    });
     const selectedImageDownload = useMemo(() => imageMenu ? workflowImageDownloadState(graph, imageMenu.selectedIds, compatibleOutputs, runs.overview?.nodeRunIds, new Set(runs.detailsByRunId.keys())) : null,
         [imageMenu, graph, compatibleOutputs, runs.overview, runs.detailsByRunId]);
     const imageDownloadLoading = Boolean(selectedImageDownload?.pendingOverview || selectedImageDownload?.pendingRunIds.length);
@@ -1020,7 +1019,7 @@ function WorkflowEditorContent() {
                         onDrop={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
-                            void imageDrop.importFiles(Array.from(event.dataTransfer.files), screenToWorld(event.clientX, event.clientY));
+                            void localImages.importFiles(Array.from(event.dataTransfer.files), screenToWorld(event.clientX, event.clientY));
                         }}
                     >
                         {visibleFrames.map((frame) => <CanvasFrame key={frame.id} frame={frame} selected={targetFrameId === frame.id} readOnly={editBlocked}
@@ -1091,12 +1090,15 @@ function WorkflowEditorContent() {
                                 connecting={Boolean(interactions.connectingParams)}
                                 videoVisible={isCanvasNodeNearViewport({ id: node.id, type: CanvasNodeType.Video, title: "", position: node.position, width: node.width || 420, height: node.height || 236 } satisfies CanvasNodeData, viewport, viewportSize)}
                                 inputs={previewInputs(node.id)}
-                                imageUrl={imageResources.resources.get(node.id)?.url}
-                                imageStorageKey={imageResources.resources.get(node.id)?.storageKey}
-                                imageError={imageResources.errors.get(node.id)}
+                                imageUrl={localImages.get(node.id)?.state === "completed" ? imageResources.resources.get(node.id)?.url || localImages.get(node.id)?.url : localImages.get(node.id)?.url || imageResources.resources.get(node.id)?.url}
+                                imageStorageKey={localImages.get(node.id)?.state === "completed" ? imageResources.resources.get(node.id)?.storageKey || localImages.get(node.id)?.image.storageKey : localImages.get(node.id)?.image.storageKey || imageResources.resources.get(node.id)?.storageKey}
+                                imageError={localImages.get(node.id)?.url ? undefined : imageResources.errors.get(node.id)}
+                                localUpload={localImages.get(node.id)}
+                                onRetryUpload={() => localImages.retry(node.id)}
+                                onCancelReplacement={() => localImages.cancelReplacement(node.id)}
                                 onRetryImage={() => imageResources.retry(node.id)}
-                                onImageLoaded={(storageKey) => imageResources.acknowledgeRendered(node.id, storageKey)}
-                                onImageDimensions={(dimensions) => node.mediaId && fitLoadedImage(node.id, node.mediaId, dimensions)}
+                                onImageLoaded={(storageKey) => { imageResources.acknowledgeRendered(node.id, storageKey); if (imageResources.resources.get(node.id)?.storageKey === storageKey) localImages.acknowledge(node.id); }}
+                                onImageDimensions={(dimensions) => !localImages.get(node.id) && node.mediaId && fitLoadedImage(node.id, node.mediaId, dimensions)}
                                 onDragStart={startNodeDrag}
                                 onContextMenu={node.type === "image_input" ? (event) => openImageMenu(event, workflowVisualNodeId(node.id)) : undefined}
                                 onRemove={() => {
@@ -1198,8 +1200,8 @@ function WorkflowEditorContent() {
                     </InfiniteCanvas>
                     {imageMenu ? <WorkflowImageContextMenu menu={imageMenu} count={selectedImageDownload?.targets.length || 0} loading={imageDownloadLoading} failed={imageDownloadFailed} busy={downloading}
                         onClose={() => setImageMenu(null)} onDownload={() => void downloadImageSelection()} onRetry={() => void runs.refresh()} /> : null}
-                    {imageDrop.progress ? <div role="status" aria-live="polite" className="pointer-events-none absolute left-1/2 top-3 z-[70] -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
-                        正在导入图片 {imageDrop.progress.completed}/{imageDrop.progress.total}
+                    {localImages.progress ? <div role="status" aria-live="polite" className="pointer-events-none absolute left-1/2 top-3 z-[70] -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
+                        正在导入图片 {localImages.progress.completed}/{localImages.progress.total}
                     </div> : null}
                     {readOnly ? <div className="pointer-events-none absolute inset-x-0 bottom-24 z-40 text-center text-xs opacity-60">{lease.status === "readonly" ? "当前流程由另一标签页编辑" : "正在确认编辑权限"}</div> : null}
                     <CanvasToolbar
@@ -1341,7 +1343,8 @@ function WorkflowEditorContent() {
                               const output = slot ? compatibleOutputs.get(workflowOutputKey(node.id, slot.id)) : undefined;
                               const mediaId = slot ? output?.mediaId : node.mediaId;
                               const resourceId = slot && output ? workflowOutputResourceNodeId(output.runId, node.id, slot.id) : node.id;
-                              const resource = imageResources.resources.get(resourceId);
+                              const local = !slot ? localImages.get(node.id) : undefined;
+                              const resource = local?.url ? { url: local.url, storageKey: local.image.storageKey } : imageResources.resources.get(resourceId);
                               return (
                                   <div className="h-[65vh]">
                                       <WorkflowMediaPreview

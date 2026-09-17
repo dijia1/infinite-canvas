@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import ts from "typescript";
+import { applyWorkflowSaveResult } from "./workflow-editor-state";
 
 import { sourceBehavior } from "@/test-utils/source-behavior";
 import { hookHarness, sourceModule } from "../../test-utils/source-component";
@@ -222,6 +224,7 @@ function previewCallback(graph: WorkflowGraph, detailByNode: ReadonlyMap<string,
         nodesById,
         inputConnectionsByTarget,
         compatibleOutputs,
+        localImages: { get: () => undefined, version: 0 },
         imageResources: { resources, errors: new Map([["image", "loading failed"]]) },
         workflowSourceType: workflowGraph.workflowSourceType,
         workflowOutputKey: runState.workflowOutputKey,
@@ -306,4 +309,22 @@ test("image context selection requests offscreen output details but not every ge
         CanvasNodeType: { Image: "image" }, isCanvasNodeNearViewport: () => false, useMemo: (create: () => unknown) => create(),
     }).named("visibleRunNodeIds") as Set<string>;
     assert.deepEqual([...ids], ["selected"]);
+});
+
+
+test("a stale save response cannot overwrite an upload backfill in the same React update batch", () => {
+    const graph: WorkflowGraph = { version: 1, nodes: [{ id: "local", type: "image_input", position: { x: 10, y: 20 } }], connections: [] };
+    const document = { name: "workflow", graph };
+    const queued: Array<WorkflowGraph | ((graph: WorkflowGraph) => WorkflowGraph)> = [];
+    const callbacks = sourceBehavior(editorURL, {
+        applyWorkflowSaveResult, editorDocumentRef: { current: document }, queryClient: {}, cacheSavedWorkflow: () => undefined,
+        loadedRef: { current: "workflow" }, setName: () => undefined, setRevision: () => undefined, setSavedSnapshot: () => undefined,
+        setGraph: (update: WorkflowGraph | ((graph: WorkflowGraph) => WorkflowGraph)) => queued.push(update), message: { error() {} },
+    }).select(node => ts.isObjectLiteralExpression(node) && ts.isBinaryExpression(node.parent) && node.parent.left.getText() === "saveCallbacks.current") as { onSaved: (saved: unknown, snapshot: string) => void };
+    queued.push(current => ({ ...current, nodes: current.nodes.map(node => ({ ...node, mediaId: "confirmed", position: { x: 99, y: 88 } })) }));
+    callbacks.onSaved({ id: "workflow", ...document, revision: 2 }, JSON.stringify(document));
+    let committed = graph;
+    for (const update of queued) committed = typeof update === "function" ? update(committed) : update;
+    assert.equal(committed.nodes[0].mediaId, "confirmed");
+    assert.deepEqual(committed.nodes[0].position, { x: 99, y: 88 });
 });

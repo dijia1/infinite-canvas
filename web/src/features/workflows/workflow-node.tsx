@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "antd";
-import { Image as ImageIcon, LoaderCircle, Maximize2, Pencil, RefreshCw, Trash2, Upload, Video } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Maximize2, Pencil, RefreshCw, Trash2, Upload, Video, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
@@ -14,6 +14,7 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import type { WorkflowGenerationConfig, WorkflowNode, WorkflowOutputExecution, WorkflowOutputSlot } from "./types";
 import { WorkflowConfigPanel } from "./workflow-config-panel";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
+import type { LocalImageOperation } from "./workflow-local-images";
 import { workflowOutputStatusText } from "./workflow-run-state";
 
 export type WorkflowPreviewInput = { key: string; sourceNodeId: string; type: "image" | "video" | "text"; text?: string; mediaId?: string; imageUrl?: string; imageStorageKey?: string; imageError?: string };
@@ -31,6 +32,7 @@ export function WorkflowNodeCard({
     imageUrl,
     imageStorageKey,
     imageError,
+    localUpload, onRetryUpload, onCancelReplacement,
     onRetryImage,
     onImageLoaded,
     onImageDimensions,
@@ -60,6 +62,9 @@ export function WorkflowNodeCard({
     imageUrl?: string;
     imageStorageKey?: string;
     imageError?: string;
+    localUpload?: LocalImageOperation;
+    onRetryUpload?: () => void;
+    onCancelReplacement?: () => void;
     onRetryImage: () => void;
     onImageLoaded: (storageKey: string) => void;
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
@@ -87,13 +92,24 @@ export function WorkflowNodeCard({
     const height = node.height || 240;
     const generation = node.type === "image_generation" || node.type === "video_generation";
     const mediaType = node.type === "image_input" ? "image" : node.type === "video_input" ? "video" : undefined;
-    const hasMedia = Boolean(mediaType && node.mediaId);
+    const hasMedia = Boolean(mediaType && (node.mediaId || imageUrl));
     useEffect(() => {
         if (editing) textareaRef.current?.focus();
     }, [editing]);
     useEffect(() => {
         if (!selected || readOnly) setEditing(false);
     }, [selected, readOnly]);
+    const uploadStatus = localUpload && localUpload.state !== "completed" ? (
+        <div data-local-image-upload={localUpload.state} title={localUpload.error || `${localUpload.fileName}：上传中 ${localUpload.progress}%`}
+            className="absolute inset-x-0 bottom-0 z-[45] flex items-center gap-1 overflow-hidden bg-stone-100/95 px-2 py-1 text-stone-700 dark:bg-stone-900/95 dark:text-stone-200"
+            style={{ fontSize: "calc(11px * max(1, var(--canvas-inverse-scale, 1)))", gap: "calc(4px * max(1, var(--canvas-inverse-scale, 1)))" }}
+            onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
+            <span className={`inline-block shrink-0 rounded-full ${localUpload.state === "failed" ? "bg-red-500" : "bg-amber-500 animate-pulse"}`} style={{ width: ".55em", height: ".55em" }} />
+            <span className="min-w-0 flex-1 truncate">{localUpload.state === "failed" ? "上传失败" : `${localUpload.progress}%`}</span>
+            {localUpload.state === "failed" && !readOnly ? <button type="button" aria-label="重试上传" title="重试上传" onClick={onRetryUpload} className="shrink-0"><RefreshCw style={{ width: "1.2em", height: "1.2em" }} /></button> : null}
+            {localUpload.original && !readOnly ? <button type="button" aria-label="取消替换" title="取消替换" onClick={onCancelReplacement} className="shrink-0"><X style={{ width: "1.2em", height: "1.2em" }} /></button> : null}
+        </div>
+    ) : null;
     if (renderDetail === "overview") {
         return <CanvasOverviewNode
             nodeId={canvasNodeId || node.id}
@@ -105,7 +121,8 @@ export function WorkflowNodeCard({
             media={hasMedia}
             imageSource={mediaType === "image" ? imageUrl : undefined}
             imageStorageKey={imageStorageKey}
-            imageIdentity={node.mediaId}
+            imageIdentity={localUpload?.id || node.mediaId}
+            imageFit={localUpload ? "contain" : "cover"}
             fill={theme.node.fill}
             placeholderFill={theme.toolbar.activeBg}
             stroke={theme.node.stroke}
@@ -114,7 +131,7 @@ export function WorkflowNodeCard({
             onPointerDown={(event) => onDragStart(event, node)}
             onImageLoaded={onImageLoaded}
             onContextMenu={onContextMenu}
-        />;
+        >{uploadStatus}</CanvasOverviewNode>;
     }
     return (
         <div
@@ -195,6 +212,7 @@ export function WorkflowNodeCard({
                         />
                     ) : null}
                 </div>
+                {uploadStatus}
                 {!readOnly && onResizeStart ? canvasResizeCorners.map((corner) => <CanvasResizeHandle key={corner} corner={corner} onPointerDown={(event) => onResizeStart(event, node, corner)} />) : null}
             </CanvasNodeFrame>
             {!readOnly && generation ? (

@@ -1,4 +1,4 @@
-import type { MouseEventHandler, PointerEventHandler } from "react";
+import type { MouseEventHandler, PointerEventHandler, ReactNode } from "react";
 
 import type { Position } from "@/app/(user)/canvas/types";
 import { CanvasNodeSelectionOutline } from "./canvas-node-primitives";
@@ -15,6 +15,8 @@ type CanvasOverviewNodeProps = {
     imageSource?: string;
     imageStorageKey?: string;
     imageIdentity?: string;
+    imageFit?: "contain" | "cover";
+    children?: ReactNode;
     fill: string;
     placeholderFill: string;
     stroke: string;
@@ -37,6 +39,8 @@ export function CanvasOverviewNode({
     imageSource,
     imageStorageKey,
     imageIdentity,
+    imageFit = "cover",
+    children,
     fill,
     placeholderFill,
     stroke,
@@ -67,7 +71,7 @@ export function CanvasOverviewNode({
                         key={imageIdentity || nodeId}
                         src={imageSource}
                         alt=""
-                        className="object-cover"
+                        className={imageFit === "contain" ? "object-contain" : "object-cover"}
                         loading={<div className="h-full w-full" style={{ background: placeholderFill }} />}
                         errorFallback={<div className="h-full w-full" style={{ background: placeholderFill }} />}
                         onReady={() => {
@@ -79,6 +83,7 @@ export function CanvasOverviewNode({
                 )}
             </div>
             {selected ? <CanvasNodeSelectionOutline color={selectionStroke} /> : null}
+            {children}
         </div>
     );
 }

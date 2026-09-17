@@ -32,7 +32,7 @@ export function WorkflowMediaPreview({
     onImageDimensions?: (dimensions: { width: number; height: number }) => void;
     onChoose?: () => void;
 }) {
-    if (!mediaId) {
+    if (!mediaId && !(type === "image" && imageUrl)) {
         return (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3 text-xs opacity-55">
                 {type === "image" ? <ImageIcon className="size-7" /> : <Video className="size-7" />}

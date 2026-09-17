@@ -2,14 +2,15 @@ import { collectDroppedImageFiles, importDroppedImageFiles } from "@/app/(user)/
 import { autoAssignWorkflowFrameMembers } from "./workflow-frames";
 import { workflowVisualNodeId } from "./workflow-canvas-adapter";
 import { createWorkflowNode, fitWorkflowImage } from "./workflow-graph";
+import type { UploadedImage } from "@/services/image-storage";
 import type { WorkflowGraph, WorkflowNode, WorkflowPosition } from "./types";
 
 export type WorkflowDropProgress = { completed: number; total: number };
 
 type ImportOptions = {
-    readDimensions: (file: File) => Promise<{ width: number; height: number }>;
-    upload: (file: File, signal: AbortSignal) => Promise<{ mediaId: string }>;
+    readLocal: (file: File) => Promise<UploadedImage>;
     signal: AbortSignal;
+    onDiscard?: (image: UploadedImage) => void;
     onProgress?: (progress: WorkflowDropProgress) => void;
 };
 
@@ -18,19 +19,18 @@ export async function prepareWorkflowDroppedImages(files: Iterable<File>, center
     const input = Array.from(files);
     const total = collectDroppedImageFiles(input).files.length;
     const nodes = new Map<string, WorkflowNode>();
+    const localImages = new Map<string, { image: UploadedImage; file: File }>();
     let completed = 0;
     options.signal.throwIfAborted();
     options.onProgress?.({ completed, total });
     const result = await importDroppedImageFiles(input, center, async (file, position) => {
         options.signal.throwIfAborted();
         try {
-            const dimensions = await options.readDimensions(file);
-            options.signal.throwIfAborted();
-            const uploaded = await options.upload(file, options.signal);
-            options.signal.throwIfAborted();
-            const node = fitWorkflowImage(createWorkflowNode("image_input", position), dimensions, true);
+            const image = await options.readLocal(file);
+            if (options.signal.aborted) { options.onDiscard?.(image); options.signal.throwIfAborted(); }
+            const node = fitWorkflowImage(createWorkflowNode("image_input", position), image, true);
             node.position = { x: position.x - node.width! / 2, y: position.y - node.height! / 2 };
-            node.mediaId = uploaded.mediaId;
+            localImages.set(node.id, { image, file });
             nodes.set(node.id, node);
             return node.id;
         } finally {
@@ -38,8 +38,8 @@ export async function prepareWorkflowDroppedImages(files: Iterable<File>, center
             if (!options.signal.aborted) options.onProgress?.({ completed, total });
         }
     });
-    options.signal.throwIfAborted();
-    return { ...result, nodes: result.nodeIds.map(id => nodes.get(id)!) };
+    if (options.signal.aborted) { for (const { image } of localImages.values()) options.onDiscard?.(image); options.signal.throwIfAborted(); }
+    return { ...result, localImages, nodes: result.nodeIds.map(id => nodes.get(id)!) };
 }
 
 export function appendWorkflowDroppedImages(graph: WorkflowGraph, nodes: WorkflowNode[]): WorkflowGraph {

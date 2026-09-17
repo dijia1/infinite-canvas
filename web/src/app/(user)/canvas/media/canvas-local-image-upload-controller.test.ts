@@ -172,3 +172,15 @@ test("dispose settles queued work without starting requests and permits later re
     gates[1](); gates[2](); gates[3]();
     await Promise.all([...tasks, resumed]);
 });
+
+test("acknowledged remote identity survives a later local cache promotion failure", async () => {
+    const events: string[] = [];
+    const controller = createCanvasLocalImageUploadController({
+        upload: async () => ({ mediaId: "accepted", url: "remote" }),
+        onUploaded: (_id, remote) => { events.push(`accepted:${remote.mediaId}`); },
+        promote: async () => { throw new Error("cache unavailable"); },
+        onProgress: () => undefined, onCompleted: () => events.push("complete"), onFailed: () => events.push("failed"),
+    });
+    await controller.start({ nodeId: "node", file, image: localImage, intent: "library" });
+    assert.deepEqual(events, ["accepted:accepted", "failed"]);
+});

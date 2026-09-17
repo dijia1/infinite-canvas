@@ -32,6 +32,7 @@ class MemoryStore implements ImageCacheStore {
 function createTestOperations(options: {
     scope?: string;
     scopeVersion?: number;
+    retainedStorageKeys?: () => ReadonlySet<string>;
     store?: MemoryStore;
     isActive?: () => boolean;
     fetchImageBlob?: (url: string, options?: { signal?: AbortSignal }) => Promise<Blob>;
@@ -53,6 +54,7 @@ function createTestOperations(options: {
         scope: options.scope || "portal-user-a",
         scopeVersion: options.scopeVersion || 1,
         store,
+        retainedStorageKeys: options.retainedStorageKeys,
         objectUrls: options.objectUrls || new Map(),
         isActive: options.isActive || (() => true),
         fetchImageBlob: options.fetchImageBlob || (async () => new Blob(["remote"], { type: "image/png" })),
@@ -1043,4 +1045,33 @@ test("createImagePreview generates a 320px WebP at 0.8 quality", async () => {
         globals.createImageBitmap = originalBitmap;
         globals.OffscreenCanvas = originalCanvas;
     }
+});
+
+
+test("other editors retain pending, promoted and undo image caches during generic and budget cleanup", async () => {
+    const retained = new Set(["image:pending", imageStorageKeyForMedia("undo")]);
+    const store = new MemoryStore();
+    const { operations } = createTestOperations({ store, retainedStorageKeys: () => retained, cacheHighWatermarkBytes: 1, cacheLowWatermarkBytes: 0 });
+    await operations.setImageBlob("image:pending", new Blob(["pending"]));
+    await operations.setImageBlob(imageStorageKeyForMedia("undo"), new Blob(["undo"]));
+    await operations.setImageBlob(imageStorageKeyForMedia("unused"), new Blob(["unused"]));
+    await operations.cleanupUnusedImages({});
+    assert.ok(await store.getItem("image:pending"));
+    assert.ok(await store.getItem(imageStorageKeyForMedia("undo")));
+    assert.equal(await store.getItem(imageStorageKeyForMedia("unused")), null);
+    retained.clear();
+    await operations.cleanupUnusedImages({});
+    assert.equal(await store.getItem("image:pending"), null);
+    assert.equal(await store.getItem(imageStorageKeyForMedia("undo")), null);
+});
+
+test("retention added after cleanup enumeration is checked again before deletion", async () => {
+    const store = new MemoryStore();
+    const retained = new Set<string>();
+    const { operations } = createTestOperations({ store, retainedStorageKeys: () => retained });
+    await operations.setImageBlob("image:late-retained", new Blob(["local"]));
+    const iterate = store.iterate.bind(store);
+    store.iterate = async iterator => { const result = await iterate(iterator); retained.add("image:late-retained"); return result; };
+    await operations.cleanupUnusedImages({});
+    assert.ok(await store.getItem("image:late-retained"));
 });
