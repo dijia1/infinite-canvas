@@ -5,6 +5,7 @@ import { ApiRequestError } from "@/services/api/request";
 import type { CanvasProjectDetail, CanvasProjectsApi } from "@/services/api/canvas-projects";
 import type { PersistStorage, StateStorage, StorageValue } from "zustand/middleware";
 import { createCanvasStorage, createCanvasStore, type CanvasStore } from "./use-canvas-store.ts";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 
 const waitForDebounce = () => new Promise((resolve) => setTimeout(resolve, 35));
 
@@ -43,6 +44,102 @@ function apiDouble(overrides: Partial<CanvasProjectsApi> = {}) {
     };
     return { api, saved };
 }
+
+function completedUploadNode(): CanvasNodeData {
+    return {
+        id: "uploaded-image",
+        type: CanvasNodeType.Image,
+        title: "已上传图片",
+        position: { x: 0, y: 0 },
+        width: 320,
+        height: 240,
+        metadata: {
+            mediaId: "media-1",
+            status: "success",
+            localUploadState: undefined,
+            localUploadProgress: undefined,
+            localUploadError: undefined,
+            localUploadIntent: undefined,
+            providerOptions: { nested: { omitted: undefined, nullable: null }, values: [undefined, null] },
+        },
+    };
+}
+
+test("completed uploads save once and become clean using the submitted JSON representation", async (t) => {
+    const { api, saved } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    t.after(() => store.getState().releaseProjectEditor("project-1"));
+    store.getState().replaceProjectsFromServer([serverProject()]);
+    store.getState().startSync("portal-user");
+    const node = completedUploadNode();
+
+    store.getState().updateProject("project-1", { nodes: [node] });
+    await waitForDebounce();
+    await waitForDebounce();
+
+    assert.equal(saved.length, 1, "a successful save must not schedule identical autosaves");
+    assert.deepEqual(saved[0].document.nodes, [JSON.parse(JSON.stringify(node))]);
+    assert.equal(store.getState().projectSync["project-1"].serverRevision, 2);
+    assert.equal(store.getState().projectSync["project-1"].dirty, false);
+    assert.equal(store.getState().projectSync["project-1"].pending, false);
+    assert.equal(store.getState().projectSync["project-1"].saving, false);
+    assert.equal(store.getState().projectSync["project-1"].unknownRequest, undefined);
+    assert.deepEqual(store.getState().openProject("project-1")?.nodes, [node], "normalization must not rewrite editor data");
+});
+
+test("new projects with completed uploads do not loop into updates after creation", async (t) => {
+    const created: CanvasProjectDetail[] = [];
+    const { api, saved } = apiDouble({
+        create: async (input) => {
+            const record = serverProject({ ...input, revision: 1 });
+            created.push(record);
+            return record;
+        },
+    });
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    store.getState().startSync("portal-user");
+    const id = store.getState().createProject("新画布");
+    t.after(() => store.getState().releaseProjectEditor(id));
+    const node = completedUploadNode();
+
+    store.getState().updateProject(id, { nodes: [node] });
+    await waitForDebounce();
+    await waitForDebounce();
+
+    assert.equal(created.length, 1);
+    assert.equal(saved.length, 0);
+    assert.deepEqual(created[0].document.nodes, [JSON.parse(JSON.stringify(node))]);
+    assert.equal(store.getState().projectSync[id].serverRevision, 1);
+    assert.equal(store.getState().projectSync[id].dirty, false);
+    assert.equal(store.getState().projectSync[id].pending, false);
+});
+
+test("JSON-equivalent metadata patches stay clean while explicit null changes are saved", async (t) => {
+    const { api, saved } = apiDouble();
+    const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    t.after(() => store.getState().releaseProjectEditor("project-1"));
+    const node = completedUploadNode();
+    store.getState().replaceProjectsFromServer([serverProject({ document: { ...serverProject().document, nodes: [JSON.parse(JSON.stringify(node))] } })]);
+    store.getState().startSync("portal-user");
+
+    store.getState().updateProject("project-1", { nodes: [node] });
+    await waitForDebounce();
+    assert.equal(saved.length, 0, "omitted object fields and JSON null array entries are not edits");
+    assert.equal(store.getState().projectSync["project-1"].dirty, false);
+
+    store.getState().updateProject("project-1", { nodes: [{ ...node, metadata: { ...node.metadata, vquality: null } }] });
+    await waitForDebounce();
+    assert.equal(saved.length, 1, "explicit null differs from an omitted object field");
+    assert.equal(saved[0].document.nodes[0].metadata?.vquality, null);
+
+    store.getState().updateProject("project-1", { nodes: [node] });
+    await waitForDebounce();
+    await waitForDebounce();
+    assert.equal(saved.length, 2, "removing an existing null field must still save once");
+    assert.equal(Object.hasOwn(saved[1].document.nodes[0].metadata!, "vquality"), false);
+    assert.equal(store.getState().projectSync["project-1"].dirty, false);
+    assert.equal(store.getState().projectSync["project-1"].pending, false);
+});
 
 test("coalesces rapid local edits into one latest server save", async () => {
     const { api, saved } = apiDouble();
@@ -892,7 +989,7 @@ test("deletes a remotely accepted create when the create response is lost after 
     assert.equal(store.getState().projectSync[id], undefined);
 });
 
-test("an older document acknowledgement stays pending until the latest nodes, edges and viewport are confirmed", async () => {
+test("an older document acknowledgement stays pending until the latest nodes, edges and viewport are confirmed", async (t) => {
     const acknowledgements = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const started = [Promise.withResolvers<void>(), Promise.withResolvers<void>()];
     const saved: CanvasProjectDetail[] = [];
@@ -908,10 +1005,10 @@ test("an older document acknowledgement stays pending until the latest nodes, ed
         },
     });
     const store = createCanvasStore({ api, serverDebounceMs: 10, isOnline: () => true });
+    t.after(() => store.getState().releaseProjectEditor("project-1"));
     store.getState().replaceProjectsFromServer([serverProject()]);
     store.getState().startSync("portal-user");
-    const { CanvasNodeType } = await import("../types");
-    const a = { id: "A", type: CanvasNodeType.Text, title: "A", width: 100, height: 100, position: { x: 0, y: 0 }, metadata: { content: "A" } };
+    const a = { id: "A", type: CanvasNodeType.Text, title: "A", width: 100, height: 100, position: { x: 0, y: 0 }, metadata: { content: "A", errorDetails: undefined } };
     const b = { ...a, id: "B" };
     const latest = { nodes: [a, b], connections: [{ id: "AB", fromNodeId: "A", toNodeId: "B" }], maskResources: {}, backgroundMode: "lines" as const, showImageInfo: true, viewport: { x: 32, y: 57, k: 1.58 } };
     try {
@@ -925,13 +1022,16 @@ test("an older document acknowledgement stays pending until the latest nodes, ed
         assert.deepEqual(store.getState().projects[0].nodes, latest.nodes);
         acknowledgements[1].resolve();
         await waitForDebounce();
+        await waitForDebounce();
+        assert.equal(request, 2, "new edits require one follow-up save, not an autosave loop");
         assert.equal(store.getState().projectSync["project-1"].saving, false);
         assert.equal(store.getState().projectSync["project-1"].dirty, false);
+        assert.equal(store.getState().projectSync["project-1"].pending, false);
         const { maskResources: _emptyMasks, ...expectedServerDocument } = latest;
-        assert.deepEqual(saved[1].document, expectedServerDocument);
+        assert.deepEqual(saved[1].document, JSON.parse(JSON.stringify(expectedServerDocument)));
         const reopened = createCanvasStore({ api, isOnline: () => true });
         reopened.getState().replaceProjectsFromServer([saved[1]]);
-        assert.deepEqual(reopened.getState().projects[0].nodes, latest.nodes);
+        assert.deepEqual(reopened.getState().projects[0].nodes, JSON.parse(JSON.stringify(latest.nodes)));
         assert.deepEqual(reopened.getState().projects[0].connections, latest.connections);
         assert.deepEqual(reopened.getState().projects[0].viewport, latest.viewport);
     } finally {

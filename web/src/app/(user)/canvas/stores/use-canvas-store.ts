@@ -143,7 +143,7 @@ function pendingSyncState(previous?: CanvasProjectSync, operation: CanvasProject
 }
 
 function canvasDocument(project: CanvasProject): CanvasProjectDocument {
-    return sanitizeCanvasProjectDocument({
+    const document = sanitizeCanvasProjectDocument({
         nodes: project.nodes,
         maskResources: project.maskResources,
         connections: project.connections,
@@ -151,6 +151,9 @@ function canvasDocument(project: CanvasProject): CanvasProjectDocument {
         showImageInfo: project.showImageInfo,
         viewport: project.viewport,
     });
+    // Compare the same JSON snapshot we send: undefined object fields disappear
+    // and undefined array entries become null. Keep the editor's data untouched.
+    return JSON.parse(JSON.stringify(document)) as CanvasProjectDocument;
 }
 
 function localProject(project: CanvasProjectDetail): CanvasProject {
@@ -465,7 +468,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             updateSync(id, (current) => (current ? { ...current, pauseReason: "recovery", error: "画布保存请求损坏或不兼容，请保留草稿并核对服务器副本" } : current));
                             return;
                         }
-                        submittedDocument = request?.document || (project ? (JSON.parse(JSON.stringify(canvasDocument(project))) as CanvasProjectDocument) : undefined);
+                        submittedDocument = request?.document || (project ? canvasDocument(project) : undefined);
                         submittedTitle = request?.title ?? project?.title;
                         submittedRevision = request?.baseRevision ?? metadata.serverRevision;
                         const trace = request?.trace || writeTracer.next(operation === "delete" ? "delete" : metadata.offline ? "retry" : "autosave");
