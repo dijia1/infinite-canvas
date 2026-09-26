@@ -31,6 +31,7 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 		f.write(filepath.Join(p, "docker-compose.yml"), "services: {}\n")
 	}
 	f.write(filepath.Join(root, "running"), releaseRepo+strings.Repeat("a", 40))
+	f.write(filepath.Join(root, "lifecycle"), "running")
 	f.write(filepath.Join(root, "images"), "")
 	f.write(filepath.Join(root, "containers"), "app\n")
 	f.write(filepath.Join(f.bin, "docker"), fakeReleaseDocker)
@@ -191,6 +192,111 @@ func TestReleaseFailureBoundaries(t *testing.T) {
 	})
 }
 
+func TestStoppedReleaseDeployment(t *testing.T) {
+	for _, status := range []string{"exited", "created"} {
+		t.Run(status+" release deploys without starting old image", func(t *testing.T) {
+			f := newReleaseFixture(t)
+			f.write(filepath.Join(f.root, "lifecycle"), status)
+			f.ok("b")
+			if f.read("lifecycle") != "running" || f.read("running") != releaseRepo+strings.Repeat("b", 40) {
+				t.Fatal("new release did not start")
+			}
+			if !strings.Contains(f.read("state/infinite-canvas-release.last-known-good"), "current_sha="+strings.Repeat("b", 40)) {
+				t.Fatal("healthy new release was not recorded")
+			}
+			if strings.Count(f.read("calls"), " up ") != 1 {
+				t.Fatal("old release was started", f.read("calls"))
+			}
+		})
+	}
+	for _, failure := range []string{"health", "up", "state-write"} {
+		t.Run(failure+" failure restores stopped baseline and permits retry", func(t *testing.T) {
+			f := newReleaseFixture(t)
+			f.write(filepath.Join(f.root, "lifecycle"), "exited")
+			before := f.read("state/infinite-canvas-release.last-known-good")
+			var faultFile string
+			switch failure {
+			case "health":
+				faultFile = filepath.Join(f.root, "unhealthy")
+				f.write(faultFile, releaseRepo+strings.Repeat("b", 40))
+			case "up":
+				faultFile = filepath.Join(f.root, "up-fail")
+				f.write(faultFile, "1")
+			case "state-write":
+				faultFile = filepath.Join(f.bin, "mv")
+				f.write(faultFile, "#!/usr/bin/env bash\nexit 1\n")
+			}
+			out, err := f.deploy("b")
+			if err == nil {
+				t.Fatal("failed target reported success", out)
+			}
+			if f.read("running") != releaseRepo+strings.Repeat("a", 40) || f.read("lifecycle") != "created" || f.read("state/infinite-canvas-release.last-known-good") != before {
+				t.Fatal("stopped baseline not preserved", out, f.read("calls"))
+			}
+			calls := f.read("calls")
+			if strings.Count(calls, " up ") != 1 || !strings.Contains(calls, " stop app") || !strings.Contains(calls, " create --no-build --force-recreate --pull never app") {
+				t.Fatal("recovery must stop the target and recreate, not start, the baseline", calls)
+			}
+			if err := os.Remove(faultFile); err != nil {
+				t.Fatal(err)
+			}
+			f.ok("b")
+		})
+	}
+	for _, status := range []string{"unhealthy", "paused", "restarting", "dead", "missing", "multiple", "nonzero-exit", "oom", "wrong-image", "bad-id"} {
+		t.Run("unsafe source "+status+" remains blocked", func(t *testing.T) {
+			f := newReleaseFixture(t)
+			switch status {
+			case "unhealthy":
+				f.write(filepath.Join(f.root, "unhealthy"), releaseRepo+strings.Repeat("a", 40))
+			case "nonzero-exit":
+				f.write(filepath.Join(f.root, "lifecycle"), "exited")
+				f.write(filepath.Join(f.root, "exit-code"), "1")
+			case "oom":
+				f.write(filepath.Join(f.root, "lifecycle"), "exited")
+				f.write(filepath.Join(f.root, "oom"), "true")
+			case "wrong-image":
+				f.write(filepath.Join(f.root, "lifecycle"), "exited")
+				f.write(filepath.Join(f.root, "running"), releaseRepo+strings.Repeat("c", 40))
+			case "bad-id":
+				f.write(filepath.Join(f.root, "lifecycle"), "exited")
+				f.write(filepath.Join(f.root, "bad-id"), "1")
+			default:
+				f.write(filepath.Join(f.root, "lifecycle"), status)
+			}
+			if out, err := f.deploy("b"); err == nil {
+				t.Fatal("unsafe preflight passed", out)
+			}
+			calls := f.read("calls")
+			if strings.Contains(calls, "pull ") || strings.Contains(calls, " up ") || strings.Contains(calls, " stop ") || strings.Contains(calls, " create ") {
+				t.Fatal("preflight failure changed deployment", calls)
+			}
+		})
+	}
+	for _, failure := range []string{"stop-fail", "create-fail"} {
+		t.Run("stopped recovery "+failure+" reports manual intervention", func(t *testing.T) {
+			f := newReleaseFixture(t)
+			f.write(filepath.Join(f.root, "lifecycle"), "exited")
+			before := f.read("state/infinite-canvas-release.last-known-good")
+			f.write(filepath.Join(f.root, "up-fail"), "1")
+			f.write(filepath.Join(f.root, failure), "1")
+			out, err := f.deploy("b")
+			if err == nil || !strings.Contains(out, "manual intervention required") {
+				t.Fatal("recovery failure was hidden", err, out)
+			}
+			if f.read("state/infinite-canvas-release.last-known-good") != before || strings.Count(f.read("calls"), " up ") != 1 {
+				t.Fatal("recovery changed the baseline or started the old version", f.read("calls"))
+			}
+			if failure == "stop-fail" && strings.Contains(f.read("calls"), " create ") {
+				t.Fatal("recreated a container after stop failed")
+			}
+			if failure == "create-fail" && f.read("lifecycle") != "exited" {
+				t.Fatal("failed target was not left stopped")
+			}
+		})
+	}
+}
+
 func TestReleaseImageCleanup(t *testing.T) {
 	t.Run("protect versions aliases containers and other repositories", func(t *testing.T) {
 		f := newReleaseFixture(t)
@@ -240,11 +346,21 @@ printf '%s\n' "$*" >> "$MOCK_ROOT/calls"
 image_id() { local s=${1##*:sha-}; printf 'id-%s\n' "${s:0:1}"; }
 case "$1" in
  compose)
-  while [[ $1 != config && $1 != up && $1 != ps ]]; do shift; done
+  while [[ $1 != config && $1 != up && $1 != ps && $1 != stop && $1 != create ]]; do shift; done
   case "$1" in
    config) exit 0 ;;
-   up) if [[ -f "$MOCK_ROOT/wrong-up" && $INFINITE_CANVAS_IMAGE == *:sha-b* ]]; then echo incorrect > "$MOCK_ROOT/running"; else printf '%s' "$INFINITE_CANVAS_IMAGE" > "$MOCK_ROOT/running"; fi ;;
-   ps) echo app ;;
+   up)
+    if [[ -f "$MOCK_ROOT/wrong-up" && $INFINITE_CANVAS_IMAGE == *:sha-b* ]]; then echo incorrect > "$MOCK_ROOT/running"; else printf '%s' "$INFINITE_CANVAS_IMAGE" > "$MOCK_ROOT/running"; fi
+    printf running > "$MOCK_ROOT/lifecycle"
+    [[ ! -f "$MOCK_ROOT/up-fail" ]] || exit 1 ;;
+   stop) [[ ! -f "$MOCK_ROOT/stop-fail" ]] || exit 1; printf exited > "$MOCK_ROOT/lifecycle" ;;
+   create) [[ ! -f "$MOCK_ROOT/create-fail" ]] || exit 1; printf '%s' "$INFINITE_CANVAS_IMAGE" > "$MOCK_ROOT/running"; printf created > "$MOCK_ROOT/lifecycle" ;;
+   ps)
+    status=$(cat "$MOCK_ROOT/lifecycle")
+    [[ $status != missing ]] || exit 0
+    if [[ "$*" == *'--status running'* && $status != running ]]; then exit 0; fi
+    echo app
+    if [[ $status == multiple ]]; then echo second-app; fi ;;
   esac ;;
  pull) exit 0 ;;
  image)
@@ -261,6 +377,14 @@ case "$1" in
    '{{.Image}}') if [[ $container == stopped ]]; then echo id-d; elif [[ -f "$MOCK_ROOT/bad-id" ]]; then echo wrong-id; else image_id "$(cat "$MOCK_ROOT/running")"; fi ;;
    '{{.Config.Image}}') cat "$MOCK_ROOT/running" ;;
    '{{.State.Health.Status}}') if [[ -f "$MOCK_ROOT/unhealthy" && $(cat "$MOCK_ROOT/unhealthy") == "$(cat "$MOCK_ROOT/running")" ]]; then echo unhealthy; else echo healthy; fi ;;
+   '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}')
+    printf '%s ' "$(cat "$MOCK_ROOT/lifecycle")"
+    if [[ -f "$MOCK_ROOT/unhealthy" && $(cat "$MOCK_ROOT/unhealthy") == "$(cat "$MOCK_ROOT/running")" ]]; then echo unhealthy; else echo healthy; fi ;;
+   '{{.State.Status}} {{.State.OOMKilled}} {{.State.ExitCode}}')
+    status=$(cat "$MOCK_ROOT/lifecycle"); oom=false; code=0
+    if [[ -f "$MOCK_ROOT/oom" ]]; then oom=$(cat "$MOCK_ROOT/oom"); fi
+    if [[ -f "$MOCK_ROOT/exit-code" ]]; then code=$(cat "$MOCK_ROOT/exit-code"); fi
+    printf '%s %s %s\n' "$status" "$oom" "$code" ;;
    *) exit 91 ;;
   esac ;;
  *) exit 92 ;;

@@ -30,11 +30,11 @@ compose() {
     docker compose --project-name infinite-canvas --env-file "$ENV_FILE" -f "$release_dir/docker-compose.yml" "$@"
 }
 
-services_healthy() {
+release_container() {
   local release_dir=$1
   local image=$2
   local container
-  container=$(compose "$release_dir" "$image" ps --status running -q app) || return 1
+  container=$(compose "$release_dir" "$image" ps --all -q app) || return 1
   [[ -n $container ]] || return 1
   [[ $container != *$'\n'* ]] || return 1
   local expected_id actual_id actual_ref
@@ -42,7 +42,21 @@ services_healthy() {
   actual_id=$(docker inspect --format '{{.Image}}' "$container") || return 1
   actual_ref=$(docker inspect --format '{{.Config.Image}}' "$container") || return 1
   [[ -n $expected_id && $actual_id == "$expected_id" && $actual_ref == "$image" ]] || return 1
-  [[ $(docker inspect --format '{{.State.Health.Status}}' "$container") == healthy ]]
+  printf '%s\n' "$container"
+}
+
+services_healthy() {
+  local container
+  container=$(release_container "$1" "$2") || return 1
+  [[ $(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container") == 'running healthy' ]]
+}
+
+services_stopped() {
+  local container status
+  container=$(release_container "$1" "$2") || return 1
+  status=$(docker inspect --format '{{.State.Status}} {{.State.OOMKilled}} {{.State.ExitCode}}' "$container") || return 1
+  # A clean stop or a prior stopped rollback is eligible; crashes/OOM are not.
+  [[ $status == 'exited false 0' || $status == 'created false 0' ]]
 }
 
 wait_for_healthy() {
@@ -68,6 +82,15 @@ rollback() {
   wait_for_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"
 }
 
+restore_stopped_release() {
+  echo "target deployment failed; restoring $LAST_GOOD_SHA without starting it" >&2
+  # Stop the failed target first. Recreate the baseline without running its code,
+  # preserving both the outage boundary and the identity checks for a later retry.
+  compose "$RELEASE_DIR" "$TARGET_IMAGE" stop app &&
+  compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" create --no-build --force-recreate --pull never app &&
+  services_stopped "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"
+}
+
 initialize_release_state() {
   local initialize_sha=${1:?missing deploy SHA}
   local initialize_image=${2:?missing target image}
@@ -83,19 +106,29 @@ initialize_release_state() {
 }
 
 main() {
+  local started_stopped=false
   read_state || { echo "no valid last-known-good release; run initialize-release-state.sh after a controlled first release" >&2; exit 69; }
   compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" config -q || exit 69
-  services_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" || { echo "current release is not healthy; refusing deployment" >&2; exit 69; }
+  if services_stopped "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"; then
+    started_stopped=true
+    echo "current release is stopped; deploying target without starting the previous version"
+  else
+    services_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" || { echo "current release is neither healthy nor safely stopped; refusing deployment" >&2; exit 69; }
+  fi
   docker pull "$TARGET_IMAGE"
   docker image inspect "$LAST_GOOD_IMAGE" >/dev/null 2>&1 || docker pull "$LAST_GOOD_IMAGE"
+  compose "$RELEASE_DIR" "$TARGET_IMAGE" config -q || exit 69
 
   if ! (
-    compose "$RELEASE_DIR" "$TARGET_IMAGE" config -q &&
-      compose "$RELEASE_DIR" "$TARGET_IMAGE" up -d --no-build --force-recreate app &&
+    compose "$RELEASE_DIR" "$TARGET_IMAGE" up -d --no-build --force-recreate app &&
       wait_for_healthy "$RELEASE_DIR" "$TARGET_IMAGE" &&
       write_state "$DEPLOY_SHA" "$TARGET_IMAGE" "$RELEASE_DIR"
   ); then
-    rollback || echo "rollback failed" >&2
+    if [[ $started_stopped == true ]]; then
+      restore_stopped_release || echo "failed to restore stopped release; manual intervention required" >&2
+    else
+      rollback || echo "rollback failed" >&2
+    fi
     exit 1
   fi
   # Run under the deployment lock, only after the new healthy state was committed.
