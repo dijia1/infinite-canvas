@@ -66,12 +66,12 @@ func BeginMediaObjectDeletion(ctx context.Context, item model.Media, current tim
 		if err != nil {
 			return err
 		}
-		if intent.Intent != InternalMediaUploadIntent && expiry.After(current) {
+		if intent.Intent != InternalMediaUploadIntent && intent.Intent != PublicImageImportIntent && expiry.After(current) {
 			return nil
 		}
 		updates := map[string]any{"finalize_claim_id": mediaObjectCleanupClaimPrefix + uuid.NewString()}
 		// Start the recheck window when a published server-written object is removed.
-		if !strings.HasPrefix(intent.FinalizeClaimID, mediaObjectCleanupClaimPrefix) && intent.Intent == InternalMediaUploadIntent {
+		if !strings.HasPrefix(intent.FinalizeClaimID, mediaObjectCleanupClaimPrefix) && (intent.Intent == InternalMediaUploadIntent || intent.Intent == PublicImageImportIntent) {
 			updates["expires_at"] = current.UTC().Format(time.RFC3339Nano)
 		}
 		if err = tx.Model(&intent).Updates(updates).Error; err != nil {
@@ -145,7 +145,7 @@ func ClaimMediaUploadCleanup(ctx context.Context, id string, current time.Time) 
 		protected := map[string]bool{}
 		for _, m := range media {
 			protected[m.ObjectKey] = true
-			if m.CleanupStatus == model.MediaCleanupDeleting {
+			if m.CleanupStatus == model.MediaCleanupDeleting || (intent.Intent == PublicImageImportIntent && intent.CompletedMediaID == m.ID) {
 				keep = true
 			}
 		}

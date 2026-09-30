@@ -70,6 +70,7 @@ func New() *gin.Engine {
 	v1.DELETE("/private-folders/:id", func(c *gin.Context) { handler.DeletePrivateFolder(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/public-images", gin.WrapF(handler.PublicImages))
 	v1.GET("/public-folders", gin.WrapF(handler.PublicFolders))
+	v1.POST("/public-images/:id/import", func(c *gin.Context) { handler.ImportPublicImage(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/public-images/:id/access", func(c *gin.Context) { handler.PublicImageAccess(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/public-images/:id/content", func(c *gin.Context) { handler.PublicImageContent(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/videos/by-client/:client", func(c *gin.Context) { handler.AIVideoByClient(c.Writer, c.Request, c.Param("client")) })

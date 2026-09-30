@@ -256,6 +256,27 @@ func PublicFolders(w http.ResponseWriter, _ *http.Request) {
 	OK(w, result)
 }
 
+func ImportPublicImage(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input struct {
+		RequestID string `json:"requestId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		Fail(w, "请求参数无效")
+		return
+	}
+	result, err := service.ImportPublicImage(r.Context(), user, id, input.RequestID)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func PublicImageAccess(w http.ResponseWriter, r *http.Request, id string) {
 	user, ok := service.PortalUserFromContext(r.Context())
 	if !ok {

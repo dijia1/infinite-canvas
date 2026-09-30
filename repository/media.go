@@ -481,8 +481,12 @@ func PreparePrivateMediaDeletion(id, ownerUID string, current time.Time) (model.
 }
 
 func imageTaskPreparingMediaReferenced(tx *gorm.DB, mediaID string) (bool, error) {
+	importing, err := publicImageImportReferenced(tx, mediaID, time.Now().UTC())
+	if err != nil || importing {
+		return importing, err
+	}
 	var count int64
-	err := tx.Model(&model.ImageGenerationTaskInput{}).
+	err = tx.Model(&model.ImageGenerationTaskInput{}).
 		Joins("JOIN image_generation_tasks ON image_generation_tasks.id = image_generation_task_inputs.task_id").
 		Where("image_generation_task_inputs.source_media_id = ? AND image_generation_tasks.status = ?", mediaID, model.ImageTaskPreparing).
 		Count(&count).Error

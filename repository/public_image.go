@@ -159,6 +159,13 @@ func PreparePublicImageDeletion(publicID string, current time.Time, actorUID ...
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&media, "id = ?", public.MediaID).Error; err != nil {
 			return err
 		}
+		importing, err := publicImageImportReferenced(tx, media.ID, current)
+		if err != nil {
+			return err
+		}
+		if importing {
+			return errors.New("素材正在被个人画板导入，请稍后重试")
+		}
 		preparing, err := imageTaskPreparingMediaReferenced(tx, media.ID)
 		if err != nil {
 			return err

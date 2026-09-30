@@ -19,4 +19,12 @@ type MediaUploadIntent struct {
 	CompletedMediaID   string `gorm:"index"`
 	CompletedAt        string
 	CreatedAt          string `gorm:"index"`
+	// Server-side public imports use the same reservation/cleanup protocol. These
+	// optional fields are empty for existing browser uploads.
+	SourcePublicImageID string
+	SourceMediaID       string `gorm:"index"`
+	SourceObjectKey     string
+	SourceVersionID     string
+	SourceETag          string
+	CopyStartedAt       *time.Time
 }

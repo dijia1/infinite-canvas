@@ -158,7 +158,7 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 	if !found {
 		return MediaAccess{}, false, safeMessageError{message: "上传请求不存在"}
 	}
-	if intent.Intent == repository.InternalMediaUploadIntent {
+	if intent.Intent == repository.InternalMediaUploadIntent || intent.Intent == repository.PublicImageImportIntent {
 		return MediaAccess{}, false, safeMessageError{message: "上传请求无效"}
 	}
 	if intent.CompletedMediaID != "" {
