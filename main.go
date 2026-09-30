@@ -26,9 +26,6 @@ func main() {
 	if _, err := repository.PromoteLegacyCanvasTemporaryMedia(); err != nil {
 		log.Fatalf("migrate legacy canvas media: %v", err)
 	}
-	if err := service.InitializeApplicationRBAC(context.Background(), config.Cfg.AppRBACInitialAdminUIDs); err != nil {
-		log.Fatal(err)
-	}
 	stopImageTasks, err := service.StartImageTaskWorker(context.Background())
 	if err != nil {
 		log.Fatal(err)

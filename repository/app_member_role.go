@@ -74,7 +74,7 @@ func ListAppRoles(userUIDs []string) (map[string]model.AppRole, error) {
 	return roles, nil
 }
 
-func SetAppRole(userUID string, role model.AppRole, grantedByUID string) error {
+func SetAppRole(userUID string, role model.AppRole, grantedByUID string, allowLastAdminRemoval bool) error {
 	if !isValidAppRole(role) {
 		return fmt.Errorf("invalid application role %q", role)
 	}
@@ -95,6 +95,9 @@ func SetAppRole(userUID string, role model.AppRole, grantedByUID string) error {
 			if err := transaction.Where("user_uid = ?", userUID).Delete(&model.AppMemberRole{}).Error; err != nil {
 				return err
 			}
+			if allowLastAdminRemoval {
+				return nil
+			}
 			return protectEnabledAppAdmins(transaction, enabledAdminCount)
 		}
 		assignment := model.AppMemberRole{UserUID: userUID, Role: role, GrantedByUID: grantedByUID}
@@ -103,6 +106,9 @@ func SetAppRole(userUID string, role model.AppRole, grantedByUID string) error {
 			DoUpdates: clause.AssignmentColumns([]string{"role", "granted_by_uid", "updated_at"}),
 		}).Create(&assignment).Error; err != nil {
 			return err
+		}
+		if allowLastAdminRemoval {
+			return nil
 		}
 		return protectEnabledAppAdmins(transaction, enabledAdminCount)
 	})

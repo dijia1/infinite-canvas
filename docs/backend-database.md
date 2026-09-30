@@ -19,12 +19,14 @@ GORM 在每次启动时先执行必要的 PostgreSQL 兼容升级，再执行 `A
 | `settings` | 管理员维护的 AI 供应商与默认模型配置 JSON。 |
 | `portal_members` | 从 Portal 同步的用户目录快照和启用状态。 |
 | `app_member_roles` | 应用内显式角色分配；无记录即为普通成员。 |
-| `app_rbac_state` | 应用内 RBAC 的一次性管理员引导状态和角色写入协调状态。 |
+| `app_rbac_state` | 角色写入与目录同步的协调状态；保留历史一次性引导标记，不再执行引导。 |
 | `operation_logs` | 服务端业务操作、执行状态与审计上下文。 |
 
-私人媒体和画布始终按 Portal 用户 UUID 隔离。公共图片和公共文件夹可由本地 `admin` 或 `public_assets_manager` 管理，所有已获应用入口权限的 Portal 用户可读取。公共素材管理权限不会授予管理后台的其他权限。
+私人媒体和画布始终按 Portal 用户 UUID 隔离。公共图片和公共文件夹可由已验签的 `portal-admin` 或本地 `admin`、`public_assets_manager` 管理，所有已获应用入口权限的 Portal 用户可读取。公共素材管理权限不会授予管理后台的其他权限。
 
-`app_member_roles` 只保存显式的 `admin` 和 `public_assets_manager` 分配；`portal_members` 中对应成员必须已同步且处于启用状态，角色才会生效。首次部署使用 `APP_RBAC_INITIAL_ADMIN_UIDS` 完成一次性应用内管理员引导；完成后角色只在“成员管理”中维护。Portal 继续提供可信身份和应用入口，其角色仅用于展示和审计元数据，不参与本地授权。
+已验签的 `portal-admin` 拥有全局最高管理权限，不依赖本地角色或目录快照。其他用户通过 `app_member_roles` 的显式 `admin`、`public_assets_manager` 分配取得业务权限，且 `portal_members` 中对应成员必须已同步并启用；无有效分配即为普通成员。除 `portal-admin` 外，Portal 角色只用于展示和审计，不自动转成本地业务角色。
+
+不再使用 `APP_RBAC_INITIAL_ADMIN_UIDS`；既有本地分配和历史引导记录保留。目录同步必须应用 Portal 停用状态，同时保留本地角色以便后续重新启用；不能因停用最后一位本地管理员而拒绝同步。目录同步与本地角色写入继续在同一协调行上加锁，普通本地管理员之间的并发降级仍不能移除全部有效管理员。
 
 ## 兼容升级与数据维护
 

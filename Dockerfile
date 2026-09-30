@@ -47,6 +47,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 COPY scripts/start-app.mjs /app/start-app.mjs
 
 EXPOSE 3000
-HEALTHCHECK --interval=10s --timeout=5s --start-period=75s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/healthz',{signal:AbortSignal.timeout(3000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+HEALTHCHECK --interval=10s --timeout=5s --start-period=75s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/healthz',{signal:AbortSignal.timeout(3000)}).then(async r=>process.exit(r.ok&&(await r.json()).ok===true?0:1)).catch(()=>process.exit(1))"]
 # 后端就绪后才启动前端；任一子进程退出都会终止容器。
 CMD ["node", "/app/start-app.mjs"]

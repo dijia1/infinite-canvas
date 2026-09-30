@@ -8,6 +8,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$SCRIPT_DIR/release-state.sh"
 MEDIA_DIR=${INFINITE_CANVAS_MEDIA_DIR:-/program/data/infinite-canvas/media}
 ENV_FILE="$APP_DIR/.env"
+GATEWAY_HEALTH_URL=${INFINITE_CANVAS_GATEWAY_HEALTH_URL:-https://www.semetaloa.com/apps/infinite-canvas/api/healthz}
 
 [[ $DEPLOY_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "invalid deploy SHA" >&2; exit 64; }
 [[ $TARGET_IMAGE =~ ^ghcr\.io/dijia1/infinite-canvas:sha-[0-9a-f]{40}$ ]] || { echo "invalid image reference" >&2; exit 64; }
@@ -51,6 +52,20 @@ services_healthy() {
   [[ $(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container") == 'running healthy' ]]
 }
 
+# A healthy container alone does not validate the Portal registry, DNS or public route.
+# No session, credentials or redirects: only the exact public health contract counts.
+gateway_healthy() {
+  local response content_type metadata status body
+  local healthy_json='^[[:space:]]*\{[[:space:]]*"ok"[[:space:]]*:[[:space:]]*true[[:space:]]*\}[[:space:]]*$'
+  response=$(curl --disable --silent --show-error --connect-timeout 3 --max-time 5 --max-filesize 4096 \
+    --header 'Accept: application/json' --write-out $'\n%{http_code}\n%{content_type}' "$GATEWAY_HEALTH_URL") || return 1
+  content_type=${response##*$'\n'}
+  metadata=${response%$'\n'*}
+  status=${metadata##*$'\n'}
+  body=${metadata%$'\n'*}
+  [[ $status == 200 && ( $content_type == application/json || $content_type == application/json\;* ) && $body =~ $healthy_json ]]
+}
+
 services_stopped() {
   local container status
   container=$(release_container "$1" "$2") || return 1
@@ -62,11 +77,12 @@ services_stopped() {
 wait_for_healthy() {
   local release_dir=$1
   local image=$2
-  local attempt
+  local attempt deadline=$((SECONDS + 180))
   for ((attempt = 1; attempt <= 90; attempt++)); do
-    if services_healthy "$release_dir" "$image"; then
+    if services_healthy "$release_dir" "$image" && gateway_healthy; then
       return 0
     fi
+    if (( SECONDS >= deadline )); then return 1; fi
     if (( attempt < 90 )); then
       sleep 2
     fi

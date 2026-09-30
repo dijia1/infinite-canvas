@@ -16,7 +16,7 @@ func workflowRequest(method, path, owner, body string) *httptest.ResponseRecorde
 		request.Header.Set("X-Portal-User-Uid", owner)
 	}
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	return response
 }
 

@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/basketikun/infinite-canvas/ai/providers"
 	"github.com/basketikun/infinite-canvas/config"
+	"github.com/basketikun/infinite-canvas/internal/testportal"
 	"github.com/basketikun/infinite-canvas/internal/testpostgres"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
@@ -39,6 +40,8 @@ func TestMain(m *testing.M) {
 	}
 	config.Cfg = config.Config{
 		DatabaseDSN:                    schema.DSN,
+		PortalDirectoryAppKey:          "infinite-canvas",
+		PortalDirectorySecret:          "test-identity-secret",
 		MediaStorage:                   "local",
 		MediaLocalDir:                  directory,
 		CanvasSaveSuccessLogSampleRate: 1,
@@ -68,7 +71,7 @@ func grantLocalAppRole(t *testing.T, userUID string, role model.AppRole, enabled
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(userUID, role, "test-grantor"); err != nil {
+	if err := repository.SetAppRole(userUID, role, "test-grantor", false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -80,7 +83,7 @@ func requestWithPortalHeaders(method, path, userUID, roles string) *httptest.Res
 		request.Header.Set("X-Portal-Roles", roles)
 	}
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	return response
 }
 
@@ -90,7 +93,7 @@ func requestAppRoleChange(userUID, targetUID string, role model.AppRole, extraJS
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", userUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	return response
 }
 
@@ -243,12 +246,12 @@ func TestRoleChangeRejectsInvalidTargetsLastAdminDemotionAndNonAdmins(t *testing
 	}
 }
 
-func TestGatewayAdminRoleAloneDoesNotGrantLocalAdmin(t *testing.T) {
+func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
 	const userUID = "gateway-admin-only-router"
 	grantLocalAppRole(t, userUID, model.AppRoleMember, true)
 	response := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", userUID, "portal-admin")
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
 }
 
@@ -256,7 +259,7 @@ func TestLegacyGatewayRolesNeverGrantLocalPrivileges(t *testing.T) {
 	const userUID = "legacy-gateway-role-only-member"
 	grantLocalAppRole(t, userUID, model.AppRoleMember, true)
 
-	admin := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", userUID, "portal-admin")
+	admin := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", userUID, "portal%3Aadmin")
 	if admin.Code != http.StatusForbidden {
 		t.Fatalf("legacy Gateway admin role status = %d, want %d; body = %s", admin.Code, http.StatusForbidden, admin.Body.String())
 	}
@@ -264,9 +267,9 @@ func TestLegacyGatewayRolesNeverGrantLocalPrivileges(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/public-folders", strings.NewReader(`{"title":"旧 Gateway 角色无权创建"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", userUID)
-	request.Header.Set("X-Portal-Roles", "portal-public-assets-manager,portal-admin")
+	request.Header.Set("X-Portal-Roles", "portal-public-assets-manager,portal%3Aadmin")
 	publicAssets := httptest.NewRecorder()
-	New().ServeHTTP(publicAssets, request)
+	servePortalRequest(publicAssets, request)
 	if publicAssets.Code != http.StatusForbidden {
 		t.Fatalf("legacy Gateway public-assets role status = %d, want %d; body = %s", publicAssets.Code, http.StatusForbidden, publicAssets.Body.String())
 	}
@@ -280,7 +283,7 @@ func TestLocalPublicAssetsManagerWritesOnlyPublicAssets(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", userUID)
 	publicAssets := httptest.NewRecorder()
-	New().ServeHTTP(publicAssets, request)
+	servePortalRequest(publicAssets, request)
 	if publicAssets.Code != http.StatusOK {
 		t.Fatalf("public-assets status = %d, want %d; body = %s", publicAssets.Code, http.StatusOK, publicAssets.Body.String())
 	}
@@ -326,7 +329,7 @@ func TestMediaUploadIntentUsesProxyModeForLocalStorage(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", "local-upload-owner")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"proxy"`) {
 		t.Fatalf("local upload intent = %d/%s", response.Code, response.Body.String())
 	}
@@ -434,7 +437,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 	intentRequest.Header.Set("Content-Type", "application/json")
 	intentRequest.Header.Set("X-Portal-User-Uid", owner)
 	intentResponse := httptest.NewRecorder()
-	New().ServeHTTP(intentResponse, intentRequest)
+	servePortalRequest(intentResponse, intentRequest)
 	var intent struct {
 		Data struct {
 			Mode      string `json:"mode"`
@@ -463,7 +466,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents/"+intent.Data.ID+"/complete", nil)
 		request.Header.Set("X-Portal-User-Uid", owner)
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, request)
+		servePortalRequest(response, request)
 		return response
 	}
 	first := complete()
@@ -494,7 +497,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 	invalidIntentRequest.Header.Set("Content-Type", "application/json")
 	invalidIntentRequest.Header.Set("X-Portal-User-Uid", owner)
 	invalidIntentResponse := httptest.NewRecorder()
-	New().ServeHTTP(invalidIntentResponse, invalidIntentRequest)
+	servePortalRequest(invalidIntentResponse, invalidIntentRequest)
 	var invalidIntent struct {
 		Data struct {
 			ID        string `json:"id"`
@@ -520,7 +523,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 	invalidCompleteRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents/"+invalidIntent.Data.ID+"/complete", nil)
 	invalidCompleteRequest.Header.Set("X-Portal-User-Uid", owner)
 	invalidCompleteResponse := httptest.NewRecorder()
-	New().ServeHTTP(invalidCompleteResponse, invalidCompleteRequest)
+	servePortalRequest(invalidCompleteResponse, invalidCompleteRequest)
 	if invalidCompleteResponse.Code == http.StatusOK && strings.Contains(invalidCompleteResponse.Body.String(), `"code":0`) {
 		t.Fatalf("invalid image completion unexpectedly succeeded: %s", invalidCompleteResponse.Body.String())
 	}
@@ -550,7 +553,7 @@ func TestCanvasUploadCreatesPermanentLibraryMedia(t *testing.T) {
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set("X-Portal-User-Uid", owner)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("canvas upload = %d/%s", response.Code, response.Body.String())
 	}
@@ -604,7 +607,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", "async-owner")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var created struct {
 		Code int `json:"code"`
@@ -626,7 +629,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	unpriced.Header.Set("Content-Type", "application/json")
 	unpriced.Header.Set("X-Portal-User-Uid", "async-owner")
 	unpricedResponse := httptest.NewRecorder()
-	New().ServeHTTP(unpricedResponse, unpriced)
+	servePortalRequest(unpricedResponse, unpriced)
 	if unpricedResponse.Code != http.StatusOK || !strings.Contains(unpricedResponse.Body.String(), "未配置该分辨率") {
 		t.Fatalf("unpriced resolution = %d/%s", unpricedResponse.Code, unpricedResponse.Body.String())
 	}
@@ -634,7 +637,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	lookup := httptest.NewRequest(http.MethodGet, "/api/v1/images/tasks/by-client-request/"+clientRequestID, nil)
 	lookup.Header.Set("X-Portal-User-Uid", "async-owner")
 	lookedUp := httptest.NewRecorder()
-	New().ServeHTTP(lookedUp, lookup)
+	servePortalRequest(lookedUp, lookup)
 	if lookedUp.Code != http.StatusOK || !strings.Contains(lookedUp.Body.String(), `"id":"`+created.Data.ID+`"`) {
 		t.Fatalf("lookup image task = %d/%s", lookedUp.Code, lookedUp.Body.String())
 	}
@@ -655,7 +658,7 @@ func TestImageGenerationRejectsAnIdempotencyKeyReusedForDifferentPayload(t *test
 		request.Header.Set("Content-Type", "application/json")
 		request.Header.Set("X-Portal-User-Uid", "image-idempotency-owner")
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, request)
+		servePortalRequest(response, request)
 		return response
 	}
 
@@ -686,7 +689,7 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	imageRequest.Header.Set("Content-Type", "application/json")
 	imageRequest.Header.Set("X-Portal-User-Uid", owner)
 	imageResponse := httptest.NewRecorder()
-	New().ServeHTTP(imageResponse, imageRequest)
+	servePortalRequest(imageResponse, imageRequest)
 	if imageResponse.Code != http.StatusBadRequest || !strings.Contains(imageResponse.Body.String(), `"code":1`) {
 		t.Fatalf("reserved image generation request = %d/%s", imageResponse.Code, imageResponse.Body.String())
 	}
@@ -699,7 +702,7 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	editRequest.Header.Set("Content-Type", "application/json")
 	editRequest.Header.Set("X-Portal-User-Uid", owner)
 	editResponse := httptest.NewRecorder()
-	New().ServeHTTP(editResponse, editRequest)
+	servePortalRequest(editResponse, editRequest)
 	if editResponse.Code != http.StatusBadRequest || !strings.Contains(editResponse.Body.String(), `"code":1`) {
 		t.Fatalf("reserved image edit request = %d/%s", editResponse.Code, editResponse.Body.String())
 	}
@@ -712,7 +715,7 @@ func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
 	videoRequest.Header.Set("Content-Type", "application/json")
 	videoRequest.Header.Set("X-Portal-User-Uid", owner)
 	videoResponse := httptest.NewRecorder()
-	New().ServeHTTP(videoResponse, videoRequest)
+	servePortalRequest(videoResponse, videoRequest)
 	if videoResponse.Code != http.StatusBadRequest || !strings.Contains(videoResponse.Body.String(), `"code":1`) {
 		t.Fatalf("reserved video request = %d/%s", videoResponse.Code, videoResponse.Body.String())
 	}
@@ -748,7 +751,7 @@ func TestImageEditPersistsVersionedMediaSnapshotPlan(t *testing.T) {
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", owner)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create masked image task = %d/%s", response.Code, response.Body.String())
 	}
@@ -794,7 +797,7 @@ func TestPrivateImageCatalogRestoresOwnedMediaAndExcludesPublicMedia(t *testing.
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/private-images", nil)
 	request.Header.Set("X-Portal-User-Uid", owned.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var payload struct {
 		Code int `json:"code"`
@@ -843,7 +846,7 @@ func TestPrivateMediaCatalogFiltersVideosAndKeepsTheDefaultImageOnly(t *testing.
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("X-Portal-User-Uid", owner)
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, request)
+		servePortalRequest(response, request)
 		var payload struct {
 			Code int `json:"code"`
 			Data struct {
@@ -891,7 +894,7 @@ func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
 	create.Header.Set("Content-Type", "application/json")
 	create.Header.Set("X-Portal-User-Uid", owner)
 	created := httptest.NewRecorder()
-	New().ServeHTTP(created, create)
+	servePortalRequest(created, create)
 	var folderPayload struct {
 		Data model.PrivateFolder `json:"data"`
 	}
@@ -903,7 +906,7 @@ func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
 	update.Header.Set("Content-Type", "application/json")
 	update.Header.Set("X-Portal-User-Uid", owner)
 	updated := httptest.NewRecorder()
-	New().ServeHTTP(updated, update)
+	servePortalRequest(updated, update)
 	if updated.Code != http.StatusOK {
 		t.Fatalf("update private image = %d/%s", updated.Code, updated.Body.String())
 	}
@@ -911,7 +914,7 @@ func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
 	list := httptest.NewRequest(http.MethodGet, "/api/v1/private-images", nil)
 	list.Header.Set("X-Portal-User-Uid", owner)
 	listed := httptest.NewRecorder()
-	New().ServeHTTP(listed, list)
+	servePortalRequest(listed, list)
 	var imagePayload struct {
 		Data model.PrivateImageList `json:"data"`
 	}
@@ -934,7 +937,7 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs", nil)
 	request.Header.Set("X-Portal-User-Uid", "operation-log-route-member")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("non-admin status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
 	}
@@ -943,7 +946,7 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs", nil)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("admin status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
@@ -967,7 +970,7 @@ func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T)
 	denied := httptest.NewRequest(http.MethodGet, "/api/admin/statistics", nil)
 	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
 	deniedResponse := httptest.NewRecorder()
-	New().ServeHTTP(deniedResponse, denied)
+	servePortalRequest(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusForbidden {
 		t.Fatalf("non-admin statistics status = %d, want %d; body = %s", deniedResponse.Code, http.StatusForbidden, deniedResponse.Body.String())
 	}
@@ -976,7 +979,7 @@ func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T)
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var payload struct {
 		Code int `json:"code"`
 		Data struct {
@@ -1027,7 +1030,7 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 	denied := httptest.NewRequest(http.MethodGet, "/api/admin/members", nil)
 	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
 	deniedResponse := httptest.NewRecorder()
-	New().ServeHTTP(deniedResponse, denied)
+	servePortalRequest(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusForbidden {
 		t.Fatalf("non-admin members status = %d, want %d; body = %s", deniedResponse.Code, http.StatusForbidden, deniedResponse.Body.String())
 	}
@@ -1036,7 +1039,7 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var payload struct {
 		Code int `json:"code"`
 		Data struct {
@@ -1077,7 +1080,7 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	denied.Header.Set("X-Portal-Service-Key", "infinite-canvas")
 	denied.Header.Set("X-Portal-Service-Secret", "wrong-secret")
 	deniedResponse := httptest.NewRecorder()
-	New().ServeHTTP(deniedResponse, denied)
+	servePortalRequest(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("wrong-secret status = %d, want %d", deniedResponse.Code, http.StatusUnauthorized)
 	}
@@ -1087,7 +1090,7 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	request.Header.Set("X-Portal-Service-Key", "infinite-canvas")
 	request.Header.Set("X-Portal-Service-Secret", "directory-secret")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("callback status = %d, want %d", response.Code, http.StatusNoContent)
 	}
@@ -1100,7 +1103,7 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	manual.Header.Set("X-Portal-User-Uid", adminUID)
 	manualResponse := httptest.NewRecorder()
-	New().ServeHTTP(manualResponse, manual)
+	servePortalRequest(manualResponse, manual)
 	if manualResponse.Code != http.StatusOK {
 		t.Fatalf("manual sync status = %d, want %d; body = %s", manualResponse.Code, http.StatusOK, manualResponse.Body.String())
 	}
@@ -1111,7 +1114,7 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 	request.Header.Set("X-Portal-Service-Key", "infinite-canvas")
 	request.Header.Set("X-Portal-Service-Secret", "directory-secret")
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("disable callback status = %d, want %d", response.Code, http.StatusNoContent)
 	}
@@ -1134,7 +1137,7 @@ func TestPortalSessionUsesDirectoryDisplayNameAndFallsBackToUsername(t *testing.
 	request.Header.Set("X-Portal-User-Uid", "session-user")
 	request.Header.Set("X-Portal-Username", "fallback-name")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var payload struct {
 		Data struct {
 			User struct {
@@ -1149,7 +1152,7 @@ func TestPortalSessionUsesDirectoryDisplayNameAndFallsBackToUsername(t *testing.
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Data.User.DisplayName != "目录姓名" {
 		t.Fatalf("directory session = %d/%s", response.Code, response.Body.String())
 	}
@@ -1164,10 +1167,10 @@ func TestPortalSessionExposesPublicAssetManagementCapability(t *testing.T) {
 		wantAdmin              bool
 		wantPublicAssetManager bool
 	}{
-		{name: "regular member", appRole: model.AppRoleMember, enabled: true, gatewayRoles: "portal-admin"},
+		{name: "regular member", appRole: model.AppRoleMember, enabled: true, gatewayRoles: "member"},
 		{name: "public asset manager", appRole: model.AppRolePublicAssetsManager, enabled: true, gatewayRoles: "member", wantPublicAssetManager: true},
 		{name: "local admin", appRole: model.AppRoleAdmin, enabled: true, gatewayRoles: "design-team", wantAdmin: true, wantPublicAssetManager: true},
-		{name: "disabled local admin", appRole: model.AppRoleAdmin, enabled: false, gatewayRoles: "portal-admin", wantAdmin: false, wantPublicAssetManager: false},
+		{name: "disabled local admin", appRole: model.AppRoleAdmin, enabled: false, gatewayRoles: "member", wantAdmin: false, wantPublicAssetManager: false},
 	}
 
 	for _, test := range tests {
@@ -1178,7 +1181,7 @@ func TestPortalSessionExposesPublicAssetManagementCapability(t *testing.T) {
 			request.Header.Set("X-Portal-User-Uid", userUID)
 			request.Header.Set("X-Portal-Roles", test.gatewayRoles)
 			response := httptest.NewRecorder()
-			New().ServeHTTP(response, request)
+			servePortalRequest(response, request)
 
 			var payload struct {
 				Data struct {
@@ -1225,7 +1228,7 @@ func TestLocalPublicAssetsManagerCanManagePublicAssetsButNotOtherAdminRoutes(t *
 		}
 		req.Header.Set("X-Portal-User-Uid", uid)
 		res := httptest.NewRecorder()
-		New().ServeHTTP(res, req)
+		servePortalRequest(res, req)
 		return res
 	}
 
@@ -1299,7 +1302,7 @@ func TestRegularMemberCannotUseAnyPublicAssetMutationRoute(t *testing.T) {
 			}
 			request.Header.Set("X-Portal-User-Uid", memberUID)
 			response := httptest.NewRecorder()
-			New().ServeHTTP(response, request)
+			servePortalRequest(response, request)
 			if response.Code != http.StatusForbidden {
 				t.Fatalf("regular member status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
 			}
@@ -1336,7 +1339,7 @@ func TestLocalPublicAssetsManagerCanUploadAndDeletePublicImages(t *testing.T) {
 	uploadRequest.Header.Set("Content-Type", writer.FormDataContentType())
 	uploadRequest.Header.Set("X-Portal-User-Uid", uploadManagerUID)
 	uploadResponse := httptest.NewRecorder()
-	New().ServeHTTP(uploadResponse, uploadRequest)
+	servePortalRequest(uploadResponse, uploadRequest)
 	if uploadResponse.Code != http.StatusOK {
 		t.Fatalf("manager upload status = %d, want %d; body = %s", uploadResponse.Code, http.StatusOK, uploadResponse.Body.String())
 	}
@@ -1371,7 +1374,7 @@ func TestLocalPublicAssetsManagerCanUploadAndDeletePublicImages(t *testing.T) {
 	deleteRequest := httptest.NewRequest(http.MethodDelete, "/api/admin/public-images/"+publicImage.ID, nil)
 	deleteRequest.Header.Set("X-Portal-User-Uid", deleteManagerUID)
 	deleteResponse := httptest.NewRecorder()
-	New().ServeHTTP(deleteResponse, deleteRequest)
+	servePortalRequest(deleteResponse, deleteRequest)
 	if deleteResponse.Code != http.StatusOK {
 		t.Fatalf("manager delete status = %d, want %d; body = %s", deleteResponse.Code, http.StatusOK, deleteResponse.Body.String())
 	}
@@ -1398,14 +1401,14 @@ func TestGatewayPublicAssetManagerRolesDoNotGrantLocalAuthorization(t *testing.T
 		request.Header.Set("X-Portal-User-Uid", uid)
 		request.Header.Set("X-Portal-Roles", roles)
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, request)
+		servePortalRequest(response, request)
 		return response
 	}
 
 	if response := request(localManagerUID, "member"); response.Code != http.StatusOK {
 		t.Fatalf("local manager status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
-	if response := request(gatewayManagerUID, "portal-public-assets-manager,portal-admin"); response.Code != http.StatusForbidden {
+	if response := request(gatewayManagerUID, "portal-public-assets-manager"); response.Code != http.StatusForbidden {
 		t.Fatalf("Gateway-only manager status = %d, want %d; body = %s", response.Code, http.StatusForbidden, response.Body.String())
 	}
 }
@@ -1418,7 +1421,7 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	request.Header.Set("X-Portal-Username", adminUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("create status = %d, body = %s", response.Code, response.Body.String())
 	}
@@ -1426,7 +1429,7 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=public_folder_create&actor=audit-admin", nil)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var payload struct {
 		Data model.OperationLogList `json:"data"`
 	}
@@ -1447,7 +1450,7 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=image_edit&actor=audit-admin", nil)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var summaryPayload struct {
 		Data model.OperationLogList `json:"data"`
 	}
@@ -1483,7 +1486,7 @@ func TestPrivateMediaDeleteHardDeletesOwnedPrivateMedia(t *testing.T) {
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", item.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
@@ -1500,7 +1503,7 @@ func TestPrivateMediaDeleteHardDeletesOwnedPrivateMedia(t *testing.T) {
 	}
 
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	var body struct {
 		Code int `json:"code"`
 	}
@@ -1521,7 +1524,7 @@ func TestPrivateMediaDeleteCleansDatabaseRecordWhenLocalObjectIsMissing(t *testi
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", item.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var body struct {
 		Code int `json:"code"`
@@ -1553,7 +1556,7 @@ func TestPrivateMediaDeleteKeepsRecordAndReturnsSafeMessageWhenStorageIsUnavaila
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", item.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var body struct {
 		Code int    `json:"code"`
@@ -1582,7 +1585,7 @@ func TestPrivateMediaDeleteDoesNotDeletePublicLibraryMedia(t *testing.T) {
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", item.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var body struct {
 		Code int `json:"code"`
@@ -1618,7 +1621,7 @@ func TestPrivateMediaDeleteRejectsOtherUsers(t *testing.T) {
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", "other-user")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var body struct {
 		Code int `json:"code"`
@@ -1691,7 +1694,7 @@ func TestAdminPublicImageDeleteHardDeletesObjectAndRecords(t *testing.T) {
 	request := httptest.NewRequest(http.MethodDelete, "/api/admin/public-images/"+publicImage.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", media.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
@@ -1729,7 +1732,7 @@ func TestAdminPublicImageDeleteCleansRecordsWhenLocalObjectIsMissing(t *testing.
 	request := httptest.NewRequest(http.MethodDelete, "/api/admin/public-images/"+publicImage.ID, nil)
 	request.Header.Set("X-Portal-User-Uid", media.OwnerUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 
 	var body struct {
 		Code int `json:"code"`
@@ -1772,7 +1775,7 @@ func TestLegacyAssetRoutesAreNotRegistered(t *testing.T) {
 
 func TestPublicFolderListRequiresPortalIdentity(t *testing.T) {
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/public-folders", nil))
+	servePortalRequest(response, httptest.NewRequest(http.MethodGet, "/api/v1/public-folders", nil))
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated status = %d, want %d; body = %s", response.Code, http.StatusUnauthorized, response.Body.String())
 	}
@@ -1780,7 +1783,7 @@ func TestPublicFolderListRequiresPortalIdentity(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/public-folders", nil)
 	request.Header.Set("X-Portal-User-Uid", "member")
 	response = httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("authenticated status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
 	}
@@ -1798,7 +1801,7 @@ func TestAdminCanCreateNestedPublicFoldersAndRejectsDuplicateSiblingNames(t *tes
 		}
 		req.Header.Set("X-Portal-User-Uid", userUID)
 		res := httptest.NewRecorder()
-		New().ServeHTTP(res, req)
+		servePortalRequest(res, req)
 		var payload struct {
 			Data model.PublicFolder `json:"data"`
 		}
@@ -1873,7 +1876,7 @@ func TestPublicImageListFiltersByFolderAndDefaultsToRoot(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("X-Portal-User-Uid", "member")
 		res := httptest.NewRecorder()
-		New().ServeHTTP(res, req)
+		servePortalRequest(res, req)
 		if res.Code != http.StatusOK {
 			t.Fatalf("list status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 		}
@@ -1922,7 +1925,7 @@ func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Portal-User-Uid", "public-image-update-member")
 	res := httptest.NewRecorder()
-	New().ServeHTTP(res, req)
+	servePortalRequest(res, req)
 	if res.Code != http.StatusForbidden {
 		t.Fatalf("non-admin patch status = %d, want %d; body = %s", res.Code, http.StatusForbidden, res.Body.String())
 	}
@@ -1931,7 +1934,7 @@ func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testi
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Portal-User-Uid", "admin")
 	res = httptest.NewRecorder()
-	New().ServeHTTP(res, req)
+	servePortalRequest(res, req)
 	if res.Code != http.StatusOK {
 		t.Fatalf("admin patch status = %d, want %d; body = %s", res.Code, http.StatusOK, res.Body.String())
 	}
@@ -1977,7 +1980,7 @@ func TestAdminPublicImageUploadPersistsFolderImmediatelyAndRejectsUnknownFolderB
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		req.Header.Set("X-Portal-User-Uid", "admin")
 		res := httptest.NewRecorder()
-		New().ServeHTTP(res, req)
+		servePortalRequest(res, req)
 		return res
 	}
 	count := func() (int64, int64) {
@@ -2054,7 +2057,7 @@ func TestAdminCanRenameAndDeleteOnlyEmptyPublicFolders(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Portal-User-Uid", "admin")
 		res := httptest.NewRecorder()
-		New().ServeHTTP(res, req)
+		servePortalRequest(res, req)
 		return res
 	}
 
@@ -2085,5 +2088,68 @@ func TestAdminCanRenameAndDeleteOnlyEmptyPublicFolders(t *testing.T) {
 	_, found, err = repository.GetPublicFolder(empty.ID)
 	if err != nil || found {
 		t.Fatalf("deleted folder lookup found/error = %t/%v", found, err)
+	}
+}
+
+func servePortalRequest(w http.ResponseWriter, r *http.Request) {
+	testportal.Sign(r, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
+	New().ServeHTTP(w, r)
+}
+
+func TestVerifiedGlobalAdminDoesNotDependOnDirectoryAndCanRemoveFinalLocalAdmin(t *testing.T) {
+	database, err := repository.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Where("role = ?", model.AppRoleAdmin).Delete(&model.AppMemberRole{}).Error; err != nil {
+		t.Fatal(err)
+	}
+	const localUID = "d7b1a89c-3e13-4d97-b210-6e918a60e3d0"
+	const globalUID = "1d38e137-fb75-479e-991b-b40b205976a7"
+	grantLocalAppRole(t, localUID, model.AppRoleAdmin, true)
+	for _, enabled := range []bool{false, true} {
+		if enabled {
+			if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: globalUID, Enabled: false}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		response := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", globalUID, "portal-admin")
+		if response.Code != http.StatusOK {
+			t.Fatalf("directory phase=%t status=%d body=%s", enabled, response.Code, response.Body.String())
+		}
+	}
+	request := httptest.NewRequest(http.MethodPatch, "/api/admin/members/"+localUID+"/app-role", strings.NewReader(`{"appRole":"member"}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", globalUID)
+	request.Header.Set("X-Portal-Roles", "portal-admin")
+	response := httptest.NewRecorder()
+	servePortalRequest(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("demotion status=%d body=%s", response.Code, response.Body.String())
+	}
+	if role, err := repository.ResolveAppRole(localUID); err != nil || role != model.AppRoleMember {
+		t.Fatalf("role=%s err=%v", role, err)
+	}
+	response = requestWithPortalHeaders(http.MethodGet, "/api/admin/me", localUID, "")
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("demoted member status=%d", response.Code)
+	}
+}
+
+func TestBusinessRoutesRejectUnsignedAndTamperedIdentity(t *testing.T) {
+	for _, path := range []string{"/api/session", "/api/admin/me", "/api/v1/canvas/projects"} {
+		for _, tampered := range []bool{false, true} {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.Header.Set("X-Portal-User-Uid", "93f6e9cc-7f95-4c14-b9eb-cf4ebd4373ac")
+			if tampered {
+				testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
+				request.Header.Set("X-Portal-Roles", "portal-admin")
+			}
+			response := httptest.NewRecorder()
+			New().ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized || !strings.Contains(response.Body.String(), "PORTAL_IDENTITY_INVALID") {
+				t.Fatalf("path=%s tampered=%t status=%d body=%s", path, tampered, response.Code, response.Body.String())
+			}
+		}
 	}
 }

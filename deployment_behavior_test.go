@@ -35,6 +35,7 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 	f.write(filepath.Join(root, "images"), "")
 	f.write(filepath.Join(root, "containers"), "app\n")
 	f.write(filepath.Join(f.bin, "docker"), fakeReleaseDocker)
+	f.write(filepath.Join(f.bin, "curl"), fakeGatewayCurl)
 	// Only Docker/control-flow is simulated here; production flock is not replaced.
 	f.write(filepath.Join(f.bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
 	f.write(filepath.Join(f.bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
@@ -390,3 +391,57 @@ case "$1" in
  *) exit 92 ;;
 esac
 `
+
+const fakeGatewayCurl = `#!/usr/bin/env bash
+set -eu
+printf '%s\n' "$*" >> "$MOCK_ROOT/gateway-calls"
+if [[ -f "$MOCK_ROOT/gateway-fault" && $(cat "$MOCK_ROOT/running") == *:sha-c* ]]; then
+ case $(cat "$MOCK_ROOT/gateway-fault") in
+  unavailable) printf '{"ok":false}\n503\napplication/json' ;;
+  not-found) printf '{}\n404\napplication/json' ;;
+  login) printf '<html>login</html>\n302\ntext/html' ;;
+  spa) printf '<html>app</html>\n200\ntext/html' ;;
+  bad-body) printf '{"ok":false}\n200\napplication/json' ;;
+  wrong-type) printf '{"ok":true}\n200\ntext/plain' ;;
+  malformed-key) printf '{"o k":true}\n200\napplication/json' ;;
+  timeout) exit 28 ;;
+ esac
+else
+ printf '{"ok":true}\n200\napplication/json'
+fi
+`
+
+func TestGatewayFailureCannotPublishRelease(t *testing.T) {
+	for _, fault := range []string{"unavailable", "not-found", "login", "spa", "bad-body", "wrong-type", "malformed-key", "timeout"} {
+		t.Run(fault, func(t *testing.T) {
+			f := newReleaseFixture(t)
+			f.ok("b")
+			before := f.read("state/infinite-canvas-release.last-known-good")
+			f.write(filepath.Join(f.root, "gateway-fault"), fault)
+			if out, err := f.deploy("c"); err == nil {
+				t.Fatal("gateway failure published release", out)
+			}
+			if f.read("running") != releaseRepo+strings.Repeat("b", 40) || f.read("state/infinite-canvas-release.last-known-good") != before {
+				t.Fatal("gateway failure did not preserve/restore healthy baseline")
+			}
+			calls := f.read("gateway-calls")
+			if !strings.Contains(calls, "https://www.semetaloa.com/apps/infinite-canvas/api/healthz") || !strings.Contains(calls, "--disable --silent") || !strings.Contains(calls, "--max-time") || strings.Contains(calls, "--location") || strings.Contains(calls, "Authorization") || strings.Contains(calls, "Cookie") {
+				t.Fatal(calls)
+			}
+		})
+	}
+}
+
+func TestInitializationRequiresGatewayHealth(t *testing.T) {
+	f := newReleaseFixture(t)
+	os.Remove(filepath.Join(f.state, "infinite-canvas-release.last-known-good"))
+	c := strings.Repeat("c", 40)
+	f.write(filepath.Join(f.root, "running"), releaseRepo+c)
+	f.write(filepath.Join(f.root, "gateway-fault"), "not-found")
+	if out, err := f.run("initialize-release-state.sh", c, releaseRepo+c, filepath.Join(f.app, "releases", c)); err == nil {
+		t.Fatal(out)
+	}
+	if f.read("state/infinite-canvas-release.last-known-good") != "" {
+		t.Fatal("created baseline without gateway health")
+	}
+}

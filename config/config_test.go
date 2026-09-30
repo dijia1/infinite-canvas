@@ -67,3 +67,26 @@ func withEmptyConfig(t *testing.T) {
 		Cfg = previousConfig
 	})
 }
+
+func TestLoadRequiresTrustedPortalSigningConfiguration(t *testing.T) {
+	previous := Cfg
+	t.Cleanup(func() { Cfg = previous })
+	t.Setenv("DATABASE_DSN", "postgres://test.invalid/test")
+	for _, tt := range []struct {
+		name, key, secret string
+		valid             bool
+	}{
+		{"missing credential", "infinite-canvas", "", false},
+		{"invalid app key", "../other", "test-secret", false},
+		{"valid without UID bootstrap", "infinite-canvas", "test-secret", true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PORTAL_DIRECTORY_APP_KEY", tt.key)
+			t.Setenv("PORTAL_DIRECTORY_SECRET", tt.secret)
+			err := Load()
+			if (err == nil) != tt.valid {
+				t.Fatalf("Load error=%v", err)
+			}
+		})
+	}
+}

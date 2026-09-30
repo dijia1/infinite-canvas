@@ -20,17 +20,13 @@ func UpsertPortalMembers(items []model.PortalMember) error {
 		if _, err := lockAppRBACState(tx); err != nil {
 			return err
 		}
-		enabledAdminCount, err := countEnabledAppAdmins(tx)
-		if err != nil {
-			return err
-		}
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_uid"}},
 			DoUpdates: clause.AssignmentColumns([]string{"display_name", "enabled", "roles", "synced_at"}),
 		}).Create(&items).Error; err != nil {
 			return err
 		}
-		return protectEnabledAppAdmins(tx, enabledAdminCount)
+		return nil
 	})
 }
 
@@ -48,10 +44,6 @@ func SyncPortalMembers(items []model.PortalMember) error {
 }
 
 func syncPortalMembersLocked(tx *gorm.DB, items []model.PortalMember) error {
-	enabledAdminCount, err := countEnabledAppAdmins(tx)
-	if err != nil {
-		return err
-	}
 	if len(items) > 0 {
 		if err := tx.Clauses(clause.OnConflict{
 			Columns:   []clause.Column{{Name: "user_uid"}},
@@ -69,12 +61,12 @@ func syncPortalMembersLocked(tx *gorm.DB, items []model.PortalMember) error {
 		if err := tx.Model(&model.PortalMember{}).Where("enabled = ?", true).Updates(updates).Error; err != nil {
 			return err
 		}
-		return protectEnabledAppAdmins(tx, enabledAdminCount)
+		return nil
 	}
 	if err := tx.Model(&model.PortalMember{}).Where("enabled = ? AND user_uid NOT IN ?", true, userUIDs).Updates(updates).Error; err != nil {
 		return err
 	}
-	return protectEnabledAppAdmins(tx, enabledAdminCount)
+	return nil
 }
 
 func GetPortalMember(userUID string) (model.PortalMember, bool, error) {

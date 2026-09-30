@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 
 	"github.com/basketikun/infinite-canvas/model"
@@ -40,7 +41,7 @@ func SetPortalMemberAppRole(ctx context.Context, targetUID string, role model.Ap
 	if !ok || strings.TrimSpace(actor.UID) == "" {
 		return model.PortalMemberWithAppRole{}, errors.New("missing Portal actor for application role change")
 	}
-	if err := repository.SetAppRole(member.UserUID, role, actor.UID); err != nil {
+	if err := repository.SetAppRole(member.UserUID, role, actor.UID, slices.Contains(actor.Roles, "portal-admin")); err != nil {
 		return model.PortalMemberWithAppRole{}, err
 	}
 	if member.Roles == nil {

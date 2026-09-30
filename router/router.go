@@ -21,10 +21,10 @@ func New() *gin.Engine {
 	_ = router.SetTrustedProxies(nil)
 	router.POST("/internal/portal/directory-sync", gin.WrapF(handler.PortalDirectorySync))
 	api := router.Group("/api")
-	api.GET("/healthz", gin.WrapF(handler.Health))
-	api.GET("/health", func(c *gin.Context) {
-		c.String(http.StatusOK, "ok")
-	})
+	for _, path := range []string{"/healthz", "/health"} {
+		api.GET(path, gin.WrapF(handler.Health))
+		api.HEAD(path, gin.WrapF(handler.Health))
+	}
 	protected := api.Group("")
 	protected.Use(middleware.PortalIdentity)
 	protected.GET("/session", gin.WrapF(handler.PortalSession))

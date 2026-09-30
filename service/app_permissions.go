@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
@@ -15,6 +16,11 @@ type AppPermissions struct {
 }
 
 func ResolveAppPermissions(_ context.Context, user PortalUser) (AppPermissions, error) {
+	// Gateway entry authorization and signature verification precede this call.
+	// Directory synchronization may lag; a verified global admin must not be locked out.
+	if slices.Contains(user.Roles, "portal-admin") {
+		return AppPermissions{AppRole: model.AppRoleAdmin, IsAdmin: true, CanManagePublicAssets: true}, nil
+	}
 	member, found, err := repository.GetPortalMember(user.UID)
 	if err != nil {
 		return AppPermissions{}, err

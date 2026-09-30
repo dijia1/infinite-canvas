@@ -32,7 +32,7 @@ func canvasRequest(t *testing.T, method, path, owner, body string) *httptest.Res
 		req.Header.Set("X-Portal-User-Uid", owner)
 	}
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, req)
+	servePortalRequest(response, req)
 	return response
 }
 
@@ -148,7 +148,7 @@ func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 	request.Header.Set("X-Canvas-Request-Seq", "1")
 	request.Header.Set("X-Canvas-Save-Reason", "autosave")
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
 		t.Fatalf("update canvas project = %d/%s", response.Code, response.Body.String())
 	}
@@ -165,7 +165,7 @@ func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 	request.Header.Set("X-Canvas-Request-Seq", "2")
 	request.Header.Set("X-Canvas-Save-Reason", "autosave")
 	conflict := httptest.NewRecorder()
-	New().ServeHTTP(conflict, request)
+	servePortalRequest(conflict, request)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("stale update = %d/%s", conflict.Code, conflict.Body.String())
 	}
@@ -197,7 +197,7 @@ func TestCanvasProjectConcurrentRevisionAndRequestIDGuards(t *testing.T) {
 		request.Header.Set("X-Canvas-Request-Id", requestID)
 		request.Header.Set("X-Canvas-Request-Seq", "1")
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, request)
+		servePortalRequest(response, request)
 		return response.Code
 	}
 
@@ -648,7 +648,7 @@ func TestCanvasProjectUpdateDeduplicatesAnUnknownResultRetry(t *testing.T) {
 		req.Header.Set("X-Portal-User-Uid", owner)
 		req.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d7a")
 		response := httptest.NewRecorder()
-		New().ServeHTTP(response, req)
+		servePortalRequest(response, req)
 		return response
 	}
 

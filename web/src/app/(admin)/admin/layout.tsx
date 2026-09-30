@@ -3,7 +3,7 @@
 import { BarChartOutlined, FileTextOutlined, HomeOutlined, LogoutOutlined, PictureOutlined, SettingOutlined, TeamOutlined } from "@ant-design/icons";
 import { Button, Flex, Layout, Menu, Typography, theme } from "antd";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect } from "react";
 
@@ -21,11 +21,11 @@ const adminMenus = [
 
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const { token: antToken } = theme.useToken();
-    const router = useRouter();
     const pathname = usePathname();
     const token = useAdminStore((state) => state.token);
     const user = useAdminStore((state) => state.user);
     const isReady = useAdminStore((state) => state.isReady);
+    const accessError = useAdminStore((state) => state.accessError);
     const hydrateAdmin = useAdminStore((state) => state.hydrateAdmin);
     const logout = useAdminStore((state) => state.clearSession);
     const activeKey = pathname.startsWith("/admin/settings") ? "/admin/settings" : pathname.startsWith("/admin/statistics") ? "/admin/statistics" : pathname.startsWith("/admin/operations") ? "/admin/operations" : pathname.startsWith("/admin/members") ? "/admin/members" : pathname.startsWith("/admin/assets") ? "/admin/assets" : "";
@@ -35,19 +35,17 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
         void hydrateAdmin();
     }, [hydrateAdmin]);
 
-    useEffect(() => {
-        if (!isReady) return;
-        if (!token) {
-            router.replace(appPath(`/admin/login?redirect=${encodeURIComponent(pathname)}`));
-            return;
-        }
-    }, [isReady, pathname, router, token]);
-
-    if (!isReady || !token || user?.role !== "admin") {
+    if (!isReady) return <div className="grid min-h-dvh place-items-center" aria-busy="true" />;
+    if (!token || user?.role !== "admin") {
+        const text = accessError === "identity" ? "Portal 身份无效或已过期，请返回工作台重新进入。" : accessError === "forbidden" ? "当前账号没有管理权限。" : "无法读取管理权限，请稍后重试。";
         return (
-            <div style={{ display: "flex", minHeight: "100vh", alignItems: "center", justifyContent: "center", background: antToken.colorBgLayout }}>
-                <span />
-            </div>
+            <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6" style={{ background: antToken.colorBgLayout }}>
+                <Typography.Text type="secondary">{text}</Typography.Text>
+                <Flex gap={8}>
+                    <Button href="/">返回工作台</Button>
+                    {accessError === "unavailable" ? <Button onClick={() => void hydrateAdmin()}>重试</Button> : null}
+                </Flex>
+            </main>
         );
     }
 

@@ -63,14 +63,14 @@ func TestResolveAppRoleDefaultsToMember(t *testing.T) {
 func TestResolveAppRoleStoresOnlyExplicitAssignments(t *testing.T) {
 	useAppRoleTestDB(t)
 
-	if err := SetAppRole("member-uid", model.AppRolePublicAssetsManager, "grantor-uid"); err != nil {
+	if err := SetAppRole("member-uid", model.AppRolePublicAssetsManager, "grantor-uid", false); err != nil {
 		t.Fatal(err)
 	}
 	role, err := ResolveAppRole("member-uid")
 	if err != nil || role != model.AppRolePublicAssetsManager {
 		t.Fatalf("explicit role=%q err=%v", role, err)
 	}
-	if err := SetAppRole("member-uid", model.AppRoleMember, "grantor-uid"); err != nil {
+	if err := SetAppRole("member-uid", model.AppRoleMember, "grantor-uid", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -95,7 +95,7 @@ func TestBootstrapAppAdminsRunsOnlyOnce(t *testing.T) {
 	if err := BootstrapAppAdmins([]string{initialAdminUID, secondAdminUID}); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID); err != nil {
+	if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID, false); err != nil {
 		t.Fatal(err)
 	}
 	if err := BootstrapAppAdmins([]string{initialAdminUID}); err != nil {
@@ -132,7 +132,7 @@ func TestBootstrapAppAdminsFromDirectoryRollsBackInvalidSnapshotAndRetries(t *te
 	useAppRoleTestDB(t)
 	savePortalMemberForAppRole(t, initialAdminUID, true)
 	savePortalMemberForAppRole(t, secondAdminUID, true)
-	if err := SetAppRole(secondAdminUID, model.AppRolePublicAssetsManager, initialAdminUID); err != nil {
+	if err := SetAppRole(secondAdminUID, model.AppRolePublicAssetsManager, initialAdminUID, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -290,7 +290,7 @@ func TestLastAdminConcurrentDemotionsCannotRemoveEveryAdmin(t *testing.T) {
 		go func() {
 			ready.Done()
 			<-start
-			mutationResults <- SetAppRole(mutation.targetUID, model.AppRoleMember, mutation.grantedByUID)
+			mutationResults <- SetAppRole(mutation.targetUID, model.AppRoleMember, mutation.grantedByUID, false)
 		}()
 	}
 	ready.Wait()
@@ -343,7 +343,7 @@ func TestLastEnabledAdminCannotBeDemotedWhenAnotherExplicitAdminIsDisabled(t *te
 		t.Fatal(err)
 	}
 
-	err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID)
+	err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID, false)
 	if !errors.Is(err, ErrLastAppAdmin) {
 		t.Fatalf("SetAppRole() error = %v, want ErrLastAppAdmin", err)
 	}
@@ -370,7 +370,7 @@ func TestBulkSyncCanDisableOneAdminBeforeRemainingAdminDemotion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID); !errors.Is(err, ErrLastAppAdmin) {
+	if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID, false); !errors.Is(err, ErrLastAppAdmin) {
 		t.Fatalf("SetAppRole() error = %v, want ErrLastAppAdmin", err)
 	}
 	role, err := ResolveAppRole(initialAdminUID)
@@ -383,7 +383,7 @@ func TestBulkSyncCanDisableOneAdminBeforeRemainingAdminDemotion(t *testing.T) {
 	}
 }
 
-func TestPortalMemberWritesRejectDisablingLastAdminAfterOtherDemotion(t *testing.T) {
+func TestPortalMemberWritesDisableLastAdminAfterOtherDemotion(t *testing.T) {
 	for _, test := range []struct {
 		name    string
 		disable func(t *testing.T) error
@@ -392,7 +392,7 @@ func TestPortalMemberWritesRejectDisablingLastAdminAfterOtherDemotion(t *testing
 			name: "upsert",
 			disable: func(t *testing.T) error {
 				return UpsertPortalMembers([]model.PortalMember{{
-					UserUID: secondAdminUID, DisplayName: "must roll back", Enabled: false, Roles: []string{"changed"},
+					UserUID: secondAdminUID, DisplayName: "updated disabled admin", Enabled: false, Roles: []string{"changed"},
 				}})
 			},
 		},
@@ -412,16 +412,16 @@ func TestPortalMemberWritesRejectDisablingLastAdminAfterOtherDemotion(t *testing
 			if err := BootstrapAppAdmins([]string{initialAdminUID, secondAdminUID}); err != nil {
 				t.Fatal(err)
 			}
-			if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID); err != nil {
+			if err := SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID, false); err != nil {
 				t.Fatal(err)
 			}
 
-			if err := test.disable(t); !errors.Is(err, ErrLastAppAdmin) {
-				t.Fatalf("member write error = %v, want ErrLastAppAdmin", err)
+			if err := test.disable(t); err != nil {
+				t.Fatal(err)
 			}
 			member, found, err := GetPortalMember(secondAdminUID)
-			if err != nil || !found || !member.Enabled || member.DisplayName != secondAdminUID || len(member.Roles) != 0 {
-				t.Fatalf("last enabled administrator member = %+v, found=%t, err=%v; want unchanged", member, found, err)
+			if err != nil || !found || member.Enabled {
+				t.Fatalf("last enabled administrator member = %+v, found=%t, err=%v; want disabled member and preserved role", member, found, err)
 			}
 			role, err := ResolveAppRole(secondAdminUID)
 			if err != nil || role != model.AppRoleAdmin {
@@ -457,7 +457,7 @@ func TestRoleDemotionSerializesWithPortalMemberDisable(t *testing.T) {
 			name: "upsert",
 			disable: func() error {
 				return UpsertPortalMembers([]model.PortalMember{{
-					UserUID: secondAdminUID, DisplayName: "must not commit", Enabled: false, Roles: []string{"changed"},
+					UserUID: secondAdminUID, DisplayName: "updated disabled admin", Enabled: false, Roles: []string{"changed"},
 				}})
 			},
 		},
@@ -548,7 +548,7 @@ func TestRoleDemotionSerializesWithPortalMemberDisable(t *testing.T) {
 
 			demotionResult := make(chan error, 1)
 			go func() {
-				demotionResult <- SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID)
+				demotionResult <- SetAppRole(initialAdminUID, model.AppRoleMember, secondAdminUID, false)
 			}()
 			select {
 			case <-initialCountReached:
@@ -619,15 +619,15 @@ func TestRoleDemotionSerializesWithPortalMemberDisable(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("Portal member disable did not finish after role demotion released the RBAC state lock")
 			}
-			if !errors.Is(writeErr, ErrLastAppAdmin) {
-				t.Fatalf("serialized member disable error = %v, want ErrLastAppAdmin", writeErr)
+			if writeErr != nil {
+				t.Fatal(writeErr)
 			}
-			if got := qualifiedCountCalls.Load(); got < 4 {
-				t.Fatalf("qualified enabled-admin COUNT calls = %d, want demotion and member writer before/after counts", got)
+			if got := qualifiedCountCalls.Load(); got != 2 {
+				t.Fatalf("enabled-admin counts=%d, want only the local role change before/after checks", got)
 			}
 			member, found, err := GetPortalMember(secondAdminUID)
-			if err != nil || !found || !member.Enabled || member.DisplayName != secondAdminUID || len(member.Roles) != 0 {
-				t.Fatalf("last enabled administrator member = %+v, found=%t, err=%v; want unchanged", member, found, err)
+			if err != nil || !found || member.Enabled {
+				t.Fatalf("last enabled administrator member = %+v, found=%t, err=%v; want disabled member and preserved role", member, found, err)
 			}
 			role, err := ResolveAppRole(secondAdminUID)
 			if err != nil || role != model.AppRoleAdmin {
