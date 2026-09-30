@@ -9,11 +9,11 @@ test("canvas accepts private and public material drag payloads", async () => {
     assert.match(source, /PUBLIC_IMAGE_DRAG_TYPE/);
     assert.match(source, /createImageAssetNode/);
     assert.match(source, /createPublicImageNode/);
-    assert.match(source, /const access = await fetchPublicImageAccess\(payload\.id\)/);
-    assert.match(source, /storageKey: imageStorageKeyForMedia\(access\.mediaId\)/);
+    assert.match(source, /publicImageImportController.start\(payload, position, getVideoSessionScope\(\)\)/);
+    assert.match(source, /importImage: importPublicImage/);
     assert.match(source, /const publicImageId = typeof asset\.metadata\?\.publicImageId === "string"/);
     assert.match(source, /storageKey: imageStorageKeyForMedia\(mediaId\)/);
-    assert.match(source, /metadata: \{ \.\.\.imageMetadata\(image\), assetId: asset\.id, publicImageId: publicImageId \|\| undefined/);
+    assert.match(source, /metadata: \{ \.\.\.imageMetadata\(image\), assetId: asset\.id,/);
     assert.match(source, /event\.dataTransfer\.getData\(PRIVATE_IMAGE_DRAG_TYPE\)/);
     assert.match(source, /event\.dataTransfer\.getData\(PUBLIC_IMAGE_DRAG_TYPE\)/);
     assert.match(source, /startLocalImageUpload\(id, file, image, "library"\)/);

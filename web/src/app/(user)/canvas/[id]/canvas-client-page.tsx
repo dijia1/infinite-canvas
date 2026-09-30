@@ -12,7 +12,7 @@ import { ImageIcon, Images, List, Plus, Redo2, Settings2, Trash2, Undo2, Upload,
 import { saveAs } from "file-saver";
 
 import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
-import { fetchPublicImageAccess } from "@/services/api/public-images";
+import { fetchPublicImageAccess, importPublicImage } from "@/services/api/public-images";
 import { downloadVideo } from "@/services/video-download";
 import { requestVideoGeneration } from "@/services/api/video";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
@@ -45,6 +45,7 @@ import { buildConnectionPathData, getConnectionCurve } from "../utils/canvas-con
 import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "../utils/canvas-connection-visibility";
 import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canvas-file-drop";
+import { createPublicImageImportController } from "../utils/canvas-public-image-import";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
 import { getCanvasViewportSize } from "../utils/canvas-viewport-size";
@@ -1329,78 +1330,119 @@ function InfiniteCanvasPage() {
         [message, startLocalImageUpload],
     );
 
-    const createImageAssetNode = useCallback(async (asset: ImageAsset, position: Position) => {
-        const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
-        const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
-        let image: UploadedImage;
-        if (mediaId) {
-            image = {
-                url: "",
-                storageKey: imageStorageKeyForMedia(mediaId),
-                mediaId,
-                width: asset.data.width,
-                height: asset.data.height,
-                bytes: asset.data.bytes,
-                mimeType: asset.data.mimeType,
+    const publicImageImportController = useMemo(() => {
+        const controller = createPublicImageImportController({
+            importImage: importPublicImage,
+            seedCache: async (access) => {
+                const storageKey = imageStorageKeyForMedia(access.sourceMediaId);
+                try {
+                    if (!(await getImageBlob(storageKey))) return null;
+                    return await promoteImageStorageKey({ url: "", storageKey, width: access.width, height: access.height, bytes: access.bytes, mimeType: access.contentType }, access.mediaId, { retainSource: true });
+                } catch {
+                    message.warning("本地缓存复用失败，将读取个人图片副本");
+                    return null;
+                }
+            },
+            isCurrent: (scope) => scope === getVideoSessionScope() && useCanvasStore.getState().readyForCanvasMutations && !useCanvasStore.getState().blockedProjectSync[videoProjectRef.current],
+            commit: (node) => {
+                setNodes((current) => [...current, node]);
+                setSelectedNodeIds(new Set([node.id]));
+                setSelectedConnectionId(null);
+                setDialogNodeId(node.id);
+            },
+            onStatus: (operation, state, error) => {
+                const key = `public-import:${operation.id}`;
+                if (state === "closed") {
+                    message.destroy(key);
+                    return;
+                }
+                message.open({
+                    key,
+                    duration: 0,
+                    type: state === "loading" ? "loading" : "error",
+                    content: (
+                        <span className="inline-flex items-center gap-2">
+                            <span>{state === "loading" ? `正在导入：${operation.source.title}` : error}</span>
+                            {state === "failed" ? (
+                                <Button size="small" type="link" onClick={() => void controller.retry(operation.id)}>
+                                    重试
+                                </Button>
+                            ) : null}
+                            <Button size="small" type="link" onClick={() => controller.cancel(operation.id)}>
+                                取消
+                            </Button>
+                        </span>
+                    ),
+                });
+            },
+            newRequestId: () => crypto.randomUUID(),
+            newNodeId: () => `image-${nanoid()}`,
+        });
+        return controller;
+    }, [getVideoSessionScope, message]);
+    useEffect(() => {
+        publicImageImportController.activate();
+        return () => publicImageImportController.dispose();
+    }, [publicImageImportController]);
+
+    const createPublicImageNode = useCallback(
+        async (payload: PublicImageDropPayload, position: Position) => {
+            if (useCanvasStore.getState().blockedProjectSync[videoProjectRef.current]) return;
+            await publicImageImportController.start(payload, position, getVideoSessionScope()).done;
+        },
+        [getVideoSessionScope, publicImageImportController],
+    );
+
+    const createImageAssetNode = useCallback(
+        async (asset: ImageAsset, position: Position) => {
+            const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
+            const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+            if (publicImageId) {
+                await createPublicImageNode({ id: publicImageId, mediaId, title: asset.title }, position);
+                return;
+            }
+            let image: UploadedImage;
+            if (mediaId) {
+                image = {
+                    url: "",
+                    storageKey: imageStorageKeyForMedia(mediaId),
+                    mediaId,
+                    width: asset.data.width,
+                    height: asset.data.height,
+                    bytes: asset.data.bytes,
+                    mimeType: asset.data.mimeType,
+                };
+            } else {
+                const content = await resolveImageUrl(asset.data.storageKey, "");
+                if (!content) throw new Error("素材图片缓存不存在");
+                image = {
+                    url: content,
+                    storageKey: asset.data.storageKey || "",
+                    width: asset.data.width,
+                    height: asset.data.height,
+                    bytes: asset.data.bytes,
+                    mimeType: asset.data.mimeType,
+                };
+            }
+            const size = fitNodeSize(image.width, image.height);
+            const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+            const newNode: CanvasNodeData = {
+                id,
+                type: CanvasNodeType.Image,
+                title: asset.title,
+                position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
+                width: size.width,
+                height: size.height,
+                metadata: { ...imageMetadata(image), assetId: asset.id, mediaExpiresAt: typeof asset.metadata?.expiresAt === "string" ? asset.metadata.expiresAt : undefined },
             };
-        } else {
-            const content = await resolveImageUrl(asset.data.storageKey, "");
-            if (!content) throw new Error("素材图片缓存不存在");
-            image = {
-                url: content,
-                storageKey: asset.data.storageKey || "",
-                width: asset.data.width,
-                height: asset.data.height,
-                bytes: asset.data.bytes,
-                mimeType: asset.data.mimeType,
-            };
-        }
-        const size = fitNodeSize(image.width, image.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const newNode: CanvasNodeData = {
-            id,
-            type: CanvasNodeType.Image,
-            title: asset.title,
-            position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-            width: size.width,
-            height: size.height,
-            metadata: { ...imageMetadata(image), assetId: asset.id, publicImageId: publicImageId || undefined, mediaExpiresAt: typeof asset.metadata?.expiresAt === "string" ? asset.metadata.expiresAt : undefined },
-        };
 
-        setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(id);
-    }, []);
-
-    const createPublicImageNode = useCallback(async (payload: PublicImageDropPayload, position: Position) => {
-        const access = await fetchPublicImageAccess(payload.id);
-        const dimensions: UploadedImage = {
-            url: "",
-            storageKey: imageStorageKeyForMedia(access.mediaId),
-            mediaId: access.mediaId,
-            width: access.width,
-            height: access.height,
-            bytes: access.bytes,
-            mimeType: access.contentType,
-        };
-        const size = fitNodeSize(dimensions.width, dimensions.height);
-        const id = `image-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        const newNode: CanvasNodeData = {
-            id,
-            type: CanvasNodeType.Image,
-            title: payload.title,
-            position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-            width: size.width,
-            height: size.height,
-            metadata: { ...imageMetadata(dimensions), publicImageId: payload.id },
-        };
-
-        setNodes((prev) => [...prev, newNode]);
-        setSelectedNodeIds(new Set([id]));
-        setSelectedConnectionId(null);
-        setDialogNodeId(id);
-    }, []);
+            setNodes((prev) => [...prev, newNode]);
+            setSelectedNodeIds(new Set([id]));
+            setSelectedConnectionId(null);
+            setDialogNodeId(id);
+        },
+        [createPublicImageNode],
+    );
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         const scope = getVideoSessionScope();

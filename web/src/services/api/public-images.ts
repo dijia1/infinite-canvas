@@ -37,6 +37,10 @@ export async function fetchPublicImageFolders() {
     return apiGet<PublicImageFolderList>("/api/v1/public-folders");
 }
 
+export function importPublicImage(id: string, requestId: string) {
+    return apiPost<{ mediaId: string; sourceMediaId: string; width: number; height: number; bytes: number; contentType: string }>(`/api/v1/public-images/${encodeURIComponent(id)}/import`, { requestId });
+}
+
 export async function fetchPublicImageAccess(id: string) {
     const response = await fetch(appApiPath(`/api/v1/public-images/${encodeURIComponent(id)}/access`), { cache: "no-store" });
     const payload = (await response.json()) as { code?: number; data?: { mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number }; msg?: string };
