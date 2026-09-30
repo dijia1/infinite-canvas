@@ -55,7 +55,7 @@ func TestReadImageTaskMediaReferencesKeepsRequestedOrderAndChecksAccess(t *testi
 func TestLocalAdminMediaReferencesAllowCrossUserPrivateImages(t *testing.T) {
 	const adminUID = "local-admin-image-reference"
 	seedPermissionMember(t, adminUID, true)
-	if err := repository.SetAppRole(adminUID, model.AppRoleAdmin, "test-grantor"); err != nil {
+	if err := repository.SetAppRole(adminUID, model.AppRoleAdmin, "test-grantor", false); err != nil {
 		t.Fatal(err)
 	}
 	store := &memoryTaskInputStore{objects: map[string][]byte{"images/private-owner.png": tinyPNG}}

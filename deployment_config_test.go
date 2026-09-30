@@ -24,7 +24,9 @@ func TestProductionComposeUsesPortalNetworksAndHealthcheck(t *testing.T) {
 		"portal_gateway:",
 		"internal_tools_database:",
 		"portal_directory:",
-		"fetch('http://127.0.0.1:3000/api/healthz')",
+		"fetch('http://127.0.0.1:3000/api/healthz'",
+		"AbortSignal.timeout(3000)",
+		"response.json()",
 		"\"node\", \"-e\"",
 		"driver: json-file",
 		"max-size: \"20m\"",
@@ -41,6 +43,9 @@ func TestProductionComposeUsesPortalNetworksAndHealthcheck(t *testing.T) {
 
 func TestLocalComposeJoinsPortalNetworks(t *testing.T) {
 	compose := readDeploymentFile(t, "docker-compose.local.yml")
+	if strings.Contains(compose, "ports:") {
+		t.Fatal("local app must also enter through Portal, without a host port")
+	}
 	for _, expected := range []string{
 		"infinite-canvas-app",
 		"infinite-canvas-directory",

@@ -9,6 +9,7 @@ import { useDeferredValue, useState } from "react";
 import { appPath } from "@/lib/app-path";
 import { apiRequestError } from "@/services/api/request";
 import { fetchPortalMembers, updatePortalMemberAppRole, type AppRole, type PortalMember } from "@/services/api/members";
+import { portalSessionQuery } from "@/services/api/session";
 import { syncPortalMembers } from "@/services/api/operation-logs";
 import { useAdminStore } from "@/stores/use-admin-store";
 
@@ -33,7 +34,13 @@ export default function AdminMembersPage() {
     });
     const revokeOwnAdminSession = async () => {
         await queryClient.invalidateQueries({ queryKey: ["portal-session"] });
-        clearSession();
+        const session = await queryClient.fetchQuery({ ...portalSessionQuery, staleTime: 0 });
+        if (!session.isAdmin) {
+            clearSession();
+            return;
+        }
+        await queryClient.invalidateQueries({ queryKey: ["portal-members"] });
+        message.success("应用角色已更新");
     };
 
     return (

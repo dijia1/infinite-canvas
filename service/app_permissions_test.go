@@ -54,7 +54,7 @@ func seedPermissionMember(t *testing.T, userUID string, enabled bool) {
 	}
 }
 
-func TestGatewayAdminRoleDoesNotAffectResolvedAppPermissions(t *testing.T) {
+func TestVerifiedGatewayAdminRoleGrantsGlobalPermissions(t *testing.T) {
 	const userUID = "gateway-admin-permission-member"
 	seedPermissionMember(t, userUID, true)
 
@@ -64,8 +64,8 @@ func TestGatewayAdminRoleDoesNotAffectResolvedAppPermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if permissions.AppRole != model.AppRoleMember || permissions.IsAdmin || permissions.CanManagePublicAssets {
-		t.Fatalf("permissions = %+v, want local member capabilities", permissions)
+	if permissions.AppRole != model.AppRoleAdmin || !permissions.IsAdmin || !permissions.CanManagePublicAssets {
+		t.Fatalf("permissions = %+v, want global admin capabilities", permissions)
 	}
 }
 
@@ -93,13 +93,13 @@ func TestLocalPublicAssetsManagerPermissionMatrix(t *testing.T) {
 				seedPermissionMember(t, test.userUID, test.enabled)
 			}
 			if test.role != model.AppRoleMember {
-				if err := repository.SetAppRole(test.userUID, test.role, "test-grantor"); err != nil {
+				if err := repository.SetAppRole(test.userUID, test.role, "test-grantor", false); err != nil {
 					t.Fatal(err)
 				}
 			}
 
 			permissions, err := ResolveAppPermissions(context.Background(), PortalUser{
-				UID: test.userUID, Roles: []string{"portal-admin", "portal-public-assets-manager"},
+				UID: test.userUID, Roles: []string{"member", "portal-public-assets-manager"},
 			})
 			if err != nil {
 				t.Fatal(err)

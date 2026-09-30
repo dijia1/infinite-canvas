@@ -67,13 +67,13 @@ func TestPublicImageObjectKeyDoesNotUseUploaderDirectory(t *testing.T) {
 	}
 }
 
-func TestGatewayAdminRoleDoesNotGrantMediaAccess(t *testing.T) {
+func TestVerifiedGatewayAdminRoleGrantsMediaReadAccess(t *testing.T) {
 	item := model.Media{OwnerUID: "owner"}
 	if allowed, err := canAccessMedia(context.Background(), PortalUser{UID: "owner"}, item); err != nil || !allowed {
 		t.Fatal("owner should access media")
 	}
-	if allowed, err := canAccessMedia(context.Background(), PortalUser{UID: "gateway-admin", Roles: []string{"portal-admin"}}, item); err != nil || allowed {
-		t.Fatal("Gateway portal-admin role must not grant cross-user media access")
+	if allowed, err := canAccessMedia(context.Background(), PortalUser{UID: "gateway-admin", Roles: []string{"portal-admin"}}, item); err != nil || !allowed {
+		t.Fatal("verified global administrator must retain administrator media read access")
 	}
 	if allowed, err := canAccessMedia(context.Background(), PortalUser{UID: "other"}, item); err != nil || allowed {
 		t.Fatal("other user must not access media")

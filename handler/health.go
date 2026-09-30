@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-var databaseHealthCheck = func() error {
+var databaseHealthCheck = func(ctx context.Context) error {
 	database, err := repository.DB()
 	if err != nil {
 		return err
@@ -15,15 +18,22 @@ var databaseHealthCheck = func() error {
 	if err != nil {
 		return err
 	}
-	return sqlDB.Ping()
+	return sqlDB.PingContext(ctx)
 }
 
-func Health(w http.ResponseWriter, _ *http.Request) {
-	if err := databaseHealthCheck(); err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte("unavailable"))
-		return
+func Health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	status := http.StatusOK
+	payload := map[string]any{"ok": true}
+	if err := databaseHealthCheck(ctx); err != nil {
+		status = http.StatusServiceUnavailable
+		payload = map[string]any{"ok": false, "error": "DEPENDENCY_UNAVAILABLE"}
 	}
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte("ok"))
+	w.WriteHeader(status)
+	if r.Method != http.MethodHead {
+		_ = json.NewEncoder(w).Encode(payload)
+	}
 }

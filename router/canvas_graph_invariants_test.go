@@ -265,6 +265,6 @@ func canvasGraphRequestWithID(t *testing.T, method, path, owner, body, requestID
 	request.Header.Set("X-Portal-User-Uid", owner)
 	request.Header.Set("X-Canvas-Request-Id", requestID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	return response
 }

@@ -1,3 +1,6 @@
+import { redirect } from "next/navigation";
+
+// Legacy bookmarks return to the single Portal entry; the app has no login flow.
 export default function AdminLoginPage() {
-    return <main className="grid min-h-dvh place-items-center bg-background p-6 text-sm text-muted-foreground">请从 Portal 工作台进入应用。</main>;
+    redirect("/");
 }

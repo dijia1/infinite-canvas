@@ -13,7 +13,7 @@ function member(userUid: string, appRole: AppRole = "admin"): PortalMember {
     return { userUid, appRole, displayName: userUid, roles: ["staff"], enabled: true, syncedAt: "2026-09-10T00:00:00Z" };
 }
 
-function membersPage() {
+function membersPage(globalAdmin = false) {
     let currentHooks!: ReturnType<typeof hookHarness>["hooks"];
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
     const cache = { items: [member("self"), member("other / user")], total: 2 };
@@ -75,6 +75,7 @@ function membersPage() {
                 return result.promise;
             },
         },
+        "@/services/api/session": { portalSessionQuery: { queryKey: ["portal-session"], queryFn: async () => ({ isAdmin: globalAdmin }) } },
         "@/services/api/operation-logs": { syncPortalMembers: async () => ({ count: 2 }) },
         "@/stores/use-admin-store": { useAdminStore: (selector: (value: typeof store) => unknown) => selector(store) },
     });
@@ -159,10 +160,10 @@ for (const role of ["member", "public_assets_manager"] as const) {
         page.sessionGate.resolve();
         await page.mutations[0];
         assert.equal(page.clears, 1);
-        assert.equal(page.queryClient.getQueryState(["portal-session"])?.isInvalidated, true);
+        assert.equal(page.queryClient.getQueryState(["portal-session"])?.isInvalidated, false);
         assert.equal(oneElement(self.render(), "Select").props.disabled, false);
         assert.equal(page.queryClient.getQueryData(["portal-members"]), page.cache);
-        assert.deepEqual(page.cacheWrites, []);
+        assert.deepEqual(page.cacheWrites, [["portal-session"]]);
         assert.deepEqual(page.invalidations, [["portal-session"]]);
         assert.deepEqual(page.successes, []);
     });
@@ -195,4 +196,17 @@ test("role failures without a backend message use the application fallback", asy
     await assert.rejects(page.mutations[0]);
     assert.deepEqual(page.errors, ["应用角色更新失败"]);
     assert.deepEqual(page.cacheWrites, []);
+});
+
+test("verified Portal administrator keeps access after changing their local role", async (t) => {
+    const page = membersPage(true);
+    t.after(() => page.close());
+    oneElement(page.rows[0].render(), "Select").props.onChange("member");
+    await flushAsync();
+    page.requests[0].result.resolve(member("self", "member"));
+    page.sessionGate.resolve();
+    await page.mutations[0];
+    assert.equal(page.clears, 0);
+    assert.deepEqual(page.invalidations, [["portal-session"], ["portal-members"]]);
+    assert.deepEqual(page.successes, ["应用角色已更新"]);
 });

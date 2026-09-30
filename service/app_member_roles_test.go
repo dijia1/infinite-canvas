@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -93,7 +92,7 @@ func TestRoleChangeMemberListUsesOneBatchedRoleQuery(t *testing.T) {
 	if err := repository.UpsertPortalMembers(members); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(members[1].UserUID, model.AppRolePublicAssetsManager, "role-list-admin"); err != nil {
+	if err := repository.SetAppRole(members[1].UserUID, model.AppRolePublicAssetsManager, "role-list-admin", false); err != nil {
 		t.Fatal(err)
 	}
 	database, err := repository.DB()
@@ -137,7 +136,7 @@ func TestDirectorySyncPreservesAppRoleWhenPortalIdentityChanges(t *testing.T) {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(targetUID, model.AppRolePublicAssetsManager, "directory-sync-admin"); err != nil {
+	if err := repository.SetAppRole(targetUID, model.AppRolePublicAssetsManager, "directory-sync-admin", false); err != nil {
 		t.Fatal(err)
 	}
 	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -163,7 +162,7 @@ func TestDirectorySyncPreservesAppRoleWhenPortalIdentityChanges(t *testing.T) {
 	}
 }
 
-func TestDirectorySyncRejectsDisablingLastEnabledAdmin(t *testing.T) {
+func TestDirectorySyncDisablesLastEnabledAdminAndPreservesRole(t *testing.T) {
 	database, err := repository.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -179,13 +178,13 @@ func TestDirectorySyncRejectsDisablingLastEnabledAdmin(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(demotedUID, model.AppRoleAdmin, lastAdminUID); err != nil {
+	if err := repository.SetAppRole(demotedUID, model.AppRoleAdmin, lastAdminUID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(lastAdminUID, model.AppRoleAdmin, demotedUID); err != nil {
+	if err := repository.SetAppRole(lastAdminUID, model.AppRoleAdmin, demotedUID, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(demotedUID, model.AppRoleMember, lastAdminUID); err != nil {
+	if err := repository.SetAppRole(demotedUID, model.AppRoleMember, lastAdminUID, false); err != nil {
 		t.Fatal(err)
 	}
 	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -198,15 +197,19 @@ func TestDirectorySyncRejectsDisablingLastEnabledAdmin(t *testing.T) {
 	config.Cfg.PortalDirectorySecret = "directory-secret"
 	t.Cleanup(func() { config.Cfg = previous })
 
-	if _, err := SyncPortalMembers(context.Background()); !errors.Is(err, repository.ErrLastAppAdmin) {
-		t.Fatalf("SyncPortalMembers() error = %v, want ErrLastAppAdmin", err)
+	if _, err := SyncPortalMembers(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	lastAdmin, found, err := repository.GetPortalMember(lastAdminUID)
-	if err != nil || !found || !lastAdmin.Enabled || lastAdmin.DisplayName != "最后管理员" {
-		t.Fatalf("last administrator after rejected sync = %+v, found=%t, err=%v", lastAdmin, found, err)
+	if err != nil || !found || lastAdmin.Enabled {
+		t.Fatalf("disabled member = %+v found=%t err=%v", lastAdmin, found, err)
+	}
+	role, err := repository.ResolveAppRole(lastAdminUID)
+	if err != nil || role != model.AppRoleAdmin {
+		t.Fatalf("preserved role=%q err=%v", role, err)
 	}
 	demoted, found, err := repository.GetPortalMember(demotedUID)
-	if err != nil || !found || demoted.DisplayName != "已降级成员" {
-		t.Fatalf("other member after rejected sync = %+v, found=%t, err=%v", demoted, found, err)
+	if err != nil || !found || demoted.DisplayName != "已降级成员的新姓名" {
+		t.Fatalf("updated member=%+v found=%t err=%v", demoted, found, err)
 	}
 }

@@ -35,7 +35,7 @@ func requestAdminSettings(t *testing.T, method, userUID string, body any) *httpt
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", userUID)
 	response := httptest.NewRecorder()
-	New().ServeHTTP(response, request)
+	servePortalRequest(response, request)
 	return response
 }
 

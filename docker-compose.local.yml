@@ -8,8 +8,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    ports:
-      - "3000:3000"
     networks:
       portal_gateway:
         aliases:

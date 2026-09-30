@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/basketikun/infinite-canvas/config"
+	"github.com/basketikun/infinite-canvas/internal/testportal"
 	"github.com/basketikun/infinite-canvas/internal/testpostgres"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
@@ -19,7 +20,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	config.Cfg = config.Config{DatabaseDSN: schema.DSN}
+	config.Cfg = config.Config{DatabaseDSN: schema.DSN, PortalDirectoryAppKey: "infinite-canvas", PortalDirectorySecret: "test-identity-secret"}
 	code := m.Run()
 	closeRepositoryPool()
 	_ = schema.Close()
@@ -44,7 +45,7 @@ func grantLocalRole(t *testing.T, userUID string, role model.AppRole, enabled bo
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := repository.SetAppRole(userUID, role, "test-grantor"); err != nil {
+	if err := repository.SetAppRole(userUID, role, "test-grantor", false); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -73,6 +74,7 @@ func TestPortalIdentityRequiresGatewayHeaders(t *testing.T) {
 	request.Header.Set("X-Portal-Username", "%E5%BC%A0%E4%B8%89")
 	request.Header.Set("X-Portal-Roles", "member,portal-admin")
 	response := httptest.NewRecorder()
+	testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("portal identity status = %d, body = %s", response.Code, response.Body.String())
@@ -89,13 +91,14 @@ func TestRequireAppAdminRejectsRegularUser(t *testing.T) {
 	request.Header.Set("X-Portal-User-Uid", "user-1")
 	request.Header.Set("X-Portal-Roles", "member")
 	response := httptest.NewRecorder()
+	testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("regular user status = %d, want %d", response.Code, http.StatusForbidden)
 	}
 }
 
-func TestGatewayAdminRoleAloneDoesNotGrantLocalAdmin(t *testing.T) {
+func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
 	const userUID = "gateway-role-only-member"
 	grantLocalRole(t, userUID, model.AppRoleMember, true)
 
@@ -108,9 +111,10 @@ func TestGatewayAdminRoleAloneDoesNotGrantLocalAdmin(t *testing.T) {
 	request.Header.Set("X-Portal-User-Uid", userUID)
 	request.Header.Set("X-Portal-Roles", "portal-admin")
 	response := httptest.NewRecorder()
+	testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 	router.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("Gateway-only admin status = %d, want %d", response.Code, http.StatusForbidden)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("verified global admin status = %d, want %d", response.Code, http.StatusNoContent)
 	}
 }
 
@@ -128,6 +132,7 @@ func TestLocalPublicAssetsManagerMiddlewareAllowsOnlyPublicAssets(t *testing.T) 
 		req := httptest.NewRequest(method, path, nil)
 		req.Header.Set("X-Portal-User-Uid", userUID)
 		response := httptest.NewRecorder()
+		testportal.Sign(req, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 		router.ServeHTTP(response, req)
 		return response
 	}
@@ -162,6 +167,7 @@ func TestAppPermissionLookupFailureReturnsInternalServerError(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/admin", nil)
 	request.Header.Set("X-Portal-User-Uid", userUID)
 	response := httptest.NewRecorder()
+	testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("permission storage failure status = %d, want %d; body = %s", response.Code, http.StatusInternalServerError, response.Body.String())
