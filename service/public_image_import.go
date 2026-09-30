@@ -12,6 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type publicImageSourceVersionError struct{}
+
+func (publicImageSourceVersionError) Error() string {
+	return "公共图片版本已丢失或校验失败，请联系管理员"
+}
+func (err publicImageSourceVersionError) SafeMessage() string { return err.Error() }
+
+func publicImageImportIntentID(owner string, request uuid.UUID) string {
+	return "public-import-" + uuid.NewSHA1(uuid.NameSpaceURL, []byte(owner+":"+request.String())).String()
+}
+
 type PublicImageImportAccess struct {
 	MediaAccess
 	SourceMediaID string `json:"sourceMediaId"`
@@ -31,7 +42,7 @@ func ImportPublicImage(ctx context.Context, user PortalUser, publicID, requestID
 		return PublicImageImportAccess{}, err
 	}
 	request, _ := uuid.Parse(requestID)
-	id := "public-import-" + uuid.NewSHA1(uuid.NameSpaceURL, []byte(user.UID+":"+request.String())).String()
+	id := publicImageImportIntentID(user.UID, request)
 	intent, _, err := repository.GetMediaUploadIntentForOwner(id, user.UID)
 	return PublicImageImportAccess{MediaAccess: access, SourceMediaID: intent.SourceMediaID}, err
 }
@@ -45,7 +56,7 @@ func importPublicImage(ctx context.Context, store imageStore, user PortalUser, p
 		return model.Media{}, safeMessageError{message: "导入请求 ID 无效"}
 	}
 	// Scope retries to the authenticated owner; the client never controls a key.
-	id := "public-import-" + uuid.NewSHA1(uuid.NameSpaceURL, []byte(user.UID+":"+request.String())).String()
+	id := publicImageImportIntentID(user.UID, request)
 	intent, found, err := repository.GetMediaUploadIntentForOwner(id, user.UID)
 	if err != nil {
 		return model.Media{}, err
@@ -70,7 +81,11 @@ func importPublicImage(ctx context.Context, store imageStore, user PortalUser, p
 		}
 		bound, err := bindMediaVersion(ctx, versioned, public.Media)
 		if err != nil {
-			return model.Media{}, safeMessageError{message: "公共图片版本已丢失或校验失败，请联系管理员"}
+			var identityErr mediaVersionIdentityError
+			if imageObjectMissing(err) || imageObjectPreconditionFailed(err) || errors.As(err, &identityErr) {
+				return model.Media{}, publicImageSourceVersionError{}
+			}
+			return model.Media{}, safeMessageError{message: "公共图片版本校验暂时失败，请稍后重试"}
 		}
 		if bound.Bytes <= 0 || bound.Bytes > maxMediaBytes || !strings.HasPrefix(bound.ContentType, "image/") {
 			return model.Media{}, safeMessageError{message: "公共图片格式或大小无效"}

@@ -80,6 +80,13 @@ export function fetchCanvasProject(id: string) {
     return apiGet<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`);
 }
 
+export function importCanvasPublicImages(id: string, revision: number) {
+    return apiPost<{ project: CanvasProjectDetail; replacements: import("@/app/(user)/canvas/utils/canvas-public-image-migration").PublicImageReplacement[]; missingNodeIds: string[]; pendingNodeIds: string[] }>(
+        `/api/v1/canvas/projects/${encodeURIComponent(id)}/public-images/import`,
+        { revision },
+    );
+}
+
 export function createCanvasProject(input: CreateCanvasProjectInput) {
     return apiPost<CanvasProjectDetail>("/api/v1/canvas/projects", { ...input, document: sanitizeCanvasProjectDocument(input.document) });
 }

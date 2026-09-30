@@ -308,3 +308,11 @@ test("persists data URL images and replaces stale metadata", async () => {
         errorDetails: undefined,
     });
 });
+
+
+test("confirmed missing public references cannot recover a stale local cache", async () => {
+    const node = imageNode({ mediaId: "missing", storageKey: "media:missing", status: "error", errorDetails: "原公共图片已失效，请替换或删除此节点" });
+    const unexpected = async (): Promise<never> => { throw new Error("must not read or upload a confirmed missing reference"); };
+    const restored = await hydrateCanvasImages([node], { resolveMediaUrl: unexpected, readCachedImage: unexpected, resolveRemoteImage: unexpected, fetchPublicImageAccess: unexpected, loadMediaImage: unexpected, uploadImage: unexpected });
+    assert.equal(restored[0], node);
+});

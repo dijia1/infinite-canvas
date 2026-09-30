@@ -33,6 +33,7 @@ export type CanvasHistoryController<TSnapshot> = {
     resume: () => void;
     reset: () => void;
     replaceBaseline: (snapshot: TSnapshot) => void;
+    rebase: (normalize: (snapshot: TSnapshot) => TSnapshot, current: TSnapshot) => void;
     completeApplication: (applicationId: number) => void;
     getRetainedHistory: () => { history: HistoryState<TSnapshot>; lastHistory: TSnapshot | null };
     dispose: () => void;
@@ -164,6 +165,15 @@ export function createCanvasHistoryController<TSnapshot>({
             history.future = [];
             notify();
         },
+        rebase(normalize, current) {
+            clearTimer();
+            pausedSnapshot = null;
+            history.past = history.past.map(normalize);
+            history.future = history.future.map(normalize);
+            lastHistory = current;
+            isPausedRef.current = false;
+            notify();
+        },
         replaceBaseline(snapshot) {
             pausedSnapshot = null;
             isPausedRef.current = false;
@@ -202,7 +212,7 @@ export type UseCanvasHistoryOptions<TSnapshot> = {
     isSameSnapshot?: (left: TSnapshot, right: TSnapshot) => boolean;
 };
 
-export type UseCanvasHistoryResult<TSnapshot> = Pick<CanvasHistoryController<TSnapshot>, "undo" | "redo" | "pause" | "resume" | "reset" | "replaceBaseline" | "getRetainedHistory" | "isPausedRef" | "isApplyingRef"> & {
+export type UseCanvasHistoryResult<TSnapshot> = Pick<CanvasHistoryController<TSnapshot>, "undo" | "redo" | "pause" | "resume" | "reset" | "replaceBaseline" | "rebase" | "getRetainedHistory" | "isPausedRef" | "isApplyingRef"> & {
     canUndo: boolean;
     canRedo: boolean;
 };
@@ -249,6 +259,7 @@ export function useCanvasHistory<TSnapshot>({ snapshot, applySnapshot, isReady, 
         resume: controller.resume,
         reset: controller.reset,
         replaceBaseline: controller.replaceBaseline,
+        rebase: controller.rebase,
         getRetainedHistory: controller.getRetainedHistory,
         isPausedRef: controller.isPausedRef,
         isApplyingRef: controller.isApplyingRef,

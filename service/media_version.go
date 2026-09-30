@@ -17,6 +17,10 @@ type mediaVersionStore interface {
 	SignedMediaURL(context.Context, string, string, string, string) (string, time.Time, error)
 }
 
+type mediaVersionIdentityError struct{ safeMessageError }
+
+func (err mediaVersionIdentityError) Unwrap() error { return err.safeMessageError }
+
 func bindMediaVersion(ctx context.Context, store versionedImageStore, item model.Media) (model.Media, error) {
 	var metadata imageObjectMetadata
 	var err error
@@ -29,7 +33,7 @@ func bindMediaVersion(ctx context.Context, store versionedImageStore, item model
 		return model.Media{}, err
 	}
 	if metadata.VersionID == "" || metadata.ETag == "" || (item.ObjectETag != "" && item.ObjectETag != metadata.ETag) {
-		return model.Media{}, safeMessageError{message: "媒体版本校验失败，请重新上传"}
+		return model.Media{}, mediaVersionIdentityError{safeMessageError{message: "媒体版本校验失败，请重新上传"}}
 	}
 	if item.ObjectVersionID != "" && item.ObjectETag != "" {
 		return item, nil

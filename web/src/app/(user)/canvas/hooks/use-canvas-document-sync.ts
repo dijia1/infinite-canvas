@@ -45,6 +45,9 @@ export function createCanvasDocumentPublisher({
     return {
         get pending() { return pending; },
         getPendingDocument: () => pending ? latest : null,
+        acceptBaseline(document: CanvasEditorDocument) {
+            cancelTimer(); latest = document; published = document; setPending(false);
+        },
         capture(document: CanvasEditorDocument, baseline: CanvasEditorDocument) {
             // Capture current editor data for recovery even while publication is blocked.
             // The hook gates restoration identity; flush gates write permission.
@@ -108,5 +111,5 @@ export function useCanvasDocumentSync({ projectId, syncScope, canonicalGeneratio
         return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration ? publisher.getPendingDocument() : null;
     }, [publisher, syncScope, canonicalGeneration]);
 
-    return { pendingDocument, flushDocument: publisher.flushViewport, readPendingDocument };
+    return { pendingDocument, flushDocument: publisher.flushViewport, readPendingDocument, acceptDocumentBaseline: publisher.acceptBaseline };
 }

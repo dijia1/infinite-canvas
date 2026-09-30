@@ -273,6 +273,9 @@ func DeletePublicImage(ctx context.Context, id string) error {
 	}
 	actor, _ := PortalUserFromContext(ctx)
 	media, err := repository.PreparePublicImageDeletion(id, time.Now().UTC(), actor.UID)
+	if errors.Is(err, repository.ErrPublicImageCanvasReferenced) {
+		return safeMessageError{message: err.Error()}
+	}
 	if err != nil {
 		return safeMessageError{message: "素材正在使用或无法删除"}
 	}

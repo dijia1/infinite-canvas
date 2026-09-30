@@ -85,3 +85,13 @@ test("edits after a save conflict remain available to local recovery without rem
     assert.deepEqual(writes, []);
     publisher.cancel();
 });
+
+test("adopting a confirmed conversion baseline does not publish another document", () => {
+    const { publisher, writes, tick } = setup();
+    const initial = baseline(); publisher.capture(initial, initial);
+    const converted = { ...initial, nodes: [node("private-copy")] };
+    publisher.acceptBaseline(converted); publisher.capture(converted, converted); tick();
+    assert.equal(publisher.pending, false); assert.deepEqual(writes, []);
+    const edited = { ...converted, nodes: [...converted.nodes, node("new-edit")] };
+    publisher.capture(edited, converted); tick(); assert.deepEqual(writes, [edited]);
+});

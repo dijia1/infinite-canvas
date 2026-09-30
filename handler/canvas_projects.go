@@ -65,6 +65,27 @@ func ImportCanvasProjects(w http.ResponseWriter, r *http.Request) {
 	OK(w, items)
 }
 
+func ImportCanvasPublicImages(w http.ResponseWriter, r *http.Request, id string) {
+	user, ok := service.PortalUserFromContext(r.Context())
+	if !ok {
+		Fail(w, "未经过 Portal Gateway 身份验证")
+		return
+	}
+	var input struct {
+		Revision int `json:"revision"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+		return
+	}
+	result, err := service.ImportCanvasPublicImages(r.Context(), user, id, input.Revision)
+	if err != nil {
+		writeCanvasProjectError(w, err)
+		return
+	}
+	OK(w, result)
+}
+
 func CanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 	user, ok := service.PortalUserFromContext(r.Context())
 	if !ok {

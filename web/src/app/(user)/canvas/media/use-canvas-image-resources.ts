@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
 
 import { loadMediaImage, loadMediaThumbnail, releaseImageObjectURL } from "@/services/image-storage";
 
+import { missingPublicImageMessage } from "@/services/canvas-image-hydration";
+
 import type { CanvasNodeData } from "../types";
 import { getCanvasImageVariant } from "./canvas-media-policy";
 import { createCanvasImageResourceController, type CanvasImageResourceController, type CanvasImageResourceRequest } from "./canvas-image-resource-controller";
@@ -20,7 +22,7 @@ export type CanvasMediaTarget = {
 };
 
 function isRemoteImageNode(node: CanvasNodeData) {
-    return node.type === "image" && Boolean(node.metadata?.mediaId);
+    return node.type === "image" && Boolean(node.metadata?.mediaId) && node.metadata?.errorDetails !== missingPublicImageMessage;
 }
 
 export function buildCanvasMediaTargets({

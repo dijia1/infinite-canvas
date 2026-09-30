@@ -12,6 +12,8 @@ import { ImageIcon, Images, List, Plus, Redo2, Settings2, Trash2, Undo2, Upload,
 import { saveAs } from "file-saver";
 
 import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
+import { importCanvasPublicImages } from "@/services/api/canvas-projects";
+import { canApplyPublicImageMigration, hasPublicImageMigrationCandidates, normalizePublicImageReferences } from "../utils/canvas-public-image-migration";
 import { fetchPublicImageAccess, importPublicImage } from "@/services/api/public-images";
 import { downloadVideo } from "@/services/video-download";
 import { requestVideoGeneration } from "@/services/api/video";
@@ -240,7 +242,15 @@ function InfiniteCanvasPage() {
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
-    const isProjectReadonly = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
+    const projectSync = useCanvasStore((state) => state.projectSync[projectId]);
+    const isProjectBlocked = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
+    const [publicMigrationRunning, setPublicMigrationRunning] = useState(false);
+    const publicMigrationRunningRef = useRef(false);
+    const publicMigrationAttemptsRef = useRef(new Set<string>());
+    const publicMigrationScannedRef = useRef<string | null>(null);
+    const publicMigrationEpochRef = useRef(0);
+    const [publicMigrationRetry, setPublicMigrationRetry] = useState(0);
+    const isProjectReadonly = isProjectBlocked || publicMigrationRunning;
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [maskResources, setMaskResources] = useState<CanvasMaskResources>({});
@@ -468,7 +478,7 @@ function InfiniteCanvasPage() {
         return applied;
     }, []);
 
-    const { canUndo, canRedo, undo, redo, pause, resume, replaceBaseline, getRetainedHistory } = useCanvasHistory({
+    const { canUndo, canRedo, undo, redo, pause, resume, replaceBaseline, rebase, getRetainedHistory } = useCanvasHistory({
         snapshot: historySnapshot,
         applySnapshot: applyHistorySnapshot,
         isReady: documentReady,
@@ -477,7 +487,7 @@ function InfiniteCanvasPage() {
 
     const editorDocument = useMemo<CanvasEditorDocument>(() => ({ nodes, connections, maskResources, backgroundMode, showImageInfo, viewport }), [nodes, connections, maskResources, backgroundMode, showImageInfo, viewport]);
     const getLiveViewport = useCallback(() => canvasRef.current?.getViewport(), []);
-    const { pendingDocument, flushDocument, readPendingDocument } = useCanvasDocumentSync({
+    const { pendingDocument, flushDocument, readPendingDocument, acceptDocumentBaseline } = useCanvasDocumentSync({
         projectId, syncScope, canonicalGeneration, isReady: documentReady && !isProjectReadonly,
         document: editorDocument, baseline: documentBaseline, getViewport: getLiveViewport,
     });
@@ -515,6 +525,83 @@ function InfiniteCanvasPage() {
             ),
         [canonicalGeneration, canonicalRestore, canvasImageHydrationDependencies, projectId, readCanonicalIdentity, replaceBaseline, syncScope],
     );
+
+    useEffect(() => {
+        publicMigrationRunningRef.current = false;
+        setPublicMigrationRunning(false);
+        return () => {
+            publicMigrationEpochRef.current += 1;
+            publicMigrationRunningRef.current = false;
+            message.destroy(`public-migration:${projectId}`);
+        };
+    }, [canonicalGeneration, message, projectId, syncScope]);
+
+    useEffect(() => {
+        if (!documentReady || isProjectBlocked || pendingDocument || readPendingDocument() || publicMigrationRunningRef.current) return;
+        const state = useCanvasStore.getState();
+        const sync = state.projectSync[projectId];
+        if (!state.syncEnabled || !sync?.serverRevision || sync.dirty || sync.pending || sync.saving || sync.conflict || sync.offline) return;
+        const initialMediaScan = publicMigrationScannedRef.current !== JSON.stringify([syncScope, projectId, canonicalGeneration]);
+        if (!hasPublicImageMigrationCandidates(nodes, projectDetail.project?.nodes || [], initialMediaScan)) return;
+        const key = JSON.stringify([syncScope, projectId, canonicalGeneration, sync.serverRevision, publicMigrationRetry]);
+        if (publicMigrationAttemptsRef.current.has(key)) return;
+        publicMigrationAttemptsRef.current.add(key);
+        const migrationEpoch = ++publicMigrationEpochRef.current;
+        publicMigrationRunningRef.current = true;
+        setPublicMigrationRunning(true);
+        const captured = { scope: syncScope, projectId, generation: canonicalGeneration, revision: sync.serverRevision, nodes };
+        const scope = getVideoSessionScope();
+        const feedbackKey = `public-migration:${projectId}`;
+        message.loading({ key: feedbackKey, content: "正在转换公共图片引用…", duration: 0 });
+        const warnRetry = (detail: string) => message.warning({ key: feedbackKey, duration: 0, content: <span className="inline-flex items-center gap-2"><span>{detail}</span><Button type="link" size="small" onClick={() => { message.destroy(feedbackKey); setPublicMigrationRetry((value) => value + 1); }}>重试</Button></span> });
+        void importCanvasPublicImages(projectId, sync.serverRevision).then(async (result) => {
+            if (scope !== getVideoSessionScope() || migrationEpoch !== publicMigrationEpochRef.current) return;
+            const cachedMedia = new Set<string>();
+            for (const replacement of result.replacements) {
+                if (cachedMedia.has(replacement.mediaId)) continue;
+                cachedMedia.add(replacement.mediaId);
+                const sourceNode = captured.nodes.find((node) => node.id === replacement.nodeId);
+                const storageKey = imageStorageKeyForMedia(replacement.sourceMediaId);
+                try {
+                    if (await getImageBlob(storageKey)) await promoteImageStorageKey({ url: "", storageKey, width: sourceNode?.metadata?.naturalWidth || sourceNode?.width || 1, height: sourceNode?.metadata?.naturalHeight || sourceNode?.height || 1, bytes: sourceNode?.metadata?.bytes || 0, mimeType: sourceNode?.metadata?.mimeType || "image/png" }, replacement.mediaId, { retainSource: true });
+                } catch {
+                    message.warning("本地缓存复用失败，将读取个人图片副本");
+                }
+            }
+            const latest = useCanvasStore.getState();
+            const latestSync = latest.projectSync[projectId];
+            const valid = scope === getVideoSessionScope() && migrationEpoch === publicMigrationEpochRef.current && canApplyPublicImageMigration(captured, {
+                scope: latest.syncScope, projectId: videoProjectRef.current, generation: latest.canonicalGeneration,
+                revision: latestSync?.serverRevision || 0, nodes: nodesRef.current, blocked: Boolean(latest.blockedProjectSync[projectId]),
+                dirty: Boolean(latestSync?.dirty || latestSync?.pending || latestSync?.saving), pending: Boolean(readPendingDocument()),
+            });
+            if (!valid) {
+                if (scope === getVideoSessionScope() && migrationEpoch === publicMigrationEpochRef.current) warnRetry("本地画板状态已变化，转换结果未覆盖本地编辑；请保存或刷新后重试");
+                return;
+            }
+            if (!result.pendingNodeIds.length) publicMigrationScannedRef.current = JSON.stringify([syncScope, projectId, canonicalGeneration]);
+            // Adoption is a normalization, not a user edit or another PUT. Rebase
+            // retained history too, so undo cannot resurrect the public dependency.
+            const normalized = normalizePublicImageReferences(nodesRef.current, result.replacements, result.missingNodeIds);
+            if (result.replacements.length || result.missingNodeIds.length) {
+                const baseline = { ...editorDocument, nodes: normalized };
+                useCanvasStore.getState().replaceProjectsFromServer([result.project], false);
+                acceptDocumentBaseline(baseline);
+                rebase((entry) => ({ ...entry, nodes: normalizePublicImageReferences(entry.nodes, result.replacements, result.missingNodeIds) }), { ...historySnapshot, nodes: normalized });
+                setDocumentBaseline(baseline);
+                setNodes(normalized);
+            }
+            if (result.pendingNodeIds.length) warnRetry(`${result.pendingNodeIds.length} 张公共图片尚未完成转换，原引用继续保留`);
+            else message.destroy(feedbackKey);
+        }).catch((error) => {
+            if (scope === getVideoSessionScope() && migrationEpoch === publicMigrationEpochRef.current) warnRetry(error instanceof Error ? error.message : "公共图片转换失败");
+        }).finally(() => {
+            if (migrationEpoch !== publicMigrationEpochRef.current) return;
+            publicMigrationRunningRef.current = false;
+            setPublicMigrationRunning(false);
+            if (scope !== getVideoSessionScope()) message.destroy(feedbackKey);
+        });
+    }, [acceptDocumentBaseline, canonicalGeneration, documentReady, editorDocument, getVideoSessionScope, historySnapshot, isProjectBlocked, message, nodes, pendingDocument, projectId, publicMigrationRetry, rebase, readPendingDocument, syncScope, projectSync, projectDetail.project]);
 
     const cleanupCanvasFiles = useCallback(
         (extra?: unknown) => {
@@ -1343,7 +1430,7 @@ function InfiniteCanvasPage() {
                     return null;
                 }
             },
-            isCurrent: (scope) => scope === getVideoSessionScope() && useCanvasStore.getState().readyForCanvasMutations && !useCanvasStore.getState().blockedProjectSync[videoProjectRef.current],
+            isCurrent: (scope) => scope === getVideoSessionScope() && !publicMigrationRunningRef.current && useCanvasStore.getState().readyForCanvasMutations && !useCanvasStore.getState().blockedProjectSync[videoProjectRef.current],
             commit: (node) => {
                 setNodes((current) => [...current, node]);
                 setSelectedNodeIds(new Set([node.id]));
@@ -1387,7 +1474,7 @@ function InfiniteCanvasPage() {
 
     const createPublicImageNode = useCallback(
         async (payload: PublicImageDropPayload, position: Position) => {
-            if (useCanvasStore.getState().blockedProjectSync[videoProjectRef.current]) return;
+            if (publicMigrationRunningRef.current || useCanvasStore.getState().blockedProjectSync[videoProjectRef.current]) return;
             await publicImageImportController.start(payload, position, getVideoSessionScope()).done;
         },
         [getVideoSessionScope, publicImageImportController],

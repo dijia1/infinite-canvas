@@ -1,6 +1,8 @@
 import { recoverPersistedImage } from "./image-recovery.ts";
 import type { CanvasNodeData, CanvasNodeMetadata } from "@/app/(user)/canvas/types";
 
+export const missingPublicImageMessage = "原公共图片已失效，请替换或删除此节点";
+
 export type CanvasImageMetadata = Pick<CanvasNodeMetadata, "content" | "storageKey" | "mediaId" | "mediaExpiresAt" | "publicImageId" | "naturalWidth" | "naturalHeight" | "bytes" | "mimeType" | "status" | "errorDetails">;
 
 export type StoredCanvasImage = {
@@ -63,6 +65,7 @@ export async function hydrateCanvasImages(
         nodes.map(async (node) => {
             if (options.shouldHydrate && !options.shouldHydrate(node)) return node;
             const metadata = node.metadata;
+            if (metadata?.errorDetails === missingPublicImageMessage) return node;
             const content = metadata?.content;
             if (node.type === "video" && metadata?.mediaId) return node;
             if (node.type === "video" && metadata?.storageKey) {

@@ -51,9 +51,11 @@ func CanvasDocumentMediaIDs(document []byte) (map[string]struct{}, error) {
 }
 
 type canvasMediaChange struct {
-	ownerUID      string
-	projectID     string
-	before, after map[string]struct{}
+	ownerUID                string
+	projectID               string
+	before, after           map[string]struct{}
+	beforeNodes, afterNodes []canvasImageReference
+	unchanged               map[string]bool
 }
 
 func newCanvasMediaChange(ownerUID, projectID string, before, after []byte) (canvasMediaChange, error) {
@@ -66,7 +68,36 @@ func newCanvasMediaChange(ownerUID, projectID string, before, after []byte) (can
 		}
 	}
 	change.after, err = CanvasDocumentMediaIDs(after)
-	return change, err
+	if err != nil {
+		return change, err
+	}
+	change.beforeNodes, err = canvasImageReferences(before)
+	if err != nil {
+		return change, err
+	}
+	change.afterNodes, err = canvasImageReferences(after)
+	if err != nil {
+		return change, err
+	}
+	previous := map[string]canvasImageReference{}
+	for _, node := range change.beforeNodes {
+		previous[node.ID] = node
+	}
+	change.unchanged = map[string]bool{}
+	for _, node := range change.afterNodes {
+		if node.Type != "image" && node.Type != "video" {
+			continue
+		}
+		id := canvasReferenceString(node, "mediaId")
+		if id == "" {
+			continue
+		}
+		old, found := previous[node.ID]
+		same := found && node.ID != "" && canvasReferenceString(old, "publicImageId") != "" && sameCanvasImageReference(node, old)
+		prior, seen := change.unchanged[id]
+		change.unchanged[id] = same && (!seen || prior)
+	}
+	return change, nil
 }
 
 // Call only after all affected canvas rows have been locked/inserted. Cleanup
@@ -81,7 +112,30 @@ func applyCanvasMediaChanges(tx *gorm.DB, changes []canvasMediaChange) error {
 			ids[id] = struct{}{}
 		}
 	}
-	if len(ids) == 0 {
+	publicIDs := map[string]bool{}
+	for _, change := range changes {
+		for _, node := range change.afterNodes {
+			if node.Type == "image" {
+				if id := canvasReferenceString(node, "publicImageId"); id != "" {
+					publicIDs[id] = true
+				}
+			}
+		}
+	}
+	publicIDList := make([]string, 0, len(publicIDs))
+	for id := range publicIDs {
+		publicIDList = append(publicIDList, id)
+	}
+	var namedPublic []model.PublicImage
+	if len(publicIDList) > 0 {
+		if err := tx.Where("id IN ?", publicIDList).Find(&namedPublic).Error; err != nil {
+			return err
+		}
+		for _, item := range namedPublic {
+			ids[item.MediaID] = struct{}{}
+		}
+	}
+	if len(ids) == 0 && len(publicIDs) == 0 {
 		return nil
 	}
 	ordered := make([]string, 0, len(ids))
@@ -105,12 +159,57 @@ func applyCanvasMediaChanges(tx *gorm.DB, changes []canvasMediaChange) error {
 	for _, item := range publicItems {
 		public[item.MediaID] = struct{}{}
 	}
+	// Re-read public names after taking their media locks. Deletion may have won
+	// between the initial lookup and this lock acquisition.
+	namedPublic = nil
+	if len(publicIDList) > 0 {
+		if err := tx.Where("id IN ?", publicIDList).Find(&namedPublic).Error; err != nil {
+			return err
+		}
+	}
+	byPublicID := map[string]model.PublicImage{}
+	for _, item := range namedPublic {
+		byPublicID[item.ID] = item
+	}
+	for _, change := range changes {
+		previous := map[string]canvasImageReference{}
+		for _, node := range change.beforeNodes {
+			previous[node.ID] = node
+		}
+		for _, node := range change.afterNodes {
+			if node.Type != "image" {
+				continue
+			}
+			publicID := canvasReferenceString(node, "publicImageId")
+			if publicID == "" {
+				continue
+			}
+			if private, exists := media[canvasReferenceString(node, "mediaId")]; exists && private.OwnerUID == change.ownerUID && private.CleanupStatus == model.MediaCleanupActive {
+				continue
+			}
+			old, existed := previous[node.ID]
+			unchanged := existed && node.ID != "" && sameCanvasImageReference(node, old)
+			public, found := byPublicID[publicID]
+			item, available := media[public.MediaID]
+			if !found || !available || item.CleanupStatus != model.MediaCleanupActive {
+				if !unchanged {
+					return ErrCanvasMediaUnavailable
+				}
+				continue
+			}
+			if id := canvasReferenceString(node, "mediaId"); id != "" && id != public.MediaID {
+				return ErrCanvasMediaUnavailable
+			}
+		}
+	}
 	for _, change := range changes {
 		for id := range change.after {
 			item, found := media[id]
 			_, isPublic := public[id]
 			if !found || item.CleanupStatus != model.MediaCleanupActive || (item.OwnerUID != change.ownerUID && !isPublic) {
-				return ErrCanvasMediaUnavailable
+				if !change.unchanged[id] {
+					return ErrCanvasMediaUnavailable
+				}
 			}
 		}
 	}

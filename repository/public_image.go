@@ -129,6 +129,20 @@ func DeletePublicImageAndMedia(publicImageID, mediaID string) error {
 			}
 			return err
 		}
+		canvasHeld, err := publicImageCanvasReferenced(tx, publicImageID, item.ID)
+		if err != nil {
+			return err
+		}
+		if canvasHeld {
+			return ErrPublicImageCanvasReferenced
+		}
+		importing, err := publicImageImportReferenced(tx, item.ID, time.Now().UTC())
+		if err != nil {
+			return err
+		}
+		if importing {
+			return errors.New("素材正在被个人画板导入")
+		}
 		held, err := workflowMediaReferenced(tx, item.ID)
 		if err != nil {
 			return err
@@ -158,6 +172,13 @@ func PreparePublicImageDeletion(publicID string, current time.Time, actorUID ...
 		}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&media, "id = ?", public.MediaID).Error; err != nil {
 			return err
+		}
+		canvasHeld, err := publicImageCanvasReferenced(tx, public.ID, media.ID)
+		if err != nil {
+			return err
+		}
+		if canvasHeld {
+			return ErrPublicImageCanvasReferenced
 		}
 		importing, err := publicImageImportReferenced(tx, media.ID, current)
 		if err != nil {

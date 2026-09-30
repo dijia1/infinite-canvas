@@ -74,3 +74,10 @@ test("visible preview follows zoom demand", () => {
     assert.equal(requests[0]?.variant, "original");
     assert.equal(requests[0]?.priority, "interactive");
 });
+
+
+test("confirmed missing public references are not restored by cached or remote resources", () => {
+    const missing = { ...imageNode("missing"), metadata: { mediaId: "missing", status: "error" as const, errorDetails: "原公共图片已失效，请替换或删除此节点" } };
+    const targets = buildCanvasMediaTargets({ onScreenNodes: [missing], prefetchNodes: [missing], pinnedNodes: [missing], previewNodes: [missing] });
+    assert.deepEqual(targets, []);
+});
