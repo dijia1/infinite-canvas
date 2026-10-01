@@ -21,6 +21,9 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	config.Cfg = config.Config{DatabaseDSN: schema.DSN, PortalDirectoryAppKey: "infinite-canvas", PortalDirectorySecret: "test-identity-secret"}
+	if err := repository.MigrateDatabase(); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	closeRepositoryPool()
 	_ = schema.Close()

@@ -11,7 +11,7 @@ import (
 
 func TestMediaCleanupMigrationPreservesLegacyRows(t *testing.T) {
 	cfg := newRepositoryTestConfig(t, "media_cleanup_migration")
-	useRepositoryTestDB(t, cfg)
+	useRepositoryTestDB(t, cfg, true)
 	legacy, err := gorm.Open(postgres.Open(cfg.DatabaseDSN), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestMediaCleanupMigrationPreservesLegacyRows(t *testing.T) {
 		if legacy.Migrator().HasColumn("media", column) {
 			t.Fatalf("legacy fixture already has %s", column)
 		}
+	}
+	if err := MigrateDatabase(); err != nil {
+		t.Fatal(err)
 	}
 	database, err := DB()
 	if err != nil {

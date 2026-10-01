@@ -66,6 +66,9 @@ func TestReleaseWorkflowBuildsAndDeploysPrivateImageSecurely(t *testing.T) {
 	workflow := readDeploymentFile(t, ".github/workflows/docker-image.yml")
 	for _, expected := range []string{
 		"go test ./...",
+		"git bundle create",
+		"checkout --detach '$DEPLOY_SHA'",
+		"'$release_dir.bundle' HEAD",
 		"postgres:17-alpine",
 		"TEST_DATABASE_DSN",
 		"pg_isready",
@@ -96,7 +99,7 @@ func TestReleaseWorkflowBuildsAndDeploysPrivateImageSecurely(t *testing.T) {
 			t.Fatalf("release workflow missing %q", expected)
 		}
 	}
-	if strings.Contains(workflow, "ssh-keyscan") || strings.Contains(workflow, "git fetch") || strings.Contains(workflow, "git pull") {
+	if strings.Contains(workflow, "ssh-keyscan") || strings.Contains(workflow, "fetch origin") || strings.Contains(workflow, "git pull") {
 		t.Fatal("release workflow must not weaken host verification or require server Git credentials")
 	}
 }

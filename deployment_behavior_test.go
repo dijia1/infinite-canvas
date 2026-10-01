@@ -35,7 +35,10 @@ func newReleaseFixture(t *testing.T) *releaseFixture {
 	f.write(filepath.Join(root, "images"), "")
 	f.write(filepath.Join(root, "containers"), "app\n")
 	f.write(filepath.Join(f.bin, "docker"), fakeReleaseDocker)
-	f.write(filepath.Join(f.bin, "curl"), fakeGatewayCurl)
+	f.write(filepath.Join(f.bin, "git"), `#!/usr/bin/env bash
+set -eu
+if [[ $3 == rev-parse ]]; then basename "$2"; else exit 0; fi
+`)
 	// Only Docker/control-flow is simulated here; production flock is not replaced.
 	f.write(filepath.Join(f.bin, "flock"), "#!/usr/bin/env bash\nexit 0\n")
 	f.write(filepath.Join(f.bin, "sleep"), "#!/usr/bin/env bash\nexit 0\n")
@@ -58,7 +61,7 @@ func (f *releaseFixture) legacy() {
 }
 func (f *releaseFixture) run(script string, args ...string) (string, error) {
 	cmd := exec.Command("bash", append([]string{"scripts/" + script}, args...)...)
-	cmd.Env = append(os.Environ(), "PATH="+f.bin+":"+os.Getenv("PATH"), "MOCK_ROOT="+f.root, "INFINITE_CANVAS_APP_DIR="+f.app, "INFINITE_CANVAS_RELEASE_STATE_DIR="+f.state, "INFINITE_CANVAS_MEDIA_DIR="+filepath.Join(f.root, "media"))
+	cmd.Env = append(os.Environ(), "PATH="+f.bin+":"+os.Getenv("PATH"), "MOCK_ROOT="+f.root, "INFINITE_CANVAS_APP_DIR="+f.app, "INFINITE_CANVAS_RELEASE_STATE_DIR="+f.state, "INFINITE_CANVAS_MEDIA_DIR="+filepath.Join(f.root, "media"), "DEPLOY_HEALTH_ATTEMPTS=1", "DEPLOY_HEALTH_INTERVAL=0")
 	b, e := cmd.CombinedOutput()
 	return string(b), e
 }
@@ -193,106 +196,20 @@ func TestReleaseFailureBoundaries(t *testing.T) {
 	})
 }
 
-func TestStoppedReleaseDeployment(t *testing.T) {
-	for _, status := range []string{"exited", "created"} {
-		t.Run(status+" release deploys without starting old image", func(t *testing.T) {
+func TestUnhealthyReleaseBlocksOrdinaryDeployment(t *testing.T) {
+	for _, status := range []string{"exited", "created", "paused", "restarting", "dead", "missing", "multiple"} {
+		t.Run(status, func(t *testing.T) {
 			f := newReleaseFixture(t)
 			f.write(filepath.Join(f.root, "lifecycle"), status)
-			f.ok("b")
-			if f.read("lifecycle") != "running" || f.read("running") != releaseRepo+strings.Repeat("b", 40) {
-				t.Fatal("new release did not start")
-			}
-			if !strings.Contains(f.read("state/infinite-canvas-release.last-known-good"), "current_sha="+strings.Repeat("b", 40)) {
-				t.Fatal("healthy new release was not recorded")
-			}
-			if strings.Count(f.read("calls"), " up ") != 1 {
-				t.Fatal("old release was started", f.read("calls"))
-			}
-		})
-	}
-	for _, failure := range []string{"health", "up", "state-write"} {
-		t.Run(failure+" failure restores stopped baseline and permits retry", func(t *testing.T) {
-			f := newReleaseFixture(t)
-			f.write(filepath.Join(f.root, "lifecycle"), "exited")
 			before := f.read("state/infinite-canvas-release.last-known-good")
-			var faultFile string
-			switch failure {
-			case "health":
-				faultFile = filepath.Join(f.root, "unhealthy")
-				f.write(faultFile, releaseRepo+strings.Repeat("b", 40))
-			case "up":
-				faultFile = filepath.Join(f.root, "up-fail")
-				f.write(faultFile, "1")
-			case "state-write":
-				faultFile = filepath.Join(f.bin, "mv")
-				f.write(faultFile, "#!/usr/bin/env bash\nexit 1\n")
-			}
-			out, err := f.deploy("b")
-			if err == nil {
-				t.Fatal("failed target reported success", out)
-			}
-			if f.read("running") != releaseRepo+strings.Repeat("a", 40) || f.read("lifecycle") != "created" || f.read("state/infinite-canvas-release.last-known-good") != before {
-				t.Fatal("stopped baseline not preserved", out, f.read("calls"))
-			}
-			calls := f.read("calls")
-			if strings.Count(calls, " up ") != 1 || !strings.Contains(calls, " stop app") || !strings.Contains(calls, " create --no-build --force-recreate --pull never app") {
-				t.Fatal("recovery must stop the target and recreate, not start, the baseline", calls)
-			}
-			if err := os.Remove(faultFile); err != nil {
-				t.Fatal(err)
-			}
-			f.ok("b")
-		})
-	}
-	for _, status := range []string{"unhealthy", "paused", "restarting", "dead", "missing", "multiple", "nonzero-exit", "oom", "wrong-image", "bad-id"} {
-		t.Run("unsafe source "+status+" remains blocked", func(t *testing.T) {
-			f := newReleaseFixture(t)
-			switch status {
-			case "unhealthy":
-				f.write(filepath.Join(f.root, "unhealthy"), releaseRepo+strings.Repeat("a", 40))
-			case "nonzero-exit":
-				f.write(filepath.Join(f.root, "lifecycle"), "exited")
-				f.write(filepath.Join(f.root, "exit-code"), "1")
-			case "oom":
-				f.write(filepath.Join(f.root, "lifecycle"), "exited")
-				f.write(filepath.Join(f.root, "oom"), "true")
-			case "wrong-image":
-				f.write(filepath.Join(f.root, "lifecycle"), "exited")
-				f.write(filepath.Join(f.root, "running"), releaseRepo+strings.Repeat("c", 40))
-			case "bad-id":
-				f.write(filepath.Join(f.root, "lifecycle"), "exited")
-				f.write(filepath.Join(f.root, "bad-id"), "1")
-			default:
-				f.write(filepath.Join(f.root, "lifecycle"), status)
-			}
 			if out, err := f.deploy("b"); err == nil {
-				t.Fatal("unsafe preflight passed", out)
+				t.Fatal("unhealthy baseline accepted", out)
 			}
-			calls := f.read("calls")
-			if strings.Contains(calls, "pull ") || strings.Contains(calls, " up ") || strings.Contains(calls, " stop ") || strings.Contains(calls, " create ") {
-				t.Fatal("preflight failure changed deployment", calls)
+			if strings.Contains(f.read("calls"), "pull ") || strings.Contains(f.read("calls"), " up ") || strings.Contains(f.read("calls"), " run ") {
+				t.Fatal("preflight changed deployment", f.read("calls"))
 			}
-		})
-	}
-	for _, failure := range []string{"stop-fail", "create-fail"} {
-		t.Run("stopped recovery "+failure+" reports manual intervention", func(t *testing.T) {
-			f := newReleaseFixture(t)
-			f.write(filepath.Join(f.root, "lifecycle"), "exited")
-			before := f.read("state/infinite-canvas-release.last-known-good")
-			f.write(filepath.Join(f.root, "up-fail"), "1")
-			f.write(filepath.Join(f.root, failure), "1")
-			out, err := f.deploy("b")
-			if err == nil || !strings.Contains(out, "manual intervention required") {
-				t.Fatal("recovery failure was hidden", err, out)
-			}
-			if f.read("state/infinite-canvas-release.last-known-good") != before || strings.Count(f.read("calls"), " up ") != 1 {
-				t.Fatal("recovery changed the baseline or started the old version", f.read("calls"))
-			}
-			if failure == "stop-fail" && strings.Contains(f.read("calls"), " create ") {
-				t.Fatal("recreated a container after stop failed")
-			}
-			if failure == "create-fail" && f.read("lifecycle") != "exited" {
-				t.Fatal("failed target was not left stopped")
+			if f.read("state/infinite-canvas-release.last-known-good") != before {
+				t.Fatal("state changed")
 			}
 		})
 	}
@@ -347,9 +264,10 @@ printf '%s\n' "$*" >> "$MOCK_ROOT/calls"
 image_id() { local s=${1##*:sha-}; printf 'id-%s\n' "${s:0:1}"; }
 case "$1" in
  compose)
-  while [[ $1 != config && $1 != up && $1 != ps && $1 != stop && $1 != create ]]; do shift; done
+  while [[ $1 != config && $1 != up && $1 != ps && $1 != run && $1 != stop && $1 != create ]]; do shift; done
   case "$1" in
    config) exit 0 ;;
+   run) [[ ! -f "$MOCK_ROOT/migration-fail" ]] || exit 1; exit 0 ;;
    up)
     if [[ -f "$MOCK_ROOT/wrong-up" && $INFINITE_CANVAS_IMAGE == *:sha-b* ]]; then echo incorrect > "$MOCK_ROOT/running"; else printf '%s' "$INFINITE_CANVAS_IMAGE" > "$MOCK_ROOT/running"; fi
     printf running > "$MOCK_ROOT/lifecycle"
@@ -363,6 +281,10 @@ case "$1" in
     echo app
     if [[ $status == multiple ]]; then echo second-app; fi ;;
   esac ;;
+ exec)
+  printf '%s\n' "$*" >> "$MOCK_ROOT/gateway-calls"
+  if [[ -f "$MOCK_ROOT/gateway-fault" && $(cat "$MOCK_ROOT/running") == *:sha-c* ]]; then exit 1; fi
+  exit 0 ;;
  pull) exit 0 ;;
  image)
   case "$2" in
@@ -392,25 +314,6 @@ case "$1" in
 esac
 `
 
-const fakeGatewayCurl = `#!/usr/bin/env bash
-set -eu
-printf '%s\n' "$*" >> "$MOCK_ROOT/gateway-calls"
-if [[ -f "$MOCK_ROOT/gateway-fault" && $(cat "$MOCK_ROOT/running") == *:sha-c* ]]; then
- case $(cat "$MOCK_ROOT/gateway-fault") in
-  unavailable) printf '{"ok":false}\n503\napplication/json' ;;
-  not-found) printf '{}\n404\napplication/json' ;;
-  login) printf '<html>login</html>\n302\ntext/html' ;;
-  spa) printf '<html>app</html>\n200\ntext/html' ;;
-  bad-body) printf '{"ok":false}\n200\napplication/json' ;;
-  wrong-type) printf '{"ok":true}\n200\ntext/plain' ;;
-  malformed-key) printf '{"o k":true}\n200\napplication/json' ;;
-  timeout) exit 28 ;;
- esac
-else
- printf '{"ok":true}\n200\napplication/json'
-fi
-`
-
 func TestGatewayFailureCannotPublishRelease(t *testing.T) {
 	for _, fault := range []string{"unavailable", "not-found", "login", "spa", "bad-body", "wrong-type", "malformed-key", "timeout"} {
 		t.Run(fault, func(t *testing.T) {
@@ -425,7 +328,7 @@ func TestGatewayFailureCannotPublishRelease(t *testing.T) {
 				t.Fatal("gateway failure did not preserve/restore healthy baseline")
 			}
 			calls := f.read("gateway-calls")
-			if !strings.Contains(calls, "https://www.semetaloa.com/apps/infinite-canvas/api/healthz") || !strings.Contains(calls, "--disable --silent") || !strings.Contains(calls, "--max-time") || strings.Contains(calls, "--location") || strings.Contains(calls, "Authorization") || strings.Contains(calls, "Cookie") {
+			if !strings.Contains(calls, "https://www.semetaloa.com/apps/infinite-canvas/api/healthz") || !strings.Contains(calls, "node --input-type=module") || strings.Contains(calls, "--location") || strings.Contains(calls, "Authorization") || strings.Contains(calls, "Cookie") {
 				t.Fatal(calls)
 			}
 		})

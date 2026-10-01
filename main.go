@@ -23,9 +23,7 @@ func main() {
 	if databaseErr != nil {
 		log.Fatal(databaseErr)
 	}
-	if _, err := repository.PromoteLegacyCanvasTemporaryMedia(); err != nil {
-		log.Fatalf("migrate legacy canvas media: %v", err)
-	}
+
 	stopImageTasks, err := service.StartImageTaskWorker(context.Background())
 	if err != nil {
 		log.Fatal(err)

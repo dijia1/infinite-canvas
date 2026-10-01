@@ -46,6 +46,9 @@ func TestMain(m *testing.M) {
 		MediaLocalDir:                  directory,
 		CanvasSaveSuccessLogSampleRate: 1,
 	}
+	if err := repository.MigrateDatabase(); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	closeRepositoryPool()
 	_ = schema.Close()

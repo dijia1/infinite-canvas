@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 	if _, err := repository.DB(); err != nil {
 		panic(err)
 	}
+	if err := repository.MigrateDatabase(); err != nil {
+		panic(err)
+	}
 	code := m.Run()
 	closeRepositoryPool()
 	_ = schema.Close()

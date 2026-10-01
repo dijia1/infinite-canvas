@@ -76,7 +76,7 @@ func TestWorkflowGraphMediaIDsAreTrimmedAndDeduplicated(t *testing.T) {
 
 func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 	cfg := newRepositoryTestConfig(t, "workflow_legacy_image_task")
-	useRepositoryTestDB(t, cfg)
+	useRepositoryTestDB(t, cfg, true)
 	legacy, err := gorm.Open(postgres.Open(cfg.DatabaseDSN), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -110,6 +110,9 @@ func TestWorkflowMigrationPreservesLegacyImageTasks(t *testing.T) {
 		if legacy.Migrator().HasColumn("image_generation_tasks", column) {
 			t.Fatalf("legacy fixture already has %s", column)
 		}
+	}
+	if err := MigrateDatabase(); err != nil {
+		t.Fatal(err)
 	}
 	database, err := DB()
 	if err != nil {

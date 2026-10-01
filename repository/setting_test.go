@@ -22,7 +22,7 @@ type settingsCASResult struct {
 
 func TestSettingsMigrationInitializesLegacyRevisionWithoutChangingData(t *testing.T) {
 	cfg := newRepositoryTestConfig(t, "settings_revision_migration")
-	useRepositoryTestDB(t, cfg)
+	useRepositoryTestDB(t, cfg, true)
 	legacy, err := gorm.Open(postgres.Open(cfg.DatabaseDSN), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -56,6 +56,9 @@ func TestSettingsMigrationInitializesLegacyRevisionWithoutChangingData(t *testin
 		t.Fatal(err)
 	}
 
+	if err := MigrateDatabase(); err != nil {
+		t.Fatal(err)
+	}
 	database, err := DB()
 	if err != nil {
 		t.Fatal(err)

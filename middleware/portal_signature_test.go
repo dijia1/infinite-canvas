@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -127,5 +130,48 @@ func TestPortalIdentityOptionalRolesAndDecodeFailures(t *testing.T) {
 				t.Fatalf("roles=%v", user.Roles)
 			}
 		})
+	}
+}
+
+func TestPortalIdentityFailureLogsSafeReasons(t *testing.T) {
+	previous := config.Cfg
+	config.Cfg.PortalDirectoryAppKey = "infinite-canvas"
+	config.Cfg.PortalDirectorySecret = "test-identity-secret"
+	var logs bytes.Buffer
+	output, flags := log.Writer(), log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() { config.Cfg = previous; log.SetOutput(output); log.SetFlags(flags) })
+	router := gin.New()
+	router.Use(PortalIdentity)
+	router.GET("/private", func(c *gin.Context) { c.Status(204) })
+	for _, tt := range []struct {
+		reason string
+		mutate func(*http.Request)
+	}{
+		{"missing", func(r *http.Request) { r.Header.Del("X-Portal-User-Id") }},
+		{"malformed", func(r *http.Request) { r.Header.Set("X-Portal-Identity-Signature", "invalid") }},
+		{"mismatch", func(r *http.Request) { r.Header.Set("X-Portal-Roles", "forged") }},
+		{"expired", func(r *http.Request) { *r = *signedIdentityRequest("test-identity-secret", time.Now().Unix()-60) }},
+	} {
+		logs.Reset()
+		r := signedIdentityRequest("test-identity-secret", time.Now().Unix())
+		tt.mutate(r)
+		r.URL.RawQuery = "token=must-not-log"
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, r)
+		if w.Code != 401 {
+			t.Fatal(w.Code)
+		}
+		var event map[string]string
+		if err := json.Unmarshal(logs.Bytes(), &event); err != nil {
+			t.Fatal(err)
+		}
+		if len(event) != 4 || event["event"] != "portal_identity_unverified" || event["reason"] != tt.reason || event["path"] != "/private" || event["method"] != "GET" {
+			t.Fatalf("unsafe failure event: %v", event)
+		}
+		if strings.Contains(w.Body.String(), tt.reason) || strings.Contains(logs.String(), "must-not-log") || strings.Contains(logs.String(), config.Cfg.PortalDirectorySecret) {
+			t.Fatal("sensitive diagnostics exposed")
+		}
 	}
 }

@@ -138,3 +138,12 @@ CI 在镜像构建前执行 Shell 语法、Compose 配置检查及 Go 中的模�
 该验证只证明备份可恢复，不会替代常规数据库备份策略，也不应通过回滚应用镜像来尝试回退已执行的数据库迁移。
 
 Portal 验收应分别验证：未登录用户跳转登录页、无权限用户显示禁止页，以及被授权用户可进入 `/apps/infinite-canvas/canvas`。应用 `/api/healthz` 与 `/api/health` 均支持公开 GET/HEAD，使用两秒超时检查 PostgreSQL；不可用时返回脱敏的 503 JSON。目录同步回调通过 `portal_directory` 网络访问 `infinite-canvas-directory:3000`。
+
+
+### 独立迁移与精确版本发布
+
+应用启动只连接数据库，结构和旧媒体数据迁移必须显式运行 `go run ./cmd/migrate`，镜像中使用 `/app/migrate`。开发环境首次启动也先运行该命令。迁移可重复执行；普通流水线只执行兼容旧版本的扩展迁移。最早只有 `id` 主键的 canvas_projects 会被迁移入口拒绝，必须另排维护窗口升级主键，不能混入普通发布。
+
+Actions 以完整 commit SHA 构建镜像，通过 Git bundle 向独立 releases/SHA 目录传输同一提交并 detached checkout。发布脚本要求目标和基线目录 HEAD 精确一致且跟踪文件干净，先校验当前容器与公开 HTTPS 网关，再拉取目标镜像、运行独立迁移、启动并验证目标。网关响应由 Node JSON 解析器验证 HTTP 200 和严格布尔 `ok: true`，不携带会话且不跟随重定向。失败恢复基线配置与镜像并返回非零；未初始化或不健康的基线会拒绝普通发布。首次发布须在受控窗口完成健康验证后运行 initialize-release-state.sh，不会自动用当前未知镜像推断基线。
+
+运行 `node --test scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs` 验证隔离发布模拟，不操作真实 Docker 服务。
