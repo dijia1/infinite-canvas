@@ -16,7 +16,7 @@ func PortalIdentity(c *gin.Context) {
 	user, ok, reason := verifyPortalIdentityWithReason(c.Request.Header, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret, time.Now())
 	if !ok {
 		entry, _ := json.Marshal(map[string]string{"event": "portal_identity_unverified", "reason": reason, "method": c.Request.Method, "path": c.Request.URL.Path})
-		log.Print(string(entry))
+		log.New(log.Writer(), "", 0).Print(string(entry))
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"code": 1, "data": nil, "msg": "Portal 身份无效或已过期", "error": "PORTAL_IDENTITY_INVALID"})
 		return
 	}
