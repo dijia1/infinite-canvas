@@ -140,7 +140,7 @@ func TestPortalIdentityFailureLogsSafeReasons(t *testing.T) {
 	var logs bytes.Buffer
 	output, flags := log.Writer(), log.Flags()
 	log.SetOutput(&logs)
-	log.SetFlags(0)
+	log.SetFlags(log.LstdFlags)
 	t.Cleanup(func() { config.Cfg = previous; log.SetOutput(output); log.SetFlags(flags) })
 	router := gin.New()
 	router.Use(PortalIdentity)
