@@ -32,7 +32,8 @@ COPY repository ./repository
 COPY router ./router
 COPY service ./service
 COPY main.go ./
-RUN go build -o /server .
+COPY cmd/migrate ./cmd/migrate
+RUN go build -o /server . && go build -o /migrate ./cmd/migrate
 
 # 运行镜像：Next.js 对外监听 3000，Go 只在容器内部监听 8082。
 FROM node:22-bookworm-slim
@@ -41,9 +42,11 @@ WORKDIR /app
 ARG NEXT_PUBLIC_BASE_PATH=/apps/infinite-canvas
 ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 COPY --from=api-build /server /app/server
+COPY --from=api-build /migrate /app/migrate
 COPY --from=web-build /app/web /app/web
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
 
+COPY scripts/check-gateway-health.mjs ./scripts/check-gateway-health.mjs
 COPY scripts/start-app.mjs /app/start-app.mjs
 
 EXPOSE 3000

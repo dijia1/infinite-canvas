@@ -28,38 +28,7 @@ func DB() (*gorm.DB, error) {
 		if dbErr = configureConnectionPool(db); dbErr != nil {
 			return
 		}
-		if dbErr = migratePostgresCanvasProjectPrimaryKey(db); dbErr != nil {
-			return
-		}
-		dbErr = db.AutoMigrate(
-			&model.CanvasProject{},
-			&model.CanvasSaveRequest{},
-			&model.Workflow{},
-			&model.WorkflowMediaRef{},
-			&model.WorkflowRun{},
-			&model.WorkflowStepExecution{},
-			&model.WorkflowOutputExecution{},
-			&model.WorkflowOutputAttempt{},
-			&model.Media{},
-			&model.MediaUploadIntent{},
-			&model.ImageGenerationTask{},
-			&model.ImageGenerationTaskInput{},
-			&model.VideoGenerationTask{},
-			&model.PrivateFolder{},
-			&model.PublicFolder{},
-			&model.PublicImage{},
-			&model.Setting{},
-			&model.PortalMember{},
-			&model.AppMemberRole{},
-			&model.AppRBACState{},
-			&model.OperationLog{},
-		)
-		if dbErr == nil {
-			dbErr = migrateExplicitAspectRatios(db)
-		}
-		if dbErr == nil {
-			dbErr = migrateWorkflowFrameSchema(db)
-		}
+
 	})
 	return db, dbErr
 }
@@ -137,5 +106,63 @@ func configureConnectionPool(database *gorm.DB) error {
 	sqlDB.SetMaxOpenConns(maxOpenConns)
 	sqlDB.SetMaxIdleConns(maxIdleConns)
 	sqlDB.SetConnMaxLifetime(maxLifetime)
+	return nil
+}
+
+// MigrateDatabase is the explicit, repeatable deployment entrypoint. DB and health
+// only open the connection pool; starting or rolling back an app never migrates.
+func MigrateDatabase() error {
+	database, err := DB()
+	if err != nil {
+		return err
+	}
+	if err = rejectLegacyCanvasPrimaryKey(database); err != nil {
+		return err
+	}
+	err = database.AutoMigrate(
+		&model.CanvasProject{},
+		&model.CanvasSaveRequest{},
+		&model.Workflow{},
+		&model.WorkflowMediaRef{},
+		&model.WorkflowRun{},
+		&model.WorkflowStepExecution{},
+		&model.WorkflowOutputExecution{},
+		&model.WorkflowOutputAttempt{},
+		&model.Media{},
+		&model.MediaUploadIntent{},
+		&model.ImageGenerationTask{},
+		&model.ImageGenerationTaskInput{},
+		&model.VideoGenerationTask{},
+		&model.PrivateFolder{},
+		&model.PublicFolder{},
+		&model.PublicImage{},
+		&model.Setting{},
+		&model.PortalMember{},
+		&model.AppMemberRole{},
+		&model.AppRBACState{},
+		&model.OperationLog{},
+	)
+	if err == nil {
+		err = migrateExplicitAspectRatios(database)
+	}
+	if err == nil {
+		err = migrateWorkflowFrameSchema(database)
+	}
+	return err
+}
+
+func rejectLegacyCanvasPrimaryKey(database *gorm.DB) error {
+	if !database.Migrator().HasTable("canvas_projects") {
+		return nil
+	}
+	var columns string
+	if err := database.Raw(`SELECT COALESCE(string_agg(attribute.attname, ',' ORDER BY array_position(index_definition.indkey, attribute.attnum)), '')
+ FROM pg_index index_definition JOIN pg_attribute attribute ON attribute.attrelid=index_definition.indrelid AND attribute.attnum=ANY(index_definition.indkey)
+ WHERE index_definition.indrelid='canvas_projects'::regclass AND index_definition.indisprimary`).Scan(&columns).Error; err != nil {
+		return err
+	}
+	if columns == "id" {
+		return fmt.Errorf("legacy canvas primary key requires a separate maintenance upgrade; refusing contract migration during normal deployment")
+	}
 	return nil
 }

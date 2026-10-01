@@ -133,6 +133,9 @@ func serve(path, out string) error {
 	}
 	defer os.RemoveAll(dir)
 	config.Cfg = config.Config{DatabaseDSN: schema.DSN, DatabaseMaxOpenConns: 20, DatabaseMaxIdleConns: 10, DatabaseConnMaxLifetime: "30m", MediaStorage: "local", MediaLocalDir: dir, WorkflowEnabled: true, WorkflowGlobalConcurrency: 4, WorkflowRunConcurrency: 2, AITaskWorkerConcurrency: 4, AIImageTaskTimeout: "3m", CanvasSaveSuccessLogSampleRate: .05}
+	if err := repository.MigrateDatabase(); err != nil {
+		return err
+	}
 	db, err := repository.DB()
 	if err != nil {
 		return err

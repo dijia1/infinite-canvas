@@ -55,36 +55,24 @@ services_healthy() {
 # A healthy container alone does not validate the Portal registry, DNS or public route.
 # No session, credentials or redirects: only the exact public health contract counts.
 gateway_healthy() {
-  local response content_type metadata status body
-  local healthy_json='^[[:space:]]*\{[[:space:]]*"ok"[[:space:]]*:[[:space:]]*true[[:space:]]*\}[[:space:]]*$'
-  response=$(curl --disable --silent --show-error --connect-timeout 3 --max-time 5 --max-filesize 4096 \
-    --header 'Accept: application/json' --write-out $'\n%{http_code}\n%{content_type}' "$GATEWAY_HEALTH_URL") || return 1
-  content_type=${response##*$'\n'}
-  metadata=${response%$'\n'*}
-  status=${metadata##*$'\n'}
-  body=${metadata%$'\n'*}
-  [[ $status == 200 && ( $content_type == application/json || $content_type == application/json\;* ) && $body =~ $healthy_json ]]
-}
-
-services_stopped() {
-  local container status
+  local container
   container=$(release_container "$1" "$2") || return 1
-  status=$(docker inspect --format '{{.State.Status}} {{.State.OOMKilled}} {{.State.ExitCode}}' "$container") || return 1
-  # A clean stop or a prior stopped rollback is eligible; crashes/OOM are not.
-  [[ $status == 'exited false 0' || $status == 'created false 0' ]]
+  docker exec -i "$container" node --input-type=module - "$GATEWAY_HEALTH_URL" --gateway < "$SCRIPT_DIR/check-gateway-health.mjs"
 }
 
 wait_for_healthy() {
   local release_dir=$1
   local image=$2
+  local attempts=${DEPLOY_HEALTH_ATTEMPTS:-90} interval=${DEPLOY_HEALTH_INTERVAL:-2}
+  [[ $attempts =~ ^[1-9][0-9]*$ && $interval =~ ^[0-9]+$ ]] || return 1
   local attempt deadline=$((SECONDS + 180))
-  for ((attempt = 1; attempt <= 90; attempt++)); do
-    if services_healthy "$release_dir" "$image" && gateway_healthy; then
+  for ((attempt = 1; attempt <= attempts; attempt++)); do
+    if services_healthy "$release_dir" "$image" && gateway_healthy "$release_dir" "$image"; then
       return 0
     fi
     if (( SECONDS >= deadline )); then return 1; fi
-    if (( attempt < 90 )); then
-      sleep 2
+    if (( attempt < attempts )); then
+      sleep "$interval"
     fi
   done
   return 1
@@ -96,15 +84,6 @@ rollback() {
   compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" config -q &&
   compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" up -d --no-build --force-recreate app &&
   wait_for_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"
-}
-
-restore_stopped_release() {
-  echo "target deployment failed; restoring $LAST_GOOD_SHA without starting it" >&2
-  # Stop the failed target first. Recreate the baseline without running its code,
-  # preserving both the outage boundary and the identity checks for a later retry.
-  compose "$RELEASE_DIR" "$TARGET_IMAGE" stop app &&
-  compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" create --no-build --force-recreate --pull never app &&
-  services_stopped "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"
 }
 
 initialize_release_state() {
@@ -122,32 +101,23 @@ initialize_release_state() {
 }
 
 main() {
-  local started_stopped=false
-  read_state || { echo "no valid last-known-good release; run initialize-release-state.sh after a controlled first release" >&2; exit 69; }
+  valid_release "$DEPLOY_SHA" "$TARGET_IMAGE" "$RELEASE_DIR" || { echo "target commit is unavailable or release checkout is dirty" >&2; exit 66; }
+  read_state || { echo "no valid last-known-good release; initialize after a controlled first release" >&2; exit 69; }
   compose "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" config -q || exit 69
-  if services_stopped "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE"; then
-    started_stopped=true
-    echo "current release is stopped; deploying target without starting the previous version"
-  else
-    services_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" || { echo "current release is neither healthy nor safely stopped; refusing deployment" >&2; exit 69; }
-  fi
-  docker pull "$TARGET_IMAGE"
-  docker image inspect "$LAST_GOOD_IMAGE" >/dev/null 2>&1 || docker pull "$LAST_GOOD_IMAGE"
-  compose "$RELEASE_DIR" "$TARGET_IMAGE" config -q || exit 69
-
+  services_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" && gateway_healthy "$LAST_GOOD_RELEASE" "$LAST_GOOD_IMAGE" || {
+    echo "current release or Gateway is unhealthy; refusing deployment" >&2; exit 69;
+  }
   if ! (
-    compose "$RELEASE_DIR" "$TARGET_IMAGE" up -d --no-build --force-recreate app &&
+    docker pull "$TARGET_IMAGE" &&
+      compose "$RELEASE_DIR" "$TARGET_IMAGE" config -q &&
+      compose "$RELEASE_DIR" "$TARGET_IMAGE" run --rm --no-deps app /app/migrate &&
+      compose "$RELEASE_DIR" "$TARGET_IMAGE" up -d --no-build --force-recreate app &&
       wait_for_healthy "$RELEASE_DIR" "$TARGET_IMAGE" &&
       write_state "$DEPLOY_SHA" "$TARGET_IMAGE" "$RELEASE_DIR"
   ); then
-    if [[ $started_stopped == true ]]; then
-      restore_stopped_release || echo "failed to restore stopped release; manual intervention required" >&2
-    else
-      rollback || echo "rollback failed" >&2
-    fi
+    rollback || echo "rollback failed; manual intervention required" >&2
     exit 1
   fi
-  # Run under the deployment lock, only after the new healthy state was committed.
   source "$SCRIPT_DIR/cleanup-release-images.sh"
   cleanup_release_images --apply "$TARGET_IMAGE" || echo "warning: historical image cleanup failed; healthy release retained" >&2
 }

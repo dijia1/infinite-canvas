@@ -7,7 +7,9 @@ LOCK_FILE="$STATE_DIR/infinite-canvas-release.lock"
 IMAGE_REPOSITORY=ghcr.io/dijia1/infinite-canvas
 
 valid_release() {
-  [[ $1 =~ ^[0-9a-f]{40}$ && $2 == "$IMAGE_REPOSITORY:sha-$1" && $3 == "$APP_DIR/releases/$1" && -f "$3/docker-compose.yml" ]]
+  [[ $1 =~ ^[0-9a-f]{40}$ && $2 == "$IMAGE_REPOSITORY:sha-$1" && $3 == "$APP_DIR/releases/$1" && -f "$3/docker-compose.yml" ]] || return 1
+  [[ $(git -C "$3" rev-parse HEAD 2>/dev/null) == "$1" ]] || return 1
+  git -C "$3" diff --quiet && git -C "$3" diff --cached --quiet
 }
 
 read_state() {

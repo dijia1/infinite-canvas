@@ -70,7 +70,7 @@ func TestCanvasProjectDocumentRoundTripsThroughPostgresRepository(t *testing.T) 
 func useLegacyCanvasProjectTestDB(t *testing.T) {
 	t.Helper()
 	cfg := newRepositoryTestConfig(t, "legacy_canvas_project")
-	useRepositoryTestDB(t, cfg)
+	useRepositoryTestDB(t, cfg, true)
 	legacy, err := gorm.Open(postgres.Open(cfg.DatabaseDSN), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,16 @@ func TestDBMigratesLegacyCanvasProjectPrimaryKeyForOwnerScopedImports(t *testing
 	useLegacyCanvasProjectTestDB(t)
 	database, err := DB()
 	if err != nil {
-		t.Fatalf("DB() migration error = %v", err)
+		t.Fatal(err)
+	}
+	if err := MigrateDatabase(); err == nil {
+		t.Fatal("normal deployment accepted a contract migration")
+	}
+	if err := migratePostgresCanvasProjectPrimaryKey(database); err != nil {
+		t.Fatal(err)
+	}
+	if err := MigrateDatabase(); err != nil {
+		t.Fatal(err)
 	}
 	if err := migratePostgresCanvasProjectPrimaryKey(database); err != nil {
 		t.Fatalf("repeat migration error = %v", err)

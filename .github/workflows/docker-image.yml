@@ -28,6 +28,8 @@ jobs:
       TEST_DATABASE_DSN: postgres://infinite_canvas_test_user:Canvas_Test_2026@localhost:5432/infinite_canvas_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
@@ -50,7 +52,7 @@ jobs:
           node-version: "22"
 
       - name: Test container startup lifecycle
-        run: node --test scripts/start-app.test.mjs
+        run: node --test scripts/start-app.test.mjs scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs
 
       - run: go test ./...
 
@@ -102,6 +104,8 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Upload release configuration and deploy immutable image
         env:
@@ -115,6 +119,9 @@ jobs:
           INFINITE_CANVAS_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
         run: |
           set -Eeuo pipefail
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_PRIVATE_KEY DEPLOY_KNOWN_HOSTS GHCR_READ_TOKEN; do
+            [[ -n ${!name} ]] || { echo "missing production configuration: $name" >&2; exit 78; }
+          done
           key_file=$(mktemp)
           known_hosts_file=$(mktemp)
           trap 'rm -f "$key_file" "$known_hosts_file"' EXIT
@@ -129,11 +136,19 @@ jobs:
             -o UserKnownHostsFile="$known_hosts_file"
           )
           release_dir="/program/apps/infinite-canvas/releases/$DEPLOY_SHA"
-          tar -czf - docker-compose.yml scripts/deploy-production.sh scripts/initialize-release-state.sh scripts/release-state.sh scripts/cleanup-release-images.sh | ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
+          bundle=$(mktemp)
+          trap 'rm -f "$key_file" "$known_hosts_file" "$bundle"' EXIT
+          git bundle create "$bundle" HEAD
+          ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '/program/apps/infinite-canvas/releases'; cat > '$release_dir.bundle'" < "$bundle"
+          ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
             set -Eeuo pipefail
             mkdir -p '$release_dir'
-            tar -xzf - -C '$release_dir'
-            chmod 700 '$release_dir/scripts/deploy-production.sh' '$release_dir/scripts/initialize-release-state.sh'
+            git -C '$release_dir' init -q
+            git -C '$release_dir' diff --quiet && git -C '$release_dir' diff --cached --quiet
+            git -C '$release_dir' fetch --no-tags '$release_dir.bundle' HEAD
+            git -C '$release_dir' checkout --detach '$DEPLOY_SHA'
+            git -C '$release_dir' rev-parse HEAD | grep -Fx '$DEPLOY_SHA' >/dev/null
+            rm '$release_dir.bundle'
           "
           printf '%s' "$GHCR_READ_TOKEN" | ssh "${ssh_options[@]}" "$DEPLOY_USER@$DEPLOY_HOST" "
             set -Eeuo pipefail

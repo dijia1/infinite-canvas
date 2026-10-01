@@ -75,7 +75,7 @@ func TestWaitForDatabaseRejectsInvalidAuthenticationWithoutRetry(t *testing.T) {
 
 func TestWaitForDatabaseRecoversAgainstPostgresWithoutPoisoningInitialization(t *testing.T) {
 	cfg := newRepositoryTestConfig(t, "startup_recovery")
-	useRepositoryTestDB(t, cfg)
+	useRepositoryTestDB(t, cfg, true)
 	target, err := url.Parse(cfg.DatabaseDSN)
 	if err != nil {
 		t.Fatal(err)
@@ -143,12 +143,35 @@ func TestWaitForDatabaseRecoversAgainstPostgresWithoutPoisoningInitialization(t 
 	if err := <-result; err != nil {
 		t.Fatal(err)
 	}
-	// The real migrations still run once, after connectivity has recovered.
+	// Connectivity and schema migration are separate operations.
+	if err := MigrateDatabase(); err != nil {
+		t.Fatal(err)
+	}
 	database, err := DB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !database.Migrator().HasTable("canvas_projects") {
 		t.Fatal("database initialization did not run")
+	}
+}
+
+func TestConnectionDoesNotMigrateAndExplicitMigrationIsRepeatable(t *testing.T) {
+	cfg := newRepositoryTestConfig(t, "explicit_migration")
+	useRepositoryTestDB(t, cfg, true)
+	database, err := DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if database.Migrator().HasTable("canvas_projects") {
+		t.Fatal("opening connection performed schema migration")
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if err := MigrateDatabase(); err != nil {
+			t.Fatal(err)
+		}
+		if !database.Migrator().HasTable("canvas_projects") {
+			t.Fatal("explicit migration omitted canvas projects")
+		}
 	}
 }
