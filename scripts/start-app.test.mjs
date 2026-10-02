@@ -31,9 +31,11 @@ async function fixture(t, options = {}) {
     await writeFile(join(root, "server"), `#!${process.execPath}
 const fs = require("node:fs"), http = require("node:http");
 fs.writeFileSync("api.started", String(process.pid));
+process.on("SIGUSR1",()=>{fs.writeFileSync("api.quiesced","quiesced");});
 process.on("SIGTERM", () => {
     if (fs.existsSync("ignore-term")) return;
-    fs.writeFileSync("api.stopped", "stopped"); process.exit(0);
+    fs.writeFileSync("api.stopped", "stopped");
+    fs.appendFileSync("stop.order", "api\\n"); process.exit(0);
 });
 http.createServer((req, res) => {
     fs.writeFileSync("api.probed", "probed");
@@ -43,13 +45,17 @@ http.createServer((req, res) => {
     await writeFile(join(root, "web/node_modules/next/dist/bin/next"), `
 const fs = require("node:fs");
 fs.writeFileSync("../web.started", String(process.pid));
-process.on("SIGTERM", () => { fs.writeFileSync("../web.stopped", "stopped"); process.exit(0); });
+process.on("SIGTERM", () => {
+ fs.writeFileSync("../web.stopping", "stopping");
+ if (${!!options.ignoreWebTerm}) return;
+ setTimeout(() => { fs.writeFileSync("../web.stopped", "stopped"); fs.appendFileSync("../stop.order", "web\\n"); process.exit(${options.webCode ?? 0}); }, ${options.webDelay ?? 0});
+});
 setInterval(() => {}, 1000);
 `);
     if (options.ready) await writeFile(join(root, "ready"), "ready");
     if (options.ignoreTerm) await writeFile(join(root, "ignore-term"), "true");
     if (options.missingAPI) await rm(join(root, "server"));
-    const args = { root, apiPort, readinessTimeoutMs: options.timeout ?? 5000, shutdownTimeoutMs: 150 };
+    const args = { root, apiPort, readinessTimeoutMs: options.timeout ?? 5000, shutdownTimeoutMs: options.shutdownTimeout ?? 150 };
     const child = spawn(process.execPath, ["--input-type=module", "-e", `import { startApplication } from ${JSON.stringify(entry)}; process.exitCode = await startApplication(${JSON.stringify(args)});`], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
     let logs = "";
     child.stdout.on("data", chunk => { logs += chunk; });
@@ -137,4 +143,29 @@ test("backend failure before readiness never launches frontend", { timeout: 1200
     const [code] = await f.exited;
     assert.equal(code, 1, f.logs());
     await assert.rejects(access(join(f.root, "web.started")), { code: "ENOENT" });
+});
+
+
+test("frontend drains before API, repeated signals preserve the drain, and Next 143 is clean", { timeout: 12000 }, async t => {
+ const f=await fixture(t,{ready:true,webDelay:200,webCode:143,shutdownTimeout:1000});
+ await f.pid("web");
+ f.child.kill("SIGTERM");
+ await waitForFile(join(f.root,"web.stopping"),f.child);
+ f.child.kill("SIGTERM"); f.child.kill("SIGINT");
+ await assert.rejects(access(join(f.root,"api.stopped")),{code:"ENOENT"});
+ assert.equal((await f.exited)[0],0,f.logs());
+ assert.equal(await readFile(join(f.root,"stop.order"),"utf8"),"web\napi\n");
+});
+test("frontend hard timeout kills both children and reports failure", { timeout:12000 }, async t=>{
+ const f=await fixture(t,{ready:true,ignoreWebTerm:true});
+ await f.pid("web"); f.child.kill("SIGTERM");
+ assert.equal((await f.exited)[0],1,f.logs());
+ await f.assertStopped("api"); await f.assertStopped("web");
+ assert.match(f.logs(),/deadline exceeded/);
+});
+test("a failed frontend drain is not masked as success", { timeout:12000 }, async t=>{
+ const f=await fixture(t,{ready:true,webCode:2});
+ await f.pid("web"); f.child.kill("SIGTERM");
+ assert.equal((await f.exited)[0],1,f.logs());
+ await f.assertStopped("api");
 });

@@ -147,3 +147,21 @@ Portal 验收应分别验证：未登录用户跳转登录页、无权限用户�
 Actions 以完整 commit SHA 构建镜像，通过 Git bundle 向独立 releases/SHA 目录传输同一提交并 detached checkout。发布脚本要求目标和基线目录 HEAD 精确一致且跟踪文件干净，先校验当前容器与公开 HTTPS 网关，再拉取目标镜像、运行独立迁移、启动并验证目标。网关响应由 Node JSON 解析器验证 HTTP 200 和严格布尔 `ok: true`，不携带会话且不跟随重定向。失败恢复基线配置与镜像并返回非零；未初始化或不健康的基线会拒绝普通发布。首次发布须在受控窗口完成健康验证后运行 initialize-release-state.sh，不会自动用当前未知镜像推断基线。
 
 运行 `node --test scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs` 验证隔离发布模拟，不操作真实 Docker 服务。
+
+### Node 24、非 root 与原生停机
+
+Next 构建及运行使用 `node:24-bookworm-slim`，Go 保留 1.25，Bun 保留锁文件对应的 1.4.0。运行身份为镜像内 `node`（uid/gid 1000），Next 缓存目录和镜像内的默认媒体目录在构建时设置可写权限。Compose 必须启用 `init: true` 和 `stop_grace_period: 30s`，入口保持直接 `node /app/start-app.mjs`。
+
+容器收到 SIGTERM/SIGINT 后，监督进程先向 Go 发送 SIGUSR1，只停止后台任务领取，保留 HTTP 服务供前端在途请求调用。随后让 Next 的原生 HTTP 服务排空，再向 Go 发送 SIGTERM。Go 停止新连接，排空 HTTP（包括客户端断开后仍执行的处理函数）、后台任务及清理器，最后关闭 PostgreSQL 连接池。图片任务在排空期间保留执行上下文及租约心跳；当前视频步骤也会完成。重复停止信号不跳过排空。现有路由没有 SSE/WebSocket；ZIP 流式下载继续使用原有接口与中断语义。
+
+监督进程对整个停止过程设置 25 秒预算；Go 自身收到停止信号后的预算为 24 秒。预算耗尽返回非零并强制退出，不能把被杀掉的请求或任务报告为正常完成。Next 16.2.3 原生 SIGTERM 清理成功后返回 143，监督进程只在这是预期退出且 Go 正常退出时返回 0。空闲状态可以快速结束；真实长请求或供应商任务需要等待，不能保证一两秒完成。
+
+生产当前明确配置 `MEDIA_STORAGE=oss`，本地媒体挂载为空且不会作为 OSS 失败的回退存储。非 root 上线保留 `/program/data/infinite-canvas/media` 的既有 `root:root/0755` 权限；不得为这个 OSS 部署擅自 chown/chmod 宿主机。使用 `MEDIA_STORAGE=local` 的环境必须单独提供 uid 1000 可写的目录，并先确认其现有数据、路径及权限，再由目录所有者安排最小权限变更。
+
+CI 在发布镜像前运行实际镜像测试：
+
+```bash
+TEST_IMAGE=infinite-canvas:phase2-local node --test scripts/test-production-image.test.mjs
+```
+
+测试仅创建临时 PostgreSQL、容器、网络及卷，全部自动清理，不读取应用 `.env` 或生产凭证，不访问业务 UI。它覆盖签名身份、OSS 上传签名与不可写媒体卷、在途数据库保存、客户端断开后的查询、拒绝新连接、连接池释放、重复停止信号、25 秒硬超时和空闲退出。完整 Go/PostgreSQL 回归另行运行 `scripts/test-backend-postgres.sh`，后台 worker 竞态检查使用 `scripts/test-backend-postgres.sh -race ./service`。

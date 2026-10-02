@@ -166,3 +166,15 @@ func rejectLegacyCanvasPrimaryKey(database *gorm.DB) error {
 	}
 	return nil
 }
+
+// CloseDatabase never initializes a new connection during shutdown.
+func CloseDatabase() error {
+	if db == nil {
+		return nil
+	}
+	pool, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return pool.Close()
+}

@@ -49,7 +49,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: Test container startup lifecycle
         run: node --test scripts/start-app.test.mjs scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs
@@ -84,15 +84,32 @@ jobs:
             type=raw,value=latest
             type=raw,value=sha-${{ github.sha }}
 
-      - uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
-          push: true
+          load: true
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+
+      - name: Verify actual production image before publishing
+        env:
+          TEST_IMAGE: ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+        run: node --test scripts/test-production-image.test.mjs
+
+      - name: Publish verified image
+        env:
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -Eeuo pipefail
+          while IFS= read -r image_tag; do
+            [[ -z "$image_tag" ]] || docker push "$image_tag"
+          done <<< "$IMAGE_TAGS"
 
   deploy-production:
     if: github.ref == 'refs/heads/main'

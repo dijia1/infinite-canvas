@@ -42,13 +42,13 @@ func StartVideoTaskWorker(parent context.Context) (func(), error) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for ctx.Err() == nil {
+			for ctx.Err() == nil && !workersStopping() {
 				item, found, err := repository.ClaimNextVideoGenerationTask(time.Now().UTC())
 				if err != nil {
 					log.Printf("video task claim failed: %v", err)
 				}
 				if found && err == nil {
-					stepCtx, stop := context.WithTimeout(ctx, 90*time.Second)
+					stepCtx, stop := context.WithTimeout(parent, 90*time.Second)
 					err = processVideoTaskStep(stepCtx, item, time.Now().UTC())
 					stop()
 					if err != nil {

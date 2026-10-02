@@ -25,6 +25,9 @@ func cleanupExpiredCanvasMedia(ctx context.Context, current time.Time, createSto
 	}
 	afterID := ""
 	for {
+		if workersStopping() {
+			return ctx.Err()
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -39,6 +42,9 @@ func cleanupExpiredCanvasMedia(ctx context.Context, current time.Time, createSto
 		ids := make([]string, 0, len(items))
 		for _, candidate := range items {
 			ids = append(ids, candidate.ID)
+		}
+		if workersStopping() {
+			return ctx.Err()
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -88,23 +94,7 @@ func deleteClaimedCanvasMedia(ctx context.Context, store imageStore, claimed []m
 }
 
 func StartCanvasMediaRetention(ctx context.Context) func() {
-	ctx, cancel := context.WithCancel(ctx)
-	if err := cleanupExpiredCanvasMedia(ctx, time.Now(), newImageStore); err != nil {
-		log.Printf("canvas media cleanup failed: %v", err)
-	}
-	go func() {
-		ticker := time.NewTicker(canvasMediaCleanupInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				if err := cleanupExpiredCanvasMedia(ctx, time.Now(), newImageStore); err != nil {
-					log.Printf("canvas media cleanup failed: %v", err)
-				}
-			}
-		}
-	}()
-	return cancel
+	return startPeriodicWorker(ctx, canvasMediaCleanupInterval, "canvas media", func(ctx context.Context, current time.Time) error {
+		return cleanupExpiredCanvasMedia(ctx, current, newImageStore)
+	})
 }

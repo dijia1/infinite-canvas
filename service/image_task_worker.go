@@ -64,19 +64,19 @@ func StartImageTaskWorker(parent context.Context) (func(), error) {
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
-		runImageTaskPreparer(ctx, concurrency)
+		runImageTaskPreparer(ctx, parent, concurrency)
 	}()
 	for index := 0; index < concurrency; index++ {
 		waitGroup.Add(1)
 		go func(workerID int) {
 			defer waitGroup.Done()
-			runImageTaskWorker(ctx, workerID, timeout)
+			runImageTaskWorker(ctx, parent, workerID, timeout)
 		}(index + 1)
 	}
 	waitGroup.Add(1)
 	go func() {
 		defer waitGroup.Done()
-		runImageTaskRetention(ctx)
+		runImageTaskRetention(ctx, parent)
 	}()
 	var stopOnce sync.Once
 	return func() {
@@ -87,9 +87,9 @@ func StartImageTaskWorker(parent context.Context) (func(), error) {
 	}, nil
 }
 
-func runImageTaskWorker(ctx context.Context, workerID int, timeout time.Duration) {
+func runImageTaskWorker(ctx, execution context.Context, workerID int, timeout time.Duration) {
 	for {
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || workersStopping() {
 			return
 		}
 		item, claimed, err := repository.ClaimNextImageGenerationTask(time.Now().UTC(), imageTaskLeaseDuration)
@@ -106,7 +106,7 @@ func runImageTaskWorker(ctx context.Context, workerID int, timeout time.Duration
 			}
 			continue
 		}
-		workerContext, cancel := context.WithTimeout(ctx, timeout)
+		workerContext, cancel := context.WithTimeout(execution, timeout)
 		stopLease := startImageTaskLeaseHeartbeat(workerContext, item)
 		executeImageTask(workerContext, item)
 		stopLease()
@@ -502,8 +502,11 @@ func clampTaskProgress(value int) int {
 	return value
 }
 
-func runImageTaskRetention(ctx context.Context) {
-	cleanupImageTasks(time.Now())
+func runImageTaskRetention(ctx, execution context.Context) {
+	if ctx.Err() != nil || workersStopping() {
+		return
+	}
+	cleanupImageTasks(execution, time.Now())
 	ticker := time.NewTicker(24 * time.Hour)
 	defer ticker.Stop()
 	for {
@@ -511,18 +514,24 @@ func runImageTaskRetention(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case current := <-ticker.C:
-			cleanupImageTasks(current)
+			if workersStopping() {
+				return
+			}
+			cleanupImageTasks(execution, current)
 		}
 	}
 }
 
-func cleanupImageTasks(current time.Time) {
+func cleanupImageTasks(ctx context.Context, current time.Time) {
 	terminal, terminalErr := repository.ListTerminalImageGenerationTasksWithInputs()
 	if terminalErr != nil {
 		log.Printf("image task snapshot cleanup query failed: %v", terminalErr)
 	} else {
 		for _, item := range terminal {
-			if err := cleanupImageTaskSnapshotPrefix(context.Background(), item.ID); err != nil {
+			if ctx.Err() != nil || workersStopping() {
+				return
+			}
+			if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
 				log.Printf("image task %s periodic snapshot cleanup failed: %v", item.ID, err)
 			}
 		}
@@ -533,13 +542,16 @@ func cleanupImageTasks(current time.Time) {
 		return
 	}
 	for _, item := range items {
-		if err := cleanupImageTaskSnapshotPrefix(context.Background(), item.ID); err != nil {
+		if ctx.Err() != nil || workersStopping() {
+			return
+		}
+		if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
 			log.Printf("image task %s retention snapshot cleanup failed: %v", item.ID, err)
 			continue
 		}
 		inputs, inputErr := imageTaskInputs(item)
 		if inputErr == nil {
-			if err := DeleteImageTaskInputs(context.Background(), inputs); err != nil {
+			if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
 				log.Printf("image task %s retention input cleanup failed: %v", item.ID, err)
 				continue
 			}

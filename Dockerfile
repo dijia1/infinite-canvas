@@ -6,7 +6,7 @@ COPY web/package.json web/bun.lock ./
 RUN --mount=type=cache,target=/root/.bun/install/cache bun install --frozen-lockfile --registry=https://registry.npmmirror.com --cache-dir=/root/.bun/install/cache
 
 # 在 Node.js 中运行 Next.js，避免 Bun 在 Buildx 环境执行 Next 构建时触发 SIGILL。
-FROM node:22-bookworm-slim AS web-build
+FROM node:24-bookworm-slim AS web-build
 
 WORKDIR /app/web
 ARG NEXT_PUBLIC_BASE_PATH=/apps/infinite-canvas
@@ -31,12 +31,13 @@ COPY model ./model
 COPY repository ./repository
 COPY router ./router
 COPY service ./service
+COPY internal ./internal
 COPY main.go ./
 COPY cmd/migrate ./cmd/migrate
 RUN go build -o /server . && go build -o /migrate ./cmd/migrate
 
 # 运行镜像：Next.js 对外监听 3000，Go 只在容器内部监听 8082。
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 WORKDIR /app
 ARG NEXT_PUBLIC_BASE_PATH=/apps/infinite-canvas
@@ -48,6 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 COPY scripts/check-gateway-health.mjs ./scripts/check-gateway-health.mjs
 COPY scripts/start-app.mjs /app/start-app.mjs
+
+# Next cache and local-development media are writable without changing host mounts.
+RUN mkdir -p /app/data/media && chown -R node:node /app/web/.next /app/data
+USER node
 
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=75s --retries=3 CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/healthz',{signal:AbortSignal.timeout(3000)}).then(async r=>process.exit(r.ok&&(await r.json()).ok===true?0:1)).catch(()=>process.exit(1))"]
