@@ -35,7 +35,9 @@ test("actual Node24/non-root Go+Next image drains writes, detached work and rele
  });
  docker("network","create",network);docker("volume","create",media);
  docker("run","-d","--name",pg,"--network",network,"-e","POSTGRES_USER=fixture","-e","POSTGRES_PASSWORD=fixture","-e","POSTGRES_DB=canvas_test","postgres:17-alpine");
- await until(()=>spawnSync("docker",["exec",pg,"pg_isready","-U","fixture","-d","canvas_test"],{stdio:"ignore"}).status===0);
+ // The initialization server accepts only Unix sockets; wait for the final
+ // TCP listener used by the app before running the single migration.
+ await until(()=>spawnSync("docker",["exec",pg,"pg_isready","-h","127.0.0.1","-U","fixture","-d","canvas_test"],{stdio:"ignore"}).status===0);
  const env=["DATABASE_DSN=postgres://fixture:fixture@"+pg+":5432/canvas_test?sslmode=disable&application_name=canvas_lifecycle_fixture","PORTAL_DIRECTORY_SECRET=fixture-only-secret","MEDIA_STORAGE=oss","OSS_REGION=cn-hangzhou","OSS_BUCKET=fixture","OSS_INTERNAL_ENDPOINT=http://127.0.0.1:9","OSS_PUBLIC_ENDPOINT=http://127.0.0.1:9","OSS_ACCESS_KEY_ID=fixture","OSS_ACCESS_KEY_SECRET=fixture","GIN_MODE=release"];
  const flags=env.flatMap(value=>["-e",value]);
  docker("run","--rm","--network",network,...flags,"--entrypoint","/app/migrate",image);
