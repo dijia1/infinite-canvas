@@ -12,8 +12,8 @@ import (
 
 func TestCanvasProjectListReturnsSummariesAndKeepsFullDetailContracts(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-summary-route-owner-" + stamp
-	otherOwner := "canvas-summary-route-other-" + stamp
+	owner := fixtureUID("canvas-summary-route-owner-" + stamp)
+	otherOwner := fixtureUID("canvas-summary-route-other-" + stamp)
 	currentID := "canvas-summary-current-" + stamp
 	emptyID := "canvas-summary-empty-" + stamp
 	legacyID := "canvas-summary-legacy-" + stamp
@@ -51,7 +51,7 @@ func TestCanvasProjectListReturnsSummariesAndKeepsFullDetailContracts(t *testing
 		t.Fatalf("canvas detail contains transient content after sanitization: %s", detail.Body.String())
 	}
 
-	importOwner := "canvas-summary-import-owner-" + stamp
+	importOwner := fixtureUID("canvas-summary-import-owner-" + stamp)
 	importID := "canvas-summary-import-" + stamp
 	imported := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/import", importOwner, `{"projects":[{"id":"`+importID+`","title":"导入画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}]}`)
 	var importResult struct {

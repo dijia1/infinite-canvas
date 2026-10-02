@@ -17,6 +17,7 @@ import (
 
 var portalAppKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 var portalIntegerPattern = regexp.MustCompile(`^[1-9][0-9]{0,15}$`)
+var portalUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var portalEncodedPattern = regexp.MustCompile(`^[A-Za-z0-9\-_.!~*'()%]+$`)
 var portalSignaturePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43}$`)
 
@@ -48,7 +49,7 @@ func verifyPortalIdentityWithReason(headers http.Header, appKey, secret string, 
 		values[i] = entries[0]
 	}
 	userID, uid, username, roles, issued, signatures := values[0], values[1], values[2], values[3], values[4], values[5]
-	if !portalIntegerPattern.MatchString(userID) || !portalIntegerPattern.MatchString(issued) || strings.TrimSpace(uid) != uid || len(uid) > 128 || strings.ContainsAny(uid, "\r\n") || len(username) > 1024 || !portalEncodedPattern.MatchString(username) || len(roles) > 4096 {
+	if !portalIntegerPattern.MatchString(userID) || !portalIntegerPattern.MatchString(issued) || !portalUUIDPattern.MatchString(uid) || len(username) > 1024 || !portalEncodedPattern.MatchString(username) || len(roles) > 4096 {
 		return invalid, false, "malformed"
 	}
 	id, err := strconv.ParseInt(userID, 10, 64)
@@ -105,5 +106,6 @@ func verifyPortalIdentityWithReason(headers http.Header, appKey, secret string, 
 			decodedRoles = append(decodedRoles, decoded)
 		}
 	}
-	return service.PortalUser{UID: uid, Username: decodedName, Roles: decodedRoles}, true, ""
+	// Canonicalize only the verified identity; the HMAC above binds the raw UID.
+	return service.PortalUser{UID: strings.ToLower(uid), Username: decodedName, Roles: decodedRoles}, true, ""
 }

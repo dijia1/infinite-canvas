@@ -41,6 +41,8 @@ func closeRepositoryPool() {
 	}
 }
 
+func fixtureUID(label string) string { return testportal.SyntheticUID(label) }
+
 func grantLocalRole(t *testing.T, userUID string, role model.AppRole, enabled bool) {
 	t.Helper()
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{
@@ -59,7 +61,7 @@ func TestPortalIdentityRequiresGatewayHeaders(t *testing.T) {
 	router.Use(PortalIdentity)
 	router.GET("/private", func(c *gin.Context) {
 		user, ok := service.PortalUserFromContext(c.Request.Context())
-		if !ok || user.UID != "user-1" {
+		if !ok || user.UID != fixtureUID("user-1") {
 			c.Status(http.StatusInternalServerError)
 			return
 		}
@@ -73,7 +75,7 @@ func TestPortalIdentityRequiresGatewayHeaders(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/private", nil)
-	request.Header.Set("X-Portal-User-Uid", "user-1")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("user-1"))
 	request.Header.Set("X-Portal-Username", "%E5%BC%A0%E4%B8%89")
 	request.Header.Set("X-Portal-Roles", "member,portal-admin")
 	response := httptest.NewRecorder()
@@ -91,7 +93,7 @@ func TestRequireAppAdminRejectsRegularUser(t *testing.T) {
 	router.GET("/admin", func(c *gin.Context) { c.Status(http.StatusNoContent) })
 
 	request := httptest.NewRequest(http.MethodGet, "/admin", nil)
-	request.Header.Set("X-Portal-User-Uid", "user-1")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("user-1"))
 	request.Header.Set("X-Portal-Roles", "member")
 	response := httptest.NewRecorder()
 	testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
@@ -102,7 +104,7 @@ func TestRequireAppAdminRejectsRegularUser(t *testing.T) {
 }
 
 func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
-	const userUID = "gateway-role-only-member"
+	var userUID = fixtureUID("gateway-role-only-member")
 	grantLocalRole(t, userUID, model.AppRoleMember, true)
 
 	gin.SetMode(gin.TestMode)
@@ -122,7 +124,7 @@ func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
 }
 
 func TestLocalPublicAssetsManagerMiddlewareAllowsOnlyPublicAssets(t *testing.T) {
-	const userUID = "local-public-assets-manager-middleware"
+	var userUID = fixtureUID("local-public-assets-manager-middleware")
 	grantLocalRole(t, userUID, model.AppRolePublicAssetsManager, true)
 
 	gin.SetMode(gin.TestMode)
@@ -148,7 +150,7 @@ func TestLocalPublicAssetsManagerMiddlewareAllowsOnlyPublicAssets(t *testing.T) 
 }
 
 func TestAppPermissionLookupFailureReturnsInternalServerError(t *testing.T) {
-	const userUID = "permission-lookup-failure"
+	var userUID = fixtureUID("permission-lookup-failure")
 	grantLocalRole(t, userUID, model.AppRoleAdmin, true)
 	database, err := repository.DB()
 	if err != nil {

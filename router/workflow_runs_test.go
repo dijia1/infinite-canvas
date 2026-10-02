@@ -46,8 +46,8 @@ func (workflowRouteImageProvider) NormalizeImageTaskRequest(request ai.ImageTask
 func TestWorkflowRunRoutesAreIdempotentOwnerScopedAndProtectActiveRuns(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-run-owner-" + time.Now().Format("150405.000000000")
-	other := "other-" + owner
+	owner := fixtureUID("workflow-run-owner-" + time.Now().Format("150405.000000000"))
+	other := fixtureUID("other-" + owner)
 	seedRouteWorkflowMember(t, owner, true)
 	seedRouteWorkflowMember(t, other, true)
 	workflowID := createRouteWorkflow(t, owner, "1k")
@@ -127,8 +127,8 @@ func TestWorkflowRunRoutesFilterOneWorkflowWithoutLeakingAnotherOwner(t *testing
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
 	stamp := time.Now().Format("150405.000000000")
-	owner := "workflow-filter-owner-" + stamp
-	other := "workflow-filter-other-" + stamp
+	owner := fixtureUID("workflow-filter-owner-" + stamp)
+	other := fixtureUID("workflow-filter-other-" + stamp)
 	targetWorkflowID := "workflow-filter-target-" + stamp
 	current := time.Now().UTC().Truncate(time.Microsecond)
 	database, err := repository.DB()
@@ -162,7 +162,7 @@ func TestWorkflowRunRoutesFilterOneWorkflowWithoutLeakingAnotherOwner(t *testing
 		Items []model.WorkflowRun `json:"items"`
 		Total int64               `json:"total"`
 	}
-	if filtered.Code != http.StatusOK || json.Unmarshal(workflowResponse(t, filtered).Data, &result) != nil || result.Total != 1 || len(result.Items) != 1 || result.Items[0].OwnerUID != "" || result.Items[0].ID != runs[0].ID {
+	if filtered.Code != http.StatusOK || json.Unmarshal(workflowResponse(t, filtered).Data, &result) != nil || result.Total != 1 || len(result.Items) != 1 || result.Items[0].OwnerUID != fixtureUID("") || result.Items[0].ID != runs[0].ID {
 		t.Fatalf("filtered workflow runs = %d/%s decoded=%#v", filtered.Code, filtered.Body.String(), result)
 	}
 
@@ -176,7 +176,7 @@ func TestWorkflowRunRoutesRejectDisabledExecutionAndInvalidWholeGraphParameters(
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
 	stamp := time.Now().Format("150405.000000000")
-	owner := "workflow-preflight-" + stamp
+	owner := fixtureUID("workflow-preflight-" + stamp)
 	seedRouteWorkflowMember(t, owner, true)
 	invalidWorkflow := createRouteWorkflow(t, owner, "unsupported")
 	invalid := workflowRequest(http.MethodPost, "/api/v1/workflows/"+invalidWorkflow+"/runs", owner, `{"requestId":"invalid-parameters"}`)
@@ -191,7 +191,7 @@ func TestWorkflowRunRoutesRejectDisabledExecutionAndInvalidWholeGraphParameters(
 		t.Fatalf("disabled feature start = %d/%s", disabled.Code, disabled.Body.String())
 	}
 	config.Cfg.WorkflowEnabled = true
-	disabledOwner := "disabled-" + owner
+	disabledOwner := fixtureUID("disabled-" + owner)
 	seedRouteWorkflowMember(t, disabledOwner, false)
 	disabledOwnerWorkflow := createRouteWorkflow(t, disabledOwner, "1k")
 	memberResponse := workflowRequest(http.MethodPost, "/api/v1/workflows/"+disabledOwnerWorkflow+"/runs", disabledOwner, `{"requestId":"disabled-member"}`)
@@ -203,7 +203,7 @@ func TestWorkflowRunRoutesRejectDisabledExecutionAndInvalidWholeGraphParameters(
 func TestWorkflowRunRejectsAnUnconnectedDeclaredInputPort(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-missing-port-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-missing-port-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	body := `{"name":"缺少输入","graph":{"version":1,"nodes":[{"id":"prompt","type":"text_input","position":{"x":0,"y":0},"text":"生成产品图"},{"id":"generate","type":"image_generation","position":{"x":200,"y":0},"inputPorts":[{"id":"prompt","type":"text"},{"id":"reference","type":"image"}],"config":{"providerId":"workflow-route-provider","resolution":"1k"},"outputs":[{"id":"slot","type":"image"}]}],"connections":[{"sourceNodeId":"prompt","sourceSlotId":"output","targetNodeId":"generate","targetPortId":"prompt","order":0}]}}`
 	created := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, body)
@@ -221,7 +221,7 @@ func TestWorkflowRunRejectsAnUnconnectedDeclaredInputPort(t *testing.T) {
 func TestWorkflowRunConcurrentRequestIDCannotCrossWorkflows(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-concurrent-owner-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-concurrent-owner-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	workflowIDs := []string{createRouteWorkflow(t, owner, "1k"), createRouteWorkflow(t, owner, "1k")}
 	start := make(chan struct{})
@@ -310,7 +310,7 @@ func createRouteWorkflow(t *testing.T, owner, resolution string) string {
 func TestWorkflowRunExpectedRevisionPreventsWrongSnapshotAndPreservesReplay(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-run-revision-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-run-revision-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	workflowID := createRouteWorkflow(t, owner, "1k")
 	database, _ := repository.DB()

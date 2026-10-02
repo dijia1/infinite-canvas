@@ -17,7 +17,7 @@ const workflowFrameRouteBody = `{"name":"Frame Flow","frameSchemaVersion":1,"gra
 func TestWorkflowFrameRunContractAndOverview(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-frame-contract-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-frame-contract-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	created := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, workflowFrameRouteBody)
 	var workflow model.Workflow
@@ -89,7 +89,7 @@ func TestWorkflowFrameRunContractAndOverview(t *testing.T) {
 func TestWorkflowFrameRunReplaySurvivesFrameRemoval(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-frame-replay-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-frame-replay-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	created := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, workflowFrameRouteBody)
 	var workflow model.Workflow
@@ -122,7 +122,7 @@ func TestWorkflowFrameRunReplaySurvivesFrameRemoval(t *testing.T) {
 func TestWorkflowFrameClientCapabilityGuardReturnsTypedConflict(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-frame-guard-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-frame-guard-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	body := `{"name":"Frame Flow","frameSchemaVersion":1,"graph":{"version":1,"nodes":[],"connections":[],"frames":[{"id":"frame-a","name":"A","position":{"x":0,"y":0},"width":600,"height":400,"nodeIds":[]}]}}`
 	created := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, body)
@@ -142,7 +142,7 @@ func TestWorkflowFrameClientCapabilityGuardReturnsTypedConflict(t *testing.T) {
 func TestWorkflowFrameRunLockedRevisionConflictReportsCurrentServerRevision(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-frame-revision-race-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-frame-revision-race-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	created := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, workflowFrameRouteBody)
 	var workflow model.Workflow
@@ -201,7 +201,7 @@ func TestWorkflowFrameRunLockedRevisionConflictReportsCurrentServerRevision(t *t
 func TestWorkflowFrameRunReferencesOnlySelectedMediaAndRollsBackUnavailableMedia(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "workflow-frame-media-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("workflow-frame-media-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	used, err := repository.SaveMedia(model.Media{ID: "frame-used-media-" + owner, OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "frame/used/" + owner, ContentType: "image/png", CleanupStatus: model.MediaCleanupActive})
 	if err != nil {

@@ -32,7 +32,7 @@ func TestCanvasGraphInvariantsRejectNewViolationsAcrossWriteRoutes(t *testing.T)
 	for index, test := range invalidDocuments {
 		t.Run(test.name, func(t *testing.T) {
 			suffix := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
-			owner := "graph-strict-owner-" + suffix
+			owner := fixtureUID("graph-strict-owner-" + suffix)
 			createID := "graph-strict-create-" + suffix
 			create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+createID+`","title":"strict create","document":`+test.document+`}`)
 			if create.Code != http.StatusBadRequest || decodeCanvasResponse(t, create).Code != 1 {
@@ -58,7 +58,7 @@ func TestCanvasGraphInvariantsRejectNewViolationsAcrossWriteRoutes(t *testing.T)
 
 func TestCanvasGraphInvariantsAcceptSupportedNodesEdgesAndMetadata(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	owner := "graph-compatible-owner-" + suffix
+	owner := fixtureUID("graph-compatible-owner-" + suffix)
 	id := "graph-compatible-" + suffix
 	document := `{"nodes":[` +
 		`{"id":"image","type":"image","title":"image","position":{"x":0,"y":0},"width":10,"height":10,"metadata":{"model":"legacy","batch":{"id":"batch-a"},"output":{"status":"done"},"sourceNodeId":"missing-metadata-node"}},` +
@@ -76,7 +76,7 @@ func TestCanvasGraphInvariantsAcceptSupportedNodesEdgesAndMetadata(t *testing.T)
 
 func TestCanvasGraphInvariantBaselineCanBePreservedReducedButNotChangedOrWorsened(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	owner := "graph-baseline-owner-" + suffix
+	owner := fixtureUID("graph-baseline-owner-" + suffix)
 	legacyID := "graph-baseline-legacy-" + suffix
 	legacy := `{"nodes":[{"id":" exact-id ","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0e5,"height":10,"metadata":{"legacy":true}},{"id":" exact-id ","type":"image","title":"duplicate","position":{"x":20,"y":0},"width":10,"height":-1e1}],"connections":[{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"},{"id":"edge-a","fromNodeId":" exact-id ","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 	seedCanvasGraphProject(t, legacyID, owner, legacy)
@@ -121,7 +121,7 @@ func TestCanvasGraphInvariantBaselineTreatsLongExponentZeroAsZero(t *testing.T) 
 	for index, zero := range []string{"0e999999999999999999999", "-0e999999999999999999999"} {
 		t.Run(zero, func(t *testing.T) {
 			suffix := fmt.Sprintf("%d-%d", time.Now().UnixNano(), index)
-			owner := "graph-long-zero-owner-" + suffix
+			owner := fixtureUID("graph-long-zero-owner-" + suffix)
 			id := "graph-long-zero-" + suffix
 			baseline := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":` + zero + `,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 			candidate := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":1,"y":2,"k":1}}`
@@ -137,7 +137,7 @@ func TestCanvasGraphInvariantBaselineTreatsLongExponentZeroAsZero(t *testing.T) 
 
 func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	owner := "graph-replay-owner-" + suffix
+	owner := fixtureUID("graph-replay-owner-" + suffix)
 	id := "graph-replay-" + suffix
 	requestID := uuid.NewString()
 	legacy := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
@@ -152,7 +152,7 @@ func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T
 	if mismatched.Code != http.StatusBadRequest {
 		t.Fatalf("same request ID with a different payload = %d/%s", mismatched.Code, mismatched.Body.String())
 	}
-	crossOwner := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, "other-"+owner, firstBody, requestID)
+	crossOwner := canvasGraphRequestWithID(t, http.MethodPut, "/api/v1/canvas/projects/"+id, fixtureUID("other-"+owner), firstBody, requestID)
 	if crossOwner.Code != http.StatusBadRequest {
 		t.Fatalf("same request ID from another owner = %d/%s", crossOwner.Code, crossOwner.Body.String())
 	}
@@ -177,7 +177,7 @@ func TestCanvasGraphLegacySaveRequestReplayWinsAfterProjectAdvances(t *testing.T
 
 func TestCanvasSaveRequestCanonicalizesEquivalentUUIDSpellings(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	owner := "canvas-request-uuid-owner-" + suffix
+	owner := fixtureUID("canvas-request-uuid-owner-" + suffix)
 	id := "canvas-request-uuid-" + suffix
 	document := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 	body := `{"revision":1,"title":"canonical request","document":` + document + `}`
@@ -208,7 +208,7 @@ func TestCanvasSaveRequestCanonicalizesEquivalentUUIDSpellings(t *testing.T) {
 
 func TestCanvasShareCopiesLegacyGraphViolations(t *testing.T) {
 	suffix := fmt.Sprint(time.Now().UnixNano())
-	owner := "graph-share-owner-" + suffix
+	owner := fixtureUID("graph-share-owner-" + suffix)
 	recipient := "graph-share-recipient-" + suffix
 	id := "graph-share-" + suffix
 	legacy := `{"nodes":[{"id":"node-a","type":"text","title":"legacy","position":{"x":0,"y":0},"width":0,"height":10}],"connections":[{"id":"edge-a","fromNodeId":"node-a","toNodeId":"missing"}],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`

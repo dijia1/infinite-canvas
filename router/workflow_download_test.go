@@ -21,7 +21,7 @@ import (
 func TestWorkflowImageDownloadValidatesOwnerMediaAndStreamsZIP(t *testing.T) {
 	restore := configureWorkflowRouteRuntime(t)
 	defer restore()
-	owner := "zip-owner-" + time.Now().Format("150405.000000000")
+	owner := fixtureUID("zip-owner-" + time.Now().Format("150405.000000000"))
 	seedRouteWorkflowMember(t, owner, true)
 	seedRouteWorkflowMember(t, owner+"-other", true)
 	workflowID := createRouteWorkflow(t, owner, "1k")

@@ -28,6 +28,8 @@ import (
 
 var mediaTestDirectory string
 
+func fixtureUID(label string) string { return testportal.SyntheticUID(label) }
+
 func TestMain(m *testing.M) {
 	directory, err := os.MkdirTemp("", "infinite-canvas-router-test-")
 	if err != nil {
@@ -101,8 +103,8 @@ func requestAppRoleChange(userUID, targetUID string, role model.AppRole, extraJS
 }
 
 func TestAdminSetsApplicationRoleAndAuditsIt(t *testing.T) {
-	const adminUID = "role-route-admin"
-	const targetUID = "role-route-target"
+	var adminUID = fixtureUID("role-route-admin")
+	var targetUID = fixtureUID("role-route-target")
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{
 		UserUID: targetUID, DisplayName: "真实目标姓名", Enabled: true, Roles: []string{"Portal 设计师"}, SyncedAt: time.Now().UTC(),
@@ -174,8 +176,8 @@ func TestRoleChangeRejectsOnlyEnabledAdminDemotionWhenAnotherAssignmentIsDisable
 	if err := database.Where("role = ?", model.AppRoleAdmin).Delete(&model.AppMemberRole{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	const enabledAdminUID = "role-route-enabled-last-admin"
-	const disabledAdminUID = "role-route-disabled-explicit-admin"
+	var enabledAdminUID = fixtureUID("role-route-enabled-last-admin")
+	var disabledAdminUID = fixtureUID("role-route-disabled-explicit-admin")
 	grantLocalAppRole(t, enabledAdminUID, model.AppRoleAdmin, true)
 	grantLocalAppRole(t, disabledAdminUID, model.AppRoleAdmin, true)
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{
@@ -201,11 +203,11 @@ func TestRoleChangeRejectsInvalidTargetsLastAdminDemotionAndNonAdmins(t *testing
 	if err := database.Where("role = ?", model.AppRoleAdmin).Delete(&model.AppMemberRole{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	const adminUID = "role-route-only-admin"
-	const enabledUID = "role-route-enabled-target"
-	const disabledUID = "role-route-disabled-target"
-	const managerUID = "role-route-manager"
-	const memberUID = "role-route-member"
+	var adminUID = fixtureUID("role-route-only-admin")
+	var enabledUID = fixtureUID("role-route-enabled-target")
+	var disabledUID = fixtureUID("role-route-disabled-target")
+	var managerUID = fixtureUID("role-route-manager")
+	var memberUID = fixtureUID("role-route-member")
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	grantLocalAppRole(t, managerUID, model.AppRolePublicAssetsManager, true)
 	grantLocalAppRole(t, memberUID, model.AppRoleMember, true)
@@ -223,7 +225,7 @@ func TestRoleChangeRejectsInvalidTargetsLastAdminDemotionAndNonAdmins(t *testing
 	}{
 		{name: "invalid role", targetUID: enabledUID, role: model.AppRole("owner")},
 		{name: "disabled target", targetUID: disabledUID, role: model.AppRoleAdmin},
-		{name: "missing target", targetUID: "role-route-missing-target", role: model.AppRoleAdmin},
+		{name: "missing target", targetUID: fixtureUID("role-route-missing-target"), role: model.AppRoleAdmin},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			response := requestAppRoleChange(adminUID, test.targetUID, test.role, "")
@@ -250,7 +252,7 @@ func TestRoleChangeRejectsInvalidTargetsLastAdminDemotionAndNonAdmins(t *testing
 }
 
 func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
-	const userUID = "gateway-admin-only-router"
+	var userUID = fixtureUID("gateway-admin-only-router")
 	grantLocalAppRole(t, userUID, model.AppRoleMember, true)
 	response := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", userUID, "portal-admin")
 	if response.Code != http.StatusOK {
@@ -259,7 +261,7 @@ func TestVerifiedGatewayAdminRoleGrantsAdmin(t *testing.T) {
 }
 
 func TestLegacyGatewayRolesNeverGrantLocalPrivileges(t *testing.T) {
-	const userUID = "legacy-gateway-role-only-member"
+	var userUID = fixtureUID("legacy-gateway-role-only-member")
 	grantLocalAppRole(t, userUID, model.AppRoleMember, true)
 
 	admin := requestWithPortalHeaders(http.MethodGet, "/api/admin/me", userUID, "portal%3Aadmin")
@@ -279,7 +281,7 @@ func TestLegacyGatewayRolesNeverGrantLocalPrivileges(t *testing.T) {
 }
 
 func TestLocalPublicAssetsManagerWritesOnlyPublicAssets(t *testing.T) {
-	const userUID = "local-public-assets-manager-router"
+	var userUID = fixtureUID("local-public-assets-manager-router")
 	grantLocalAppRole(t, userUID, model.AppRolePublicAssetsManager, true)
 
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/public-folders", strings.NewReader(`{"title":"本地素材管理员目录"}`))
@@ -298,10 +300,10 @@ func TestLocalPublicAssetsManagerWritesOnlyPublicAssets(t *testing.T) {
 }
 
 func TestLocalAdminMediaAccessesCrossUserPrivateMedia(t *testing.T) {
-	const adminUID = "local-admin-cross-user-media"
+	var adminUID = fixtureUID("local-admin-cross-user-media")
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
 	item := model.Media{
-		ID: "local-admin-cross-user-private-media", OwnerUID: "different-media-owner",
+		ID: "local-admin-cross-user-private-media", OwnerUID: fixtureUID("different-media-owner"),
 		ObjectKey: "images/private/different-media-owner/admin-access.png", ContentType: "image/png",
 	}
 	if _, err := repository.SaveMedia(item); err != nil {
@@ -330,7 +332,7 @@ func TestPrivateMediaDeleteRouteIsProtected(t *testing.T) {
 func TestMediaUploadIntentUsesProxyModeForLocalStorage(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(`{"filename":"canvas.png","contentType":"image/png","bytes":42,"intent":"canvas"}`))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Portal-User-Uid", "local-upload-owner")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("local-upload-owner"))
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"mode":"proxy"`) {
@@ -340,8 +342,8 @@ func TestMediaUploadIntentUsesProxyModeForLocalStorage(t *testing.T) {
 
 func TestMediaUploadIntentRetentionKeepsLateWriteTrackingUntilRecheck(t *testing.T) {
 	current := time.Now().UTC()
-	expired := model.MediaUploadIntent{ID: "expired-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "missing-expired-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
-	completed := model.MediaUploadIntent{ID: "completed-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: "owner", ObjectKey: "completed-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CompletedMediaID: "media-still-audited", CompletedAt: current.Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
+	expired := model.MediaUploadIntent{ID: "expired-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: fixtureUID("owner"), ObjectKey: "missing-expired-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
+	completed := model.MediaUploadIntent{ID: "completed-media-upload-" + current.Format("20060102150405.000000000"), OwnerUID: fixtureUID("owner"), ObjectKey: "completed-upload", ExpiresAt: current.Add(-time.Minute).Format(time.RFC3339Nano), CompletedMediaID: "media-still-audited", CompletedAt: current.Format(time.RFC3339Nano), CreatedAt: current.Format(time.RFC3339Nano)}
 	for _, item := range []model.MediaUploadIntent{expired, completed} {
 		if err := repository.SaveMediaUploadIntent(item); err != nil {
 			t.Fatal(err)
@@ -435,7 +437,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	owner := "direct-upload-owner"
+	owner := fixtureUID("direct-upload-owner")
 	intentRequest := httptest.NewRequest(http.MethodPost, "/api/v1/media/upload-intents", strings.NewReader(fmt.Sprintf(`{"filename":"direct.png","contentType":"image/png","bytes":%d,"intent":"library"}`, len(image))))
 	intentRequest.Header.Set("Content-Type", "application/json")
 	intentRequest.Header.Set("X-Portal-User-Uid", owner)
@@ -533,7 +535,7 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 }
 
 func TestCanvasUploadCreatesPermanentLibraryMedia(t *testing.T) {
-	owner := "canvas-upload-owner-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("canvas-upload-owner-" + time.Now().Format("20060102150405.000000000"))
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 	if err := writer.WriteField("intent", "canvas"); err != nil {
@@ -583,7 +585,7 @@ func TestCanvasUploadCreatesPermanentLibraryMedia(t *testing.T) {
 func TestPromoteLegacyCanvasTemporaryMediaKeepsObjectKey(t *testing.T) {
 	now := time.Now().UTC()
 	expiresAt := now.Add(-time.Minute)
-	item := model.Media{ID: "media-legacy-canvas-" + now.Format("20060102150405.000000000"), OwnerUID: "legacy-owner", Source: model.MediaSource("canvas_temporary"), ObjectKey: "images/private/canvas/legacy-owner/2026/08/image.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
+	item := model.Media{ID: "media-legacy-canvas-" + now.Format("20060102150405.000000000"), OwnerUID: fixtureUID("legacy-owner"), Source: model.MediaSource("canvas_temporary"), ObjectKey: "images/private/canvas/legacy-owner/2026/08/image.png", ContentType: "image/png", ExpiresAt: &expiresAt, CreatedAt: now.Format(time.RFC3339Nano)}
 	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +610,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	clientRequestID := "async-create-" + time.Now().Format("20060102150405.000000000")
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewBufferString(`{"clientRequestId":"`+clientRequestID+`","model":"browser-controlled-model","prompt":"生成一张测试图","n":1,"size":"1:1","resolution":"2k"}`))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Portal-User-Uid", "async-owner")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("async-owner"))
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
 
@@ -630,7 +632,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 
 	unpriced := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewBufferString(`{"clientRequestId":"`+clientRequestID+`-unpriced","prompt":"不允许的分辨率","n":1,"size":"1:1","resolution":"4k"}`))
 	unpriced.Header.Set("Content-Type", "application/json")
-	unpriced.Header.Set("X-Portal-User-Uid", "async-owner")
+	unpriced.Header.Set("X-Portal-User-Uid", fixtureUID("async-owner"))
 	unpricedResponse := httptest.NewRecorder()
 	servePortalRequest(unpricedResponse, unpriced)
 	if unpricedResponse.Code != http.StatusOK || !strings.Contains(unpricedResponse.Body.String(), "未配置该分辨率") {
@@ -638,7 +640,7 @@ func TestImageGenerationCreatesPersistentTaskWithoutForwardingModel(t *testing.T
 	}
 
 	lookup := httptest.NewRequest(http.MethodGet, "/api/v1/images/tasks/by-client-request/"+clientRequestID, nil)
-	lookup.Header.Set("X-Portal-User-Uid", "async-owner")
+	lookup.Header.Set("X-Portal-User-Uid", fixtureUID("async-owner"))
 	lookedUp := httptest.NewRecorder()
 	servePortalRequest(lookedUp, lookup)
 	if lookedUp.Code != http.StatusOK || !strings.Contains(lookedUp.Body.String(), `"id":"`+created.Data.ID+`"`) {
@@ -659,7 +661,7 @@ func TestImageGenerationRejectsAnIdempotencyKeyReusedForDifferentPayload(t *test
 		}
 		request := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", bytes.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Portal-User-Uid", "image-idempotency-owner")
+		request.Header.Set("X-Portal-User-Uid", fixtureUID("image-idempotency-owner"))
 		response := httptest.NewRecorder()
 		servePortalRequest(response, request)
 		return response
@@ -685,7 +687,7 @@ func TestImageGenerationRejectsAnIdempotencyKeyReusedForDifferentPayload(t *test
 }
 
 func TestPublicGenerationRoutesRejectReservedWorkflowRequestIDs(t *testing.T) {
-	const owner = "reserved-workflow-request-owner"
+	var owner = fixtureUID("reserved-workflow-request-owner")
 
 	imageRequestID := "workflow-public-image-request"
 	imageRequest := httptest.NewRequest(http.MethodPost, "/api/v1/images/generations", strings.NewReader(`{"clientRequestId":" `+imageRequestID+` ","prompt":"should not run","n":1}`))
@@ -733,7 +735,7 @@ func TestImageEditPersistsVersionedMediaSnapshotPlan(t *testing.T) {
 		ImageProviderID: "async-maizi-mask",
 	}})
 	clientRequestID := "async-mask-" + time.Now().Format("20060102150405.000000000")
-	owner := "async-mask-owner"
+	owner := fixtureUID("async-mask-owner")
 	referenceIDs := make([]string, 0, 7)
 	for index := 0; index < 7; index++ {
 		id := fmt.Sprintf("async-mask-reference-%d-%d", index, time.Now().UnixNano())
@@ -784,10 +786,10 @@ func TestImageEditPersistsVersionedMediaSnapshotPlan(t *testing.T) {
 
 func TestPrivateImageCatalogRestoresOwnedMediaAndExcludesPublicMedia(t *testing.T) {
 	createdAt := time.Now().Format(time.RFC3339Nano)
-	owned := model.Media{ID: "media-private-catalog-owned", OwnerUID: "catalog-owner", Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-owner/owned.png", ContentType: "image/png", Filename: "恢复素材.png", CreatedAt: createdAt}
-	generated := model.Media{ID: "media-private-catalog-generated", OwnerUID: "catalog-owner", Source: model.MediaSourceGenerated, ObjectKey: "images/private/catalog-owner/generated.png", ContentType: "image/png", Filename: "generated.png", CreatedAt: createdAt}
-	otherUser := model.Media{ID: "media-private-catalog-other", OwnerUID: "catalog-other", Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-other/other.png", ContentType: "image/png", Filename: "other.png", CreatedAt: createdAt}
-	publicMedia := model.Media{ID: "media-private-catalog-public", OwnerUID: "catalog-owner", Source: model.MediaSourceUpload, ObjectKey: "images/public/catalog-owner/public.png", ContentType: "image/png", Filename: "public.png", CreatedAt: createdAt}
+	owned := model.Media{ID: "media-private-catalog-owned", OwnerUID: fixtureUID("catalog-owner"), Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-owner/owned.png", ContentType: "image/png", Filename: "恢复素材.png", CreatedAt: createdAt}
+	generated := model.Media{ID: "media-private-catalog-generated", OwnerUID: fixtureUID("catalog-owner"), Source: model.MediaSourceGenerated, ObjectKey: "images/private/catalog-owner/generated.png", ContentType: "image/png", Filename: "generated.png", CreatedAt: createdAt}
+	otherUser := model.Media{ID: "media-private-catalog-other", OwnerUID: fixtureUID("catalog-other"), Source: model.MediaSourceUpload, ObjectKey: "images/private/catalog-other/other.png", ContentType: "image/png", Filename: "other.png", CreatedAt: createdAt}
+	publicMedia := model.Media{ID: "media-private-catalog-public", OwnerUID: fixtureUID("catalog-owner"), Source: model.MediaSourceUpload, ObjectKey: "images/public/catalog-owner/public.png", ContentType: "image/png", Filename: "public.png", CreatedAt: createdAt}
 	for _, item := range []model.Media{owned, generated, otherUser, publicMedia} {
 		if _, err := repository.SaveMedia(item); err != nil {
 			t.Fatal(err)
@@ -824,13 +826,13 @@ func TestPrivateImageCatalogRestoresOwnedMediaAndExcludesPublicMedia(t *testing.
 }
 
 func TestPrivateMediaCatalogFiltersVideosAndKeepsTheDefaultImageOnly(t *testing.T) {
-	const owner = "private-media-kind-owner"
+	var owner = fixtureUID("private-media-kind-owner")
 	createdAt := time.Now().Format(time.RFC3339Nano)
 	expiresAt := time.Now().UTC().Add(time.Hour)
 	items := []model.Media{
 		{ID: "private-kind-image", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "images/private/private-media-kind-owner/image.png", ContentType: "image/png", CreatedAt: createdAt},
 		{ID: "private-kind-video", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "videos/private/private-media-kind-owner/video.mp4", ContentType: "video/mp4", CreatedAt: createdAt},
-		{ID: "private-kind-other-video", OwnerUID: "private-media-kind-other", Source: model.MediaSourceUpload, ObjectKey: "videos/private/private-media-kind-other/video.mp4", ContentType: "video/mp4", CreatedAt: createdAt},
+		{ID: "private-kind-other-video", OwnerUID: fixtureUID("private-media-kind-other"), Source: model.MediaSourceUpload, ObjectKey: "videos/private/private-media-kind-other/video.mp4", ContentType: "video/mp4", CreatedAt: createdAt},
 		{ID: "private-kind-expiring-video", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "videos/private/private-media-kind-owner/expiring.mp4", ContentType: "video/mp4", ExpiresAt: &expiresAt, CreatedAt: createdAt},
 		{ID: "private-kind-deleting-video", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "videos/private/private-media-kind-owner/deleting.mp4", ContentType: "video/mp4", CleanupStatus: model.MediaCleanupDeleting, CreatedAt: createdAt},
 		{ID: "private-kind-public-video", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "videos/public/private-media-kind-owner/public.mp4", ContentType: "video/mp4", CreatedAt: createdAt},
@@ -887,7 +889,7 @@ func TestPrivateMediaCatalogFiltersVideosAndKeepsTheDefaultImageOnly(t *testing.
 }
 
 func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
-	owner := "private-catalog-editor"
+	owner := fixtureUID("private-catalog-editor")
 	item := model.Media{ID: "media-private-catalog-edit", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "images/private/private-catalog-editor/edit.png", ContentType: "image/png", Filename: "edit.png", CreatedAt: time.Now().Format(time.RFC3339Nano)}
 	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
@@ -936,9 +938,9 @@ func TestPrivateImageCatalogPersistsFolderMoveAndRenamePerOwner(t *testing.T) {
 }
 
 func TestOperationLogRouteIsAdminOnly(t *testing.T) {
-	const adminUID = "operation-log-route-admin"
+	var adminUID = fixtureUID("operation-log-route-admin")
 	request := httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs", nil)
-	request.Header.Set("X-Portal-User-Uid", "operation-log-route-member")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("operation-log-route-member"))
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
 	if response.Code != http.StatusForbidden {
@@ -956,14 +958,14 @@ func TestOperationLogRouteIsAdminOnly(t *testing.T) {
 }
 
 func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T) {
-	const adminUID = "statistics-admin"
+	var adminUID = fixtureUID("statistics-admin")
 	stamp := time.Now().UTC().Format("20060102150405.000000000")
 	database, err := repository.DB()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Create(&model.ImageGenerationTask{
-		ID: "statistics-" + stamp, OwnerUID: "statistics-user", ClientRequestID: "statistics-" + stamp,
+		ID: "statistics-" + stamp, OwnerUID: fixtureUID("statistics-user"), ClientRequestID: "statistics-" + stamp,
 		Status: model.ImageTaskSucceeded, ProviderID: "statistics-provider", ProviderName: "统计模型",
 		Amount: decimal.RequireFromString("0.1234"), AmountRecorded: true, ResultMediaIDsJSON: `["statistics-media"]`, FinishedAt: time.Now().UTC().Format(time.RFC3339),
 	}).Error; err != nil {
@@ -971,7 +973,7 @@ func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T)
 	}
 
 	denied := httptest.NewRequest(http.MethodGet, "/api/admin/statistics", nil)
-	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
+	denied.Header.Set("X-Portal-User-Uid", fixtureUID("ordinary-member"))
 	deniedResponse := httptest.NewRecorder()
 	servePortalRequest(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusForbidden {
@@ -1007,7 +1009,7 @@ func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T)
 	for _, item := range payload.Data.Models {
 		if item.ProviderID == "statistics-provider" && item.Amount == "0.1234" {
 			for _, user := range payload.Data.Users {
-				if user.UserUID == "statistics-user" && len(user.Models) == 1 && user.Models[0].ProviderID == "statistics-provider" {
+				if user.UserUID == fixtureUID("statistics-user") && len(user.Models) == 1 && user.Models[0].ProviderID == "statistics-provider" {
 					return
 				}
 			}
@@ -1018,7 +1020,7 @@ func TestStatisticsRouteIsAdminOnlyAndReturnsRangeAndUserBreakdown(t *testing.T)
 }
 
 func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testing.T) {
-	const adminUID = "member-list-admin"
+	var adminUID = fixtureUID("member-list-admin")
 	memberID := "member-list-" + time.Now().Format("20060102150405.000000000")
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{
 		UserUID:     memberID,
@@ -1031,7 +1033,7 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 	}
 
 	denied := httptest.NewRequest(http.MethodGet, "/api/admin/members", nil)
-	denied.Header.Set("X-Portal-User-Uid", "ordinary-member")
+	denied.Header.Set("X-Portal-User-Uid", fixtureUID("ordinary-member"))
 	deniedResponse := httptest.NewRecorder()
 	servePortalRequest(deniedResponse, denied)
 	if deniedResponse.Code != http.StatusForbidden {
@@ -1062,8 +1064,8 @@ func TestPortalMemberListRouteIsAdminOnlyAndReturnsSynchronizedMembers(t *testin
 }
 
 func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
-	const userUID = "2b5892c4-3dd2-4f82-8644-f0d14a0b5e71"
-	const adminUID = "directory-admin"
+	var userUID = fixtureUID("2b5892c4-3dd2-4f82-8644-f0d14a0b5e71")
+	var adminUID = fixtureUID("directory-admin")
 	users := []string{`{"userUid":"` + userUID + `","displayName":"李小明","enabled":true,"roles":["设计师"]}`}
 	directory := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Portal-Service-Key") != "infinite-canvas" || r.Header.Get("X-Portal-Service-Secret") != "directory-secret" {
@@ -1137,7 +1139,7 @@ func TestPortalDirectoryCallbackSynchronizesAndDisablesMember(t *testing.T) {
 
 func TestPortalSessionUsesDirectoryDisplayNameAndFallsBackToUsername(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
-	request.Header.Set("X-Portal-User-Uid", "session-user")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("session-user"))
 	request.Header.Set("X-Portal-Username", "fallback-name")
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
@@ -1151,7 +1153,7 @@ func TestPortalSessionUsesDirectoryDisplayNameAndFallsBackToUsername(t *testing.
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &payload) != nil || payload.Data.User.DisplayName != "fallback-name" {
 		t.Fatalf("fallback session = %d/%s", response.Code, response.Body.String())
 	}
-	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: "session-user", DisplayName: "目录姓名", Enabled: true}}); err != nil {
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: fixtureUID("session-user"), DisplayName: "目录姓名", Enabled: true}}); err != nil {
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
@@ -1178,7 +1180,7 @@ func TestPortalSessionExposesPublicAssetManagementCapability(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			userUID := "session-role-" + strings.ReplaceAll(test.name, " ", "-")
+			userUID := fixtureUID("session-role-" + strings.ReplaceAll(test.name, " ", "-"))
 			grantLocalAppRole(t, userUID, test.appRole, test.enabled)
 			request := httptest.NewRequest(http.MethodGet, "/api/session", nil)
 			request.Header.Set("X-Portal-User-Uid", userUID)
@@ -1217,9 +1219,9 @@ func TestPortalSessionExposesPublicAssetManagementCapability(t *testing.T) {
 }
 
 func TestLocalPublicAssetsManagerCanManagePublicAssetsButNotOtherAdminRoutes(t *testing.T) {
-	const memberUID = "public-assets-member"
-	const managerUID = "public-assets-manager"
-	const adminUID = "public-assets-admin"
+	var memberUID = fixtureUID("public-assets-member")
+	var managerUID = fixtureUID("public-assets-manager")
+	var adminUID = fixtureUID("public-assets-admin")
 	grantLocalAppRole(t, memberUID, model.AppRoleMember, true)
 	grantLocalAppRole(t, managerUID, model.AppRolePublicAssetsManager, true)
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
@@ -1259,10 +1261,10 @@ func TestLocalPublicAssetsManagerCanManagePublicAssetsButNotOtherAdminRoutes(t *
 	if deleted.Code != http.StatusOK {
 		t.Fatalf("asset manager delete status = %d, want %d; body = %s", deleted.Code, http.StatusOK, deleted.Body.String())
 	}
-	if _, err := repository.SaveMedia(model.Media{ID: "media-public-assets-manager", OwnerUID: "public-assets-admin", ObjectKey: "images/public/assets-manager.png", ContentType: "image/png"}); err != nil {
+	if _, err := repository.SaveMedia(model.Media{ID: "media-public-assets-manager", OwnerUID: fixtureUID("public-assets-admin"), ObjectKey: "images/public/assets-manager.png", ContentType: "image/png"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-image-assets-manager", MediaID: "media-public-assets-manager", Title: "原名称", UploaderUID: "public-assets-admin"}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-image-assets-manager", MediaID: "media-public-assets-manager", Title: "原名称", UploaderUID: fixtureUID("public-assets-admin")}); err != nil {
 		t.Fatal(err)
 	}
 	imageUpdated := request(http.MethodPatch, "/api/admin/public-images/public-image-assets-manager", `{"title":"素材管理员修改图片"}`, managerUID)
@@ -1282,7 +1284,7 @@ func TestLocalPublicAssetsManagerCanManagePublicAssetsButNotOtherAdminRoutes(t *
 }
 
 func TestRegularMemberCannotUseAnyPublicAssetMutationRoute(t *testing.T) {
-	const memberUID = "regular-public-assets-member"
+	var memberUID = fixtureUID("regular-public-assets-member")
 	grantLocalAppRole(t, memberUID, model.AppRoleMember, true)
 	routes := []struct {
 		method string
@@ -1314,8 +1316,8 @@ func TestRegularMemberCannotUseAnyPublicAssetMutationRoute(t *testing.T) {
 }
 
 func TestLocalPublicAssetsManagerCanUploadAndDeletePublicImages(t *testing.T) {
-	const uploadManagerUID = "public-assets-manager-upload"
-	const deleteManagerUID = "public-assets-manager-delete"
+	var uploadManagerUID = fixtureUID("public-assets-manager-upload")
+	var deleteManagerUID = fixtureUID("public-assets-manager-delete")
 	grantLocalAppRole(t, uploadManagerUID, model.AppRolePublicAssetsManager, true)
 	grantLocalAppRole(t, deleteManagerUID, model.AppRolePublicAssetsManager, true)
 	pngData, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLxgAAAAABJRU5ErkJggg==")
@@ -1358,7 +1360,7 @@ func TestLocalPublicAssetsManagerCanUploadAndDeletePublicImages(t *testing.T) {
 		t.Fatalf("manager upload item = %+v; body = %s", uploaded.Data.Item, uploadResponse.Body.String())
 	}
 
-	media := model.Media{ID: "media-public-assets-manager-delete", OwnerUID: "public-assets-manager-delete", ObjectKey: "images/public/manager-delete.png", ContentType: "image/png"}
+	media := model.Media{ID: "media-public-assets-manager-delete", OwnerUID: fixtureUID("public-assets-manager-delete"), ObjectKey: "images/public/manager-delete.png", ContentType: "image/png"}
 	publicImage := model.PublicImage{ID: "public-image-assets-manager-delete", MediaID: media.ID, Title: "待删除素材", UploaderUID: media.OwnerUID}
 	objectPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(media.ObjectKey))
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0755); err != nil {
@@ -1393,8 +1395,8 @@ func TestLocalPublicAssetsManagerCanUploadAndDeletePublicImages(t *testing.T) {
 }
 
 func TestGatewayPublicAssetManagerRolesDoNotGrantLocalAuthorization(t *testing.T) {
-	const localManagerUID = "configured-local-public-assets-manager"
-	const gatewayManagerUID = "gateway-public-assets-manager-only"
+	var localManagerUID = fixtureUID("configured-local-public-assets-manager")
+	var gatewayManagerUID = fixtureUID("gateway-public-assets-manager-only")
 	grantLocalAppRole(t, localManagerUID, model.AppRolePublicAssetsManager, true)
 	grantLocalAppRole(t, gatewayManagerUID, model.AppRoleMember, true)
 
@@ -1417,12 +1419,15 @@ func TestGatewayPublicAssetManagerRolesDoNotGrantLocalAuthorization(t *testing.T
 }
 
 func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
-	const adminUID = "audit-admin"
+	var adminUID = fixtureUID("audit-admin")
 	grantLocalAppRole(t, adminUID, model.AppRoleAdmin, true)
+	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: adminUID, DisplayName: "audit-admin", Enabled: true, Roles: []string{}}}); err != nil {
+		t.Fatal(err)
+	}
 	request := httptest.NewRequest(http.MethodPost, "/api/admin/public-folders", bytes.NewBufferString(`{"title":"审计目录"}`))
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("X-Portal-User-Uid", adminUID)
-	request.Header.Set("X-Portal-Username", adminUID)
+	request.Header.Set("X-Portal-Username", "audit-admin")
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
@@ -1440,17 +1445,17 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 		t.Fatalf("operation logs status/data = %d/%s", response.Code, response.Body.String())
 	}
 	item := payload.Data.Items[0]
-	if item.ActorUID != "audit-admin" || item.ActorName != "audit-admin" || item.Action != "public_folder_create" || item.Status != model.OperationStatusSuccess {
+	if item.ActorUID != fixtureUID("audit-admin") || item.ActorName != "audit-admin" || item.Action != "public_folder_create" || item.Status != model.OperationStatusSuccess {
 		t.Fatalf("operation item = %+v", item)
 	}
 	if item.MediaIDs == nil {
 		t.Fatal("operation log without media must return an empty mediaIds array")
 	}
 	requestSummary := `{"method":"POST","endpoint":"https://www.maizitech.xyz/v1/images/generations","contentType":"application/json","jsonBody":{"images":["data:image/png;base64,<base64>"]}}`
-	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-request-summary", ActorUID: "audit-admin", ActorName: "审计", Action: "image_edit", Status: model.OperationStatusSuccess, RequestSummary: requestSummary, CreatedAt: time.Now()}); err != nil {
+	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-request-summary", ActorUID: fixtureUID("audit-admin"), ActorName: "审计", Action: "image_edit", Status: model.OperationStatusSuccess, RequestSummary: requestSummary, CreatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=image_edit&actor=audit-admin", nil)
+	request = httptest.NewRequest(http.MethodGet, "/api/admin/operation-logs?action=image_edit&actor="+adminUID, nil)
 	request.Header.Set("X-Portal-User-Uid", adminUID)
 	response = httptest.NewRecorder()
 	servePortalRequest(response, request)
@@ -1461,7 +1466,7 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 		t.Fatalf("operation request summary = %d/%s", response.Code, response.Body.String())
 	}
 
-	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-expired", ActorUID: "audit-admin", ActorName: "审计", Action: "expired", Status: model.OperationStatusSuccess, CreatedAt: time.Now().Add(-8 * 24 * time.Hour)}); err != nil {
+	if err := repository.SaveOperationLog(model.OperationLog{ID: "operation-expired", ActorUID: fixtureUID("audit-admin"), ActorName: "审计", Action: "expired", Status: model.OperationStatusSuccess, CreatedAt: time.Now().Add(-8 * 24 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := service.CleanupExpiredOperationLogs(time.Now()); err != nil {
@@ -1474,7 +1479,7 @@ func TestOperationLogListsAuditedWriteAndCleansExpiredEntries(t *testing.T) {
 }
 
 func TestPrivateMediaDeleteHardDeletesOwnedPrivateMedia(t *testing.T) {
-	item := model.Media{ID: "media-private-delete", OwnerUID: "owner", ObjectKey: "images/private/owner/delete.png", ContentType: "image/png"}
+	item := model.Media{ID: "media-private-delete", OwnerUID: fixtureUID("owner"), ObjectKey: "images/private/owner/delete.png", ContentType: "image/png"}
 	objectPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(item.ObjectKey))
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0755); err != nil {
 		t.Fatal(err)
@@ -1519,7 +1524,7 @@ func TestPrivateMediaDeleteHardDeletesOwnedPrivateMedia(t *testing.T) {
 }
 
 func TestPrivateMediaDeleteCleansDatabaseRecordWhenLocalObjectIsMissing(t *testing.T) {
-	item := model.Media{ID: "media-private-missing-object", OwnerUID: "owner", ObjectKey: "images/private/owner/missing.png", ContentType: "image/png"}
+	item := model.Media{ID: "media-private-missing-object", OwnerUID: fixtureUID("owner"), ObjectKey: "images/private/owner/missing.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
 	}
@@ -1548,7 +1553,7 @@ func TestPrivateMediaDeleteCleansDatabaseRecordWhenLocalObjectIsMissing(t *testi
 }
 
 func TestPrivateMediaDeleteKeepsRecordAndReturnsSafeMessageWhenStorageIsUnavailable(t *testing.T) {
-	item := model.Media{ID: "media-private-delete-storage-failure", OwnerUID: "owner", ObjectKey: "images/private/owner/unavailable.png", ContentType: "image/png"}
+	item := model.Media{ID: "media-private-delete-storage-failure", OwnerUID: fixtureUID("owner"), ObjectKey: "images/private/owner/unavailable.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
 	}
@@ -1577,7 +1582,7 @@ func TestPrivateMediaDeleteKeepsRecordAndReturnsSafeMessageWhenStorageIsUnavaila
 }
 
 func TestPrivateMediaDeleteDoesNotDeletePublicLibraryMedia(t *testing.T) {
-	item := model.Media{ID: "media-public-library", OwnerUID: "owner", ObjectKey: "images/public/delete.png", ContentType: "image/png"}
+	item := model.Media{ID: "media-public-library", OwnerUID: fixtureUID("owner"), ObjectKey: "images/public/delete.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(item); err != nil {
 		t.Fatal(err)
 	}
@@ -1609,7 +1614,7 @@ func TestPrivateMediaDeleteDoesNotDeletePublicLibraryMedia(t *testing.T) {
 }
 
 func TestPrivateMediaDeleteRejectsOtherUsers(t *testing.T) {
-	item := model.Media{ID: "media-private-delete-forbidden", OwnerUID: "owner", ObjectKey: "images/private/owner/forbidden.png", ContentType: "image/png"}
+	item := model.Media{ID: "media-private-delete-forbidden", OwnerUID: fixtureUID("owner"), ObjectKey: "images/private/owner/forbidden.png", ContentType: "image/png"}
 	objectPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(item.ObjectKey))
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0755); err != nil {
 		t.Fatal(err)
@@ -1622,7 +1627,7 @@ func TestPrivateMediaDeleteRejectsOtherUsers(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodDelete, "/api/v1/media/"+item.ID, nil)
-	request.Header.Set("X-Portal-User-Uid", "other-user")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("other-user"))
 	response := httptest.NewRecorder()
 	servePortalRequest(response, request)
 
@@ -1648,7 +1653,7 @@ func TestPrivateMediaDeleteRejectsOtherUsers(t *testing.T) {
 }
 
 func TestDeletePublicImageAndMediaDeletesBothRecords(t *testing.T) {
-	media := model.Media{ID: "media-public-transaction", OwnerUID: "admin", ObjectKey: "images/public/transaction.png", ContentType: "image/png"}
+	media := model.Media{ID: "media-public-transaction", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/transaction.png", ContentType: "image/png"}
 	publicImage := model.PublicImage{ID: "public-transaction", MediaID: media.ID, UploaderUID: media.OwnerUID}
 	if _, err := repository.SaveMedia(media); err != nil {
 		t.Fatal(err)
@@ -1677,8 +1682,8 @@ func TestDeletePublicImageAndMediaDeletesBothRecords(t *testing.T) {
 }
 
 func TestAdminPublicImageDeleteHardDeletesObjectAndRecords(t *testing.T) {
-	grantLocalAppRole(t, "admin", model.AppRoleAdmin, true)
-	media := model.Media{ID: "media-public-hard-delete", OwnerUID: "admin", ObjectKey: "images/public/hard-delete.png", ContentType: "image/png"}
+	grantLocalAppRole(t, fixtureUID("admin"), model.AppRoleAdmin, true)
+	media := model.Media{ID: "media-public-hard-delete", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/hard-delete.png", ContentType: "image/png"}
 	publicImage := model.PublicImage{ID: "public-hard-delete", MediaID: media.ID, UploaderUID: media.OwnerUID}
 	objectPath := filepath.Join(mediaTestDirectory, filepath.FromSlash(media.ObjectKey))
 	if err := os.MkdirAll(filepath.Dir(objectPath), 0755); err != nil {
@@ -1722,8 +1727,8 @@ func TestAdminPublicImageDeleteHardDeletesObjectAndRecords(t *testing.T) {
 }
 
 func TestAdminPublicImageDeleteCleansRecordsWhenLocalObjectIsMissing(t *testing.T) {
-	grantLocalAppRole(t, "admin", model.AppRoleAdmin, true)
-	media := model.Media{ID: "media-public-missing-object", OwnerUID: "admin", ObjectKey: "images/public/missing.png", ContentType: "image/png"}
+	grantLocalAppRole(t, fixtureUID("admin"), model.AppRoleAdmin, true)
+	media := model.Media{ID: "media-public-missing-object", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/missing.png", ContentType: "image/png"}
 	publicImage := model.PublicImage{ID: "public-missing-object", MediaID: media.ID, UploaderUID: media.OwnerUID}
 	if _, err := repository.SaveMedia(media); err != nil {
 		t.Fatal(err)
@@ -1784,7 +1789,7 @@ func TestPublicFolderListRequiresPortalIdentity(t *testing.T) {
 	}
 
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/public-folders", nil)
-	request.Header.Set("X-Portal-User-Uid", "member")
+	request.Header.Set("X-Portal-User-Uid", fixtureUID("member"))
 	response = httptest.NewRecorder()
 	servePortalRequest(response, request)
 	if response.Code != http.StatusOK {
@@ -1793,14 +1798,14 @@ func TestPublicFolderListRequiresPortalIdentity(t *testing.T) {
 }
 
 func TestAdminCanCreateNestedPublicFoldersAndRejectsDuplicateSiblingNames(t *testing.T) {
-	grantLocalAppRole(t, "folder-member", model.AppRoleMember, true)
-	grantLocalAppRole(t, "folder-admin", model.AppRoleAdmin, true)
+	grantLocalAppRole(t, fixtureUID("folder-member"), model.AppRoleMember, true)
+	grantLocalAppRole(t, fixtureUID("folder-admin"), model.AppRoleAdmin, true)
 	create := func(body string, admin bool) (*httptest.ResponseRecorder, model.PublicFolder) {
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/public-folders", bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		userUID := "folder-member"
+		userUID := fixtureUID("folder-member")
 		if admin {
-			userUID = "folder-admin"
+			userUID = fixtureUID("folder-admin")
 		}
 		req.Header.Set("X-Portal-User-Uid", userUID)
 		res := httptest.NewRecorder()
@@ -1849,8 +1854,8 @@ func TestAdminCanCreateNestedPublicFoldersAndRejectsDuplicateSiblingNames(t *tes
 }
 
 func TestPublicImageListFiltersByFolderAndDefaultsToRoot(t *testing.T) {
-	rootMedia := model.Media{ID: "media-public-root-filter", OwnerUID: "admin", ObjectKey: "images/public/root-filter.png", ContentType: "image/png"}
-	childMedia := model.Media{ID: "media-public-child-filter", OwnerUID: "admin", ObjectKey: "images/public/child-filter.png", ContentType: "image/png"}
+	rootMedia := model.Media{ID: "media-public-root-filter", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/root-filter.png", ContentType: "image/png"}
+	childMedia := model.Media{ID: "media-public-child-filter", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/child-filter.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(rootMedia); err != nil {
 		t.Fatal(err)
 	}
@@ -1861,10 +1866,10 @@ func TestPublicImageListFiltersByFolderAndDefaultsToRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-root-filter", MediaID: rootMedia.ID, Title: "根目录图片", UploaderUID: "admin"}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-root-filter", MediaID: rootMedia.ID, Title: "根目录图片", UploaderUID: fixtureUID("admin")}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-child-filter", MediaID: childMedia.ID, FolderID: folder.ID, Title: "文件夹图片", UploaderUID: "admin"}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-child-filter", MediaID: childMedia.ID, FolderID: folder.ID, Title: "文件夹图片", UploaderUID: fixtureUID("admin")}); err != nil {
 		t.Fatal(err)
 	}
 	db, err := repository.DB()
@@ -1877,7 +1882,7 @@ func TestPublicImageListFiltersByFolderAndDefaultsToRoot(t *testing.T) {
 
 	list := func(path string) model.PublicImageList {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("X-Portal-User-Uid", "member")
+		req.Header.Set("X-Portal-User-Uid", fixtureUID("member"))
 		res := httptest.NewRecorder()
 		servePortalRequest(res, req)
 		if res.Code != http.StatusOK {
@@ -1910,9 +1915,9 @@ func TestPublicImageListFiltersByFolderAndDefaultsToRoot(t *testing.T) {
 }
 
 func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testing.T) {
-	grantLocalAppRole(t, "public-image-update-member", model.AppRoleMember, true)
-	grantLocalAppRole(t, "admin", model.AppRoleAdmin, true)
-	media := model.Media{ID: "media-public-move", OwnerUID: "admin", ObjectKey: "images/public/keep-object-key.png", ContentType: "image/png"}
+	grantLocalAppRole(t, fixtureUID("public-image-update-member"), model.AppRoleMember, true)
+	grantLocalAppRole(t, fixtureUID("admin"), model.AppRoleAdmin, true)
+	media := model.Media{ID: "media-public-move", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/keep-object-key.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(media); err != nil {
 		t.Fatal(err)
 	}
@@ -1920,13 +1925,13 @@ func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-move", MediaID: media.ID, Title: "旧名称", UploaderUID: "admin"}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-move", MediaID: media.ID, Title: "旧名称", UploaderUID: fixtureUID("admin")}); err != nil {
 		t.Fatal(err)
 	}
 
 	req := httptest.NewRequest(http.MethodPatch, "/api/admin/public-images/public-move", bytes.NewBufferString(`{"title":"  新名称  ","folderId":"`+folder.ID+`"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Portal-User-Uid", "public-image-update-member")
+	req.Header.Set("X-Portal-User-Uid", fixtureUID("public-image-update-member"))
 	res := httptest.NewRecorder()
 	servePortalRequest(res, req)
 	if res.Code != http.StatusForbidden {
@@ -1935,7 +1940,7 @@ func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testi
 
 	req = httptest.NewRequest(http.MethodPatch, "/api/admin/public-images/public-move", bytes.NewBufferString(`{"title":"  新名称  ","folderId":"`+folder.ID+`"}`))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Portal-User-Uid", "admin")
+	req.Header.Set("X-Portal-User-Uid", fixtureUID("admin"))
 	res = httptest.NewRecorder()
 	servePortalRequest(res, req)
 	if res.Code != http.StatusOK {
@@ -1951,7 +1956,7 @@ func TestAdminPublicImageRenameAndMovePreserveMediaIdentityAndObjectKey(t *testi
 }
 
 func TestAdminPublicImageUploadPersistsFolderImmediatelyAndRejectsUnknownFolderBeforeMediaWrite(t *testing.T) {
-	grantLocalAppRole(t, "admin", model.AppRoleAdmin, true)
+	grantLocalAppRole(t, fixtureUID("admin"), model.AppRoleAdmin, true)
 	folder, err := repository.SavePublicFolder(model.PublicFolder{ID: "folder-public-upload", Title: "上传目标", CreatedAt: "2026-08-21T00:00:00Z"})
 	if err != nil {
 		t.Fatal(err)
@@ -1981,7 +1986,7 @@ func TestAdminPublicImageUploadPersistsFolderImmediatelyAndRejectsUnknownFolderB
 		}
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/public-images", body)
 		req.Header.Set("Content-Type", writer.FormDataContentType())
-		req.Header.Set("X-Portal-User-Uid", "admin")
+		req.Header.Set("X-Portal-User-Uid", fixtureUID("admin"))
 		res := httptest.NewRecorder()
 		servePortalRequest(res, req)
 		return res
@@ -2038,7 +2043,7 @@ func TestAdminPublicImageUploadPersistsFolderImmediatelyAndRejectsUnknownFolderB
 }
 
 func TestAdminCanRenameAndDeleteOnlyEmptyPublicFolders(t *testing.T) {
-	grantLocalAppRole(t, "admin", model.AppRoleAdmin, true)
+	grantLocalAppRole(t, fixtureUID("admin"), model.AppRoleAdmin, true)
 	empty, err := repository.SavePublicFolder(model.PublicFolder{ID: "folder-public-manage-empty", Title: "旧目录", CreatedAt: "2026-08-21T00:00:00Z"})
 	if err != nil {
 		t.Fatal(err)
@@ -2047,18 +2052,18 @@ func TestAdminCanRenameAndDeleteOnlyEmptyPublicFolders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	media := model.Media{ID: "media-public-folder-occupied", OwnerUID: "admin", ObjectKey: "images/public/folder-occupied.png", ContentType: "image/png"}
+	media := model.Media{ID: "media-public-folder-occupied", OwnerUID: fixtureUID("admin"), ObjectKey: "images/public/folder-occupied.png", ContentType: "image/png"}
 	if _, err := repository.SaveMedia(media); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-folder-occupied", MediaID: media.ID, FolderID: occupied.ID, Title: "目录素材", UploaderUID: "admin"}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-folder-occupied", MediaID: media.ID, FolderID: occupied.ID, Title: "目录素材", UploaderUID: fixtureUID("admin")}); err != nil {
 		t.Fatal(err)
 	}
 
 	request := func(method, path, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Portal-User-Uid", "admin")
+		req.Header.Set("X-Portal-User-Uid", fixtureUID("admin"))
 		res := httptest.NewRecorder()
 		servePortalRequest(res, req)
 		return res
@@ -2107,8 +2112,8 @@ func TestVerifiedGlobalAdminDoesNotDependOnDirectoryAndCanRemoveFinalLocalAdmin(
 	if err := database.Where("role = ?", model.AppRoleAdmin).Delete(&model.AppMemberRole{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	const localUID = "d7b1a89c-3e13-4d97-b210-6e918a60e3d0"
-	const globalUID = "1d38e137-fb75-479e-991b-b40b205976a7"
+	var localUID = fixtureUID("d7b1a89c-3e13-4d97-b210-6e918a60e3d0")
+	var globalUID = fixtureUID("1d38e137-fb75-479e-991b-b40b205976a7")
 	grantLocalAppRole(t, localUID, model.AppRoleAdmin, true)
 	for _, enabled := range []bool{false, true} {
 		if enabled {
@@ -2143,7 +2148,7 @@ func TestBusinessRoutesRejectUnsignedAndTamperedIdentity(t *testing.T) {
 	for _, path := range []string{"/api/session", "/api/admin/me", "/api/v1/canvas/projects"} {
 		for _, tampered := range []bool{false, true} {
 			request := httptest.NewRequest(http.MethodGet, path, nil)
-			request.Header.Set("X-Portal-User-Uid", "93f6e9cc-7f95-4c14-b9eb-cf4ebd4373ac")
+			request.Header.Set("X-Portal-User-Uid", fixtureUID("93f6e9cc-7f95-4c14-b9eb-cf4ebd4373ac"))
 			if tampered {
 				testportal.Sign(request, config.Cfg.PortalDirectoryAppKey, config.Cfg.PortalDirectorySecret)
 				request.Header.Set("X-Portal-Roles", "portal-admin")

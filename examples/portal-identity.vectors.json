@@ -1,0 +1,989 @@
+{
+  "formatVersion": 1,
+  "protocol": "portal.identity.v1",
+  "fixtureNotice": "PUBLIC TEST FIXTURES; NEVER USE THESE SECRETS IN AN APPLICATION",
+  "appKey": "vector-app",
+  "secret": "PUBLIC_TEST_ONLY_portal_identity_vector_secret",
+  "now": 1790000000,
+  "cases": [
+    {
+      "name": "valid-unicode-and-encoded-separators",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "signing": {
+        "fields": {
+          "userId": "7",
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+          "roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD"
+        },
+        "issuedAt": 1790000000,
+        "secrets": [
+          "PUBLIC_TEST_ONLY_portal_identity_vector_secret"
+        ],
+        "appKey": "vector-app"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "age-59",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1789999941",
+        "x-portal-identity-signature": "C4RQkl__xXCQrIU-8a8m--Kg7mVJR3BzeHtct0SdDRU"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "age-60-expired",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1789999940",
+        "x-portal-identity-signature": "QaZPh0cn5TFOy68qTcnlnykRMdvkrRQ2k5_Vd6To8bU"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "expired"
+      }
+    },
+    {
+      "name": "future-5",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000005",
+        "x-portal-identity-signature": "4Ti2RlukTS229wAen3oc-wv8atrQLi9I9tbKu6MPjNk"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "future-6-expired",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000006",
+        "x-portal-identity-signature": "0UCmHtK_1vSVIvM-OQMDjnlAG7zVCQAxmyyFvHUhYnc"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "expired"
+      }
+    },
+    {
+      "name": "last-millisecond-before-expiry",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "nowMilliseconds": 1790000059999,
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "first-millisecond-at-expiry",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "nowMilliseconds": 1790000060000,
+      "expect": {
+        "ok": false,
+        "reason": "expired"
+      }
+    },
+    {
+      "name": "rotation-current",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "i8C9K1EOUc1ujcDmKbxeDNwDuhgHb_oVC2LObEP3ok4,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "signing": {
+        "fields": {
+          "userId": "7",
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+          "roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD"
+        },
+        "issuedAt": 1790000000,
+        "secrets": [
+          "PUBLIC_TEST_ONLY_previous_vector_secret",
+          "PUBLIC_TEST_ONLY_portal_identity_vector_secret"
+        ],
+        "appKey": "vector-app"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "rotation-previous",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "i8C9K1EOUc1ujcDmKbxeDNwDuhgHb_oVC2LObEP3ok4,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "secret": "PUBLIC_TEST_ONLY_previous_vector_secret",
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "eight-signatures",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "sIjyORPJp3KTBt0EpcYJOf2Ex0RnftdKU2_mQX7p2rw,klyiALdiP1m7FNthLx1lRwMq9_xBxFzQJUnXSZEbIyU,B3Arvei3YI0UjUnS9QFU_yv6Z5JI1JbI7qkrgOASk6c,IEho4ym_z_VDvGLCfMe8fgPEAgus2AWPkAg8Mt46ntA,HZC4G4osRj_u9lIj9uSGxxRfzpm9mQtklpJSTtW5NbY,oUshByBqSCUBjHbuwWqNZ-a35aMNWg8n_JSrvc-6fgs,lPHswB2sm3vJgOvabFtLqNSt7YAn0p-WbCXyo8wuGp0,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "empty-roles",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "ABJ5kH3HfV5d1cqQCx0Pl1xc01xv7cz0mfdnVranKLg"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": []
+        }
+      }
+    },
+    {
+      "name": "missing-roles-is-empty",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "ABJ5kH3HfV5d1cqQCx0Pl1xc01xv7cz0mfdnVranKLg"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": []
+        }
+      }
+    },
+    {
+      "name": "missing-signed-nonempty-roles",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "uuid-case-preserved-for-signing",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "ABCDEFAB-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "1yfiuhC2IaYoRxZ307ARjOLL9_sfXhXohrigCTMnT8U"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "abcdefab-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "lowercase-percent-encoding-signed-as-is",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%e6%b5%8b%e8%af%95%20user%2c%2b%2f%f0%9f%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "PIqHUdlpLxdWG_BKaL7792a-zD2LGHvReFLjRMzJ1ZQ"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "encoding-case-changed-after-signing",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%e6%b5%8b%e8%af%95%20user%2c%2b%2f%f0%9f%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "tampered-user-id",
+      "headers": {
+        "x-portal-user-id": "8",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "tampered-user-uid",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555556",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "tampered-username",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "another",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "tampered-roles",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "tampered-identity-time",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1789999999",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "wrong-app",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "appKey": "other-app",
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "wrong-secret",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "secret": "PUBLIC_TEST_ONLY_wrong_secret",
+      "expect": {
+        "ok": false,
+        "reason": "mismatch"
+      }
+    },
+    {
+      "name": "missing-user-id",
+      "headers": {
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "array-header-user-id",
+      "headers": {
+        "x-portal-user-id": [
+          "7",
+          "7"
+        ],
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "missing-user-uid",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "array-header-user-uid",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": [
+          "11111111-2222-4333-8444-555555555555",
+          "11111111-2222-4333-8444-555555555555"
+        ],
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "missing-username",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "array-header-username",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": [
+          "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+          "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80"
+        ],
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "missing-identity-time",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "array-header-identity-time",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": [
+          "1790000000",
+          "1790000000"
+        ],
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "missing-identity-signature",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "missing"
+      }
+    },
+    {
+      "name": "array-header-identity-signature",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": [
+          "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA",
+          "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+        ]
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "array-header-roles",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": [
+          "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD"
+        ],
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-time-0",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "0",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-time-01",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "01",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-time-1.5",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1.5",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-time--1",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "-1",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-time-9007199254740992",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "9007199254740992",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-user-id-0",
+      "headers": {
+        "x-portal-user-id": "0",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-user-id-01",
+      "headers": {
+        "x-portal-user-id": "01",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-user-id-9007199254740992",
+      "headers": {
+        "x-portal-user-id": "9007199254740992",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "username-unencoded",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "测试 user",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "username-space",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "test user",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "username-too-long",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "roles-too-long",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "empty-role-item",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "a,,b",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "signature-padding",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA="
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "signature-short",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "signature-spaces",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": " mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "signature-nine",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA,mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "uuid-invalid",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "not-a-uuid",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "duplicate-scalar-id",
+      "headers": {
+        "x-portal-user-id": "7, 7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "mN-JpMxyQ_xPQRKBAWTxBCJuGQUNbDp3Ws2_L0DyUiA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "invalid-percent-encoding-after-valid-hmac",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E0%A4%A",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "5S4xI2QEks782X4s0pFOX9chM7z-1qTF4fqqWN1LqfA"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "username-byte-limit",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "x-portal-roles": "portal-admin,%E4%BB%93%E5%BA%93%2C%E9%87%87%E8%B4%AD",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "JM1mhtn6IuahbaIqONWLJNZOxu4gzaqQ1TeMD5aH_lk"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "roles": [
+            "portal-admin",
+            "仓库,采购"
+          ]
+        }
+      }
+    },
+    {
+      "name": "roles-byte-limit",
+      "headers": {
+        "x-portal-user-id": "7",
+        "x-portal-user-uid": "11111111-2222-4333-8444-555555555555",
+        "x-portal-username": "%E6%B5%8B%E8%AF%95%20user%2C%2B%2F%F0%9F%98%80",
+        "x-portal-roles": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "x-portal-identity-time": "1790000000",
+        "x-portal-identity-signature": "CyV7kefPss0Zxinscz9JHwYYgOEEjewb8Ecq5NxrNzQ"
+      },
+      "expect": {
+        "ok": true,
+        "identity": {
+          "userId": 7,
+          "userUid": "11111111-2222-4333-8444-555555555555",
+          "username": "测试 user,+/😀",
+          "roles": [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ]
+        }
+      }
+    }
+  ]
+}

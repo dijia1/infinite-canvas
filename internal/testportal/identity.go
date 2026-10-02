@@ -9,7 +9,21 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// SyntheticUID keeps named isolated fixtures readable while their identities
+// obey the Gateway UUID contract. Sign never rewrites identity inputs.
+func SyntheticUID(label string) string {
+	if label == "" {
+		return ""
+	}
+	if parsed, err := uuid.Parse(label); err == nil {
+		return parsed.String()
+	}
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("infinite-canvas.test/"+label)).String()
+}
 
 func Sign(r *http.Request, appKey, secret string) {
 	if r.Header.Get("X-Portal-User-Uid") == "" {
