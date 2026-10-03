@@ -30,3 +30,20 @@ test("previous editor state is not ready under a new project, user or canonical 
     }
     assert.equal(sourceBehavior(page, bindings).named("documentReady"), true);
 });
+
+
+test("node drag release publishes after React captures the final document, without flushing clicks", () => {
+    const nodeDragWasActiveRef = { current: false };
+    let flushes = 0;
+    const run = (isNodeDragging: boolean) => sourceBehavior(page, {
+        nodeDragWasActiveRef, isNodeDragging, flushDocument: () => { flushes++; }, useLayoutEffect: (fn: () => void) => fn(),
+    }).select((node) => ts.isCallExpression(node) && node.expression.getText() === "useLayoutEffect" && node.arguments[0]?.getText().includes("nodeDragWasActiveRef"));
+    run(false);
+    assert.equal(flushes, 0);
+    run(true);
+    assert.equal(flushes, 0);
+    run(false);
+    assert.equal(flushes, 1);
+    run(false);
+    assert.equal(flushes, 1);
+});

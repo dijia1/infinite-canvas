@@ -19,7 +19,7 @@ export function createCanvasDocumentPublisher({
     publish,
     isCurrent,
     onPendingChange = () => undefined,
-    schedule = (callback: () => void) => setTimeout(callback, 500),
+    schedule = (callback: () => void) => setTimeout(callback, 100),
     clear = (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
 }: {
     publish: (document: CanvasEditorDocument) => void;

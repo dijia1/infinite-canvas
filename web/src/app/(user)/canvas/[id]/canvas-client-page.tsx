@@ -762,6 +762,15 @@ function InfiniteCanvasPage() {
         onWarning: message.warning,
     });
 
+    const nodeDragWasActiveRef = useRef(false);
+    useLayoutEffect(() => {
+        const wasDragging = nodeDragWasActiveRef.current;
+        nodeDragWasActiveRef.current = isNodeDragging;
+        // The document hook above has captured the final React commit before
+        // releasing this local window. Cloud writes still use the Store debounce.
+        if (wasDragging && !isNodeDragging) flushDocument();
+    }, [isNodeDragging, flushDocument]);
+
     const {
         runningNodeId,
         getImageResultState,
