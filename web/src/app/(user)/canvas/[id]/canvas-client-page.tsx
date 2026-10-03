@@ -1169,9 +1169,17 @@ function InfiniteCanvasPage() {
                 localImageUploadController.cancel(node.id);
                 if (node.metadata?.storageKey) storageKeys.push(node.metadata.storageKey);
             }
-            if (storageKeys.length) void deleteStoredImages(storageKeys);
+            if (storageKeys.length)
+                void useCanvasStore
+                    .getState()
+                    .readPersistedProjects()
+                    .then((projects) => {
+                        const retained = new Set(projects.filter((p) => p.id !== projectId).flatMap((p) => p.nodes.map((node) => node.metadata?.storageKey).filter(Boolean)));
+                        return deleteStoredImages(storageKeys.filter((key) => !retained.has(key)));
+                    })
+                    .catch((error) => console.warn("读取图片缓存保护清单失败，已跳过删除", error instanceof Error ? error.message : String(error)));
         },
-        [localImageUploadController],
+        [localImageUploadController, projectId],
     );
 
     const deleteNodes = useCallback(

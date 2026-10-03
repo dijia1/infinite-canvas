@@ -13,6 +13,8 @@ import { migrateCanvasMaskResources, type CanvasMaskResources } from "../image-m
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 import { createCanvasProjectCopy, nextCanvasProjectCopyTitle } from "../utils/canvas-project-copy";
 import { isLocalImageUploadNode } from "../utils/canvas-local-image-upload";
+import { readCanvasProjectRecoverySnapshots, removeCanvasProjectRecoverySnapshot } from "../sync/canvas-project-recovery-snapshot";
+import { withCanvasProjectLocks } from "../sync/canvas-project-editor-lease";
 import { createCanvasProjectWriteTracer } from "../sync/canvas-project-write-trace";
 
 export type CanvasProject = {
@@ -74,6 +76,15 @@ export type CanvasStore = {
     startSync: (scope: string) => void;
     setProjectSyncBlocked: (id: string, blocked: boolean) => void;
     releaseProjectEditor: (id: string) => void;
+    reloadProjectFromStorage: (id: string) => Promise<void>;
+    waitForLocalPersistence: () => Promise<void>;
+    readPersistedProjects: () => Promise<CanvasProject[]>;
+    setProjectEditorOwned: (id: string, owned: boolean) => void;
+    withProjectMutation: <T>(ids: string[], action: () => Promise<T>) => Promise<T>;
+    registerProjectDraftReader: (id: string, reader: () => CanvasProjectPatch | null) => () => void;
+    preserveProjectDraft: (id: string, source?: CanvasProject) => Promise<string | null>;
+    reportProjectRecoveryError: (id: string, error: unknown) => void;
+    reportProjectPersistenceError: (id: string, error: unknown) => void;
     adoptImportedProjects: (projects: CanvasProjectDetail[], snapshots: Map<string, CanvasProject>) => void;
     applyLegacyImageNormalization: (id: string, capturedNodes: CanvasNodeData[], normalizedNodes: CanvasNodeData[]) => boolean;
     replaceProjectsFromServer: (projects: CanvasProjectDetail[], notifyEditor?: boolean) => void;
@@ -224,43 +235,135 @@ function sanitizeStoredCanvasValue(value: StorageValue<CanvasStore>) {
     return value;
 }
 
-export function createCanvasStorage(storage: CanvasDocumentStorage = canvasDocumentStorage): PersistStorage<CanvasStore> {
-    const cachedSummaries = new Map<string, CanvasSummary[]>();
-    const cachedProjects = new Map<string, CanvasStore["projects"]>();
-    const projectsKey = (name: string) => `${name}:projects`;
-    const syncKey = (name: string) => `${name}:sync`;
-    const summariesKey = (name: string) => `${name}:summaries`;
+type CanvasStoredRecord = { project: CanvasProject | null; sync: CanvasProjectSync | null };
+type CanvasPersistStorage = PersistStorage<CanvasStore> & {
+    readProject?: (name: string, id: string) => Promise<CanvasStoredRecord | null>;
+    readProjects?: (name: string) => Promise<CanvasProject[]>;
+};
 
+export function createCanvasStorage(storage: CanvasDocumentStorage = canvasDocumentStorage): CanvasPersistStorage {
+    const cached = new Map<string, Map<string, { raw: string | null; project: CanvasProject | null; sync: CanvasProjectSync | null }>>();
+    const cachedSummaries = new Map<string, CanvasSummary[]>();
+    const prefix = (name: string) => `${name}:v2:project:`;
+    const marker = (name: string) => `${name}:v2:migration`;
+    const summariesKey = (name: string) => `${name}:summaries`;
+    const remember = (name: string, id: string, raw: string | null, record: CanvasStoredRecord) => {
+        if (!cached.has(name)) cached.set(name, new Map());
+        cached.get(name)!.set(id, { raw, ...record });
+    };
+    const decode = (raw: string): CanvasStoredRecord => {
+        const record = JSON.parse(raw) as CanvasStoredRecord;
+        return { project: record.project ? sanitizeCanvasProject(record.project) : null, sync: record.sync ? restoredSync({ value: record.sync }).value : null };
+    };
+    const migrate = async (name: string) => {
+        const keys = [marker(name), `${name}:projects`, `${name}:sync`, name];
+        // Compare the legacy source in the same transaction as the migration.
+        // Older clients keep their keys; subsequent legacy edits become copies.
+        for (let attempt = 0; attempt < 4; attempt++) {
+            const [previous, projects, sync, aggregate] = await storage.getItems(keys);
+            const legacy = JSON.stringify([projects, sync, aggregate]);
+            if (previous === legacy) return;
+            const parseLegacy = (tuple: (string | null)[]) => {
+                const [p, m, whole] = tuple;
+                const state = p ? { projects: JSON.parse(p), projectSync: m ? JSON.parse(m) : {} } : whole ? JSON.parse(whole).state : { projects: [], projectSync: {} };
+                return sanitizeStoredCanvasValue({ state } as StorageValue<CanvasStore>).state;
+            };
+            const state = parseLegacy([projects, sync, aggregate]);
+            const old = previous ? parseLegacy(JSON.parse(previous)) : null;
+            const entries: [string, string][] = [[marker(name), legacy]];
+            const expected: [string, string | null][] = keys.map((key, i) => [key, [previous, projects, sync, aggregate][i]]);
+            const ids = new Set([...state.projects.map((p) => p.id), ...Object.keys(state.projectSync)]);
+            for (const id of ids) {
+                const source = state.projects.find((p) => p.id === id) || null;
+                let record: CanvasStoredRecord;
+                if (old) {
+                    if (!source) continue;
+                    const prior = old.projects.find((p) => p.id === source.id);
+                    if (sameCanvasJSON(prior, source) && sameCanvasJSON(old.projectSync[source.id], state.projectSync[source.id])) continue;
+                    const existing = await storage.getItem(prefix(name) + source.id);
+                    if (existing && sameCanvasJSON(decode(existing).project, source)) continue;
+                    const project = createCanvasProjectCopy(source, { id: nanoid(), title: `${Array.from(source.title).slice(0, 119).join("")}（旧版本恢复副本）`, now: new Date().toISOString() });
+                    record = { project, sync: { ...cleanSyncState(null), dirty: true, pending: true } };
+                } else record = { project: source, sync: state.projectSync[id] || null };
+                const key = prefix(name) + (record.project?.id || id);
+                if ((await storage.getItem(key)) !== null) continue;
+                entries.push([key, JSON.stringify(record)]);
+                expected.push([key, null]);
+            }
+            if (await storage.compareAndSetItems(entries, expected)) return;
+        }
+        throw new Error("本地画布正在被旧页面修改，请关闭旧页面后重试");
+    };
     return {
         getItem: async (name) => {
-            const [storedProjects, storedSync, storedSummaries, legacyValue] = await storage.getItems([projectsKey(name), syncKey(name), summariesKey(name), name]);
-            if (storedProjects) {
-                const projects = JSON.parse(storedProjects) as CanvasStore["projects"];
-                const projectSync = storedSync ? (JSON.parse(storedSync) as CanvasStore["projectSync"]) : {};
-                const summaries: CanvasSummary[] = storedSummaries ? JSON.parse(storedSummaries) : [];
-                const parsed = sanitizeStoredCanvasValue({ state: { projects, projectSync, summaries } } as StorageValue<CanvasStore>);
-                cachedProjects.set(name, parsed.state.projects);
-                cachedSummaries.set(name, summaries);
-                return parsed;
+            await migrate(name);
+            const entries = await storage.getEntries(prefix(name));
+            const projects: CanvasProject[] = [],
+                projectSync: Record<string, CanvasProjectSync> = {};
+            for (const [key, raw] of entries) {
+                const id = key.slice(prefix(name).length),
+                    record = decode(raw);
+                remember(name, id, raw, record);
+                if (record.project) projects.push(record.project);
+                if (record.sync) projectSync[id] = record.sync;
             }
-
-            if (!legacyValue) return null;
-            return sanitizeStoredCanvasValue(JSON.parse(legacyValue) as StorageValue<CanvasStore>);
+            const rawSummaries = await storage.getItem(summariesKey(name));
+            const summaries: CanvasSummary[] = rawSummaries ? JSON.parse(rawSummaries) : [];
+            cachedSummaries.set(name, summaries);
+            return { state: { projects, projectSync, summaries } } as StorageValue<CanvasStore>;
+        },
+        readProjects: async (name) => {
+            const entries = await storage.getEntries(prefix(name));
+            return entries.flatMap(([, raw]) => {
+                const p = decode(raw).project;
+                return p ? [p] : [];
+            });
+        },
+        readProject: async (name, id) => {
+            const raw = await storage.getItem(prefix(name) + id);
+            const record = raw ? decode(raw) : { project: null, sync: null };
+            remember(name, id, raw, record);
+            return raw ? record : null;
         },
         setItem: async (name, value) => {
-            const state = value.state as Pick<CanvasStore, "projects" | "projectSync" | "summaries">;
-            const entries: [string, string][] = [];
-            if (cachedProjects.get(name) !== state.projects) entries.push([projectsKey(name), JSON.stringify(state.projects)]);
-            if (cachedSummaries.get(name) !== state.summaries) entries.push([summariesKey(name), JSON.stringify(state.summaries || [])]);
-            entries.push([syncKey(name), JSON.stringify(state.projectSync)]);
-            await storage.setItems(entries);
-            cachedProjects.set(name, state.projects);
-            cachedSummaries.set(name, state.summaries);
+            const state = value.state;
+            const local = cached.get(name) || new Map();
+            const projects = new Map((state.projects || []).map((p) => [p.id, p]));
+            const ids = new Set([...local.keys(), ...projects.keys(), ...Object.keys(state.projectSync || {})]);
+            const entries: [string, string][] = [],
+                expected: [string, string | null][] = [];
+            const changed: [string, string, CanvasStoredRecord][] = [];
+            for (const id of ids) {
+                if (state.blockedProjectSync?.[id]) continue;
+                const record = { project: projects.get(id) || null, sync: state.projectSync?.[id] || null };
+                const prior = local.get(id);
+                // Unopened clean revisions belong to the catalog, not a local draft.
+                // A listing must not contend with another tab's newly loaded detail.
+                if (!record.project && !prior?.project && record.sync && !hasUnsyncedChanges(record.sync) && !hasUnsyncedChanges(prior?.sync)) continue;
+                if (prior?.project === record.project && prior?.sync === record.sync) continue;
+                const raw = JSON.stringify(record);
+                if (prior?.raw === raw) {
+                    remember(name, id, raw, record);
+                    continue;
+                }
+                const key = prefix(name) + id;
+                entries.push([key, raw]);
+                expected.push([key, prior?.raw ?? null]);
+                changed.push([id, raw, record]);
+            }
+            if (entries.length && !(await storage.compareAndSetItems(entries, expected))) throw new Error("画布本地版本已被其他页面更新，请保留草稿并重新取得编辑权");
+            changed.forEach(([id, raw, record]) => remember(name, id, raw, record));
+            // Catalog data cannot overwrite any document or request identity.
+            if (cachedSummaries.get(name) !== state.summaries) {
+                await storage.setItem(summariesKey(name), JSON.stringify(state.summaries || []));
+                cachedSummaries.set(name, state.summaries);
+            }
         },
         removeItem: async (name) => {
-            cachedProjects.delete(name);
+            const entries = await storage.getEntries(prefix(name));
+            await Promise.all(entries.map(([key]) => storage.removeItem(key)));
+            cached.delete(name);
             cachedSummaries.delete(name);
-            await Promise.all([storage.removeItem(projectsKey(name)), storage.removeItem(syncKey(name)), storage.removeItem(summariesKey(name)), storage.removeItem(name)]);
         },
     };
 }
@@ -368,11 +471,15 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
     let sessionGeneration = 0;
     const writerGenerations = new Map<string, number>();
     const releasedEditors = new Set<string>();
-    const persistence = withPersistenceBarrier(options.storage || createCanvasStorage());
+    const ownedEditors = new Set<string>();
+    const draftReaders = new Map<string, () => CanvasProjectPatch | null>();
+    const backupWrites = new Map<string, { id: string; write: Promise<string | null> }>();
+    const localStorage = (options.storage || createCanvasStorage()) as CanvasPersistStorage;
+    const persistence = withPersistenceBarrier(localStorage);
     let subscribedToOnline = false;
 
     const store = create<CanvasStore>()(
-        persist(
+        persist<CanvasStore>(
             (set, get) => {
                 const updateSync = (id: string, updater: (current: CanvasProjectSync | undefined) => CanvasProjectSync | undefined) => {
                     set((state) => {
@@ -620,6 +727,18 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                               .map(([id]) => [id, true as const]),
                                       );
                             set({ projectSync, blockedProjectSync, hydrated: true, syncScope: scope, syncEnabled: false, bootstrapStatus: guest ? "ready" : "loading", bootstrapError: null, readyForCanvasMutations: guest });
+                            if (!guest) {
+                                const snapshots = await readCanvasProjectRecoverySnapshots(new Set(get().projects.map((p) => p.id)));
+                                for (const snapshot of snapshots) {
+                                    if (get().syncScope !== scope) break;
+                                    try {
+                                        await get().preserveProjectDraft(snapshot.project.id, snapshot.project);
+                                        await removeCanvasProjectRecoverySnapshot(snapshot.key);
+                                    } catch (error) {
+                                        get().reportProjectRecoveryError(snapshot.project.id, error);
+                                    }
+                                }
+                            }
                         }
                     },
                     markBootstrapUnavailable: (scope, error) => {
@@ -641,7 +760,11 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                     },
                     startSync: (scope) => {
                         const enabled = Boolean(scope) && scope !== CANVAS_GUEST_SCOPE;
-                        if (get().syncScope !== scope) sessionGeneration++;
+                        if (get().syncScope !== scope) {
+                            sessionGeneration++;
+                            ownedEditors.clear();
+                            draftReaders.clear();
+                        }
                         set({ syncScope: scope || null, syncEnabled: enabled, bootstrapStatus: "ready", bootstrapError: null, readyForCanvasMutations: true });
                         if (!enabled) return;
                         if (!subscribedToOnline) {
@@ -664,6 +787,98 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         });
                         const sync = get().projectSync[id];
                         if (!blocked && get().syncEnabled && sync && !sync.conflict && (sync.dirty || sync.pending)) scheduleSave(id);
+                    },
+                    registerProjectDraftReader: (id, reader) => {
+                        draftReaders.set(id, reader);
+                        return () => {
+                            if (draftReaders.get(id) === reader) draftReaders.delete(id);
+                        };
+                    },
+                    reportProjectPersistenceError: (id, error) => {
+                        updateSync(id, (sync) => (sync ? { ...sync, dirty: true, error: `本地保存失败：${error instanceof Error ? error.message : String(error)}` } : sync));
+                    },
+                    reportProjectRecoveryError: (id, error) => {
+                        updateSync(id, (sync) => (sync ? { ...sync, error: `本地备份失败：${error instanceof Error ? error.message : String(error)}` } : sync));
+                    },
+                    preserveProjectDraft: (id, source) => {
+                        const state = get(),
+                            scope = state.syncScope;
+                        const original = source || state.projects.find((p) => p.id === id);
+                        if (!original || original.id !== id || !scope) return Promise.resolve(null);
+                        const snapshot = structuredClone(original);
+                        const key = JSON.stringify([scope, id, snapshot]);
+                        const existing = backupWrites.get(key);
+                        if (existing && state.projects.some((p) => p.id === existing.id))
+                            return existing.write.then(async (copyId) => {
+                                if (get().syncScope !== scope) throw new Error("画布账号已变更，请重新进入");
+                                // Another tab may have deleted a completed backup. Its in-memory
+                                // presence alone cannot authorize replacing the original draft.
+                                const projects = await get().readPersistedProjects();
+                                if (projects.some((p) => p.id === copyId)) return copyId;
+                                if (backupWrites.get(key) === existing) backupWrites.delete(key);
+                                return get().preserveProjectDraft(id, snapshot);
+                            });
+                        const copyId = nanoid();
+                        const copy = createCanvasProjectCopy(snapshot, { id: copyId, title: `${Array.from(snapshot.title).slice(0, 122).join("")}（冲突副本）`, now: new Date().toISOString() });
+                        const saving = (async () => {
+                            set((state) => ({ projects: [...state.projects, copy], projectSync: { ...state.projectSync, [copyId]: { ...cleanSyncState(null), dirty: true, pending: true } } }));
+                            await persistence.waitForLatestWrite();
+                            if (get().syncScope !== scope) return copyId;
+                            queueChange(copyId);
+                            return copyId;
+                        })();
+                        backupWrites.set(key, { id: copyId, write: saving });
+                        void saving.catch(() => {
+                            backupWrites.delete(key);
+                        });
+                        return saving;
+                    },
+                    setProjectEditorOwned: (id, owned) => {
+                        if (owned) ownedEditors.add(id);
+                        else ownedEditors.delete(id);
+                    },
+                    withProjectMutation: async (ids, action) => {
+                        const scope = get().syncScope;
+                        const unlocked = ids.filter((id) => !ownedEditors.has(id));
+                        return withCanvasProjectLocks(unlocked, writeTracer.next("retry").tabId, async () => {
+                            try {
+                                for (const id of unlocked) {
+                                    get().setProjectSyncBlocked(id, true);
+                                    await get().reloadProjectFromStorage(id);
+                                    if (get().syncScope !== scope) throw new Error("画布账号已变更，请重新进入");
+                                    get().setProjectSyncBlocked(id, false);
+                                }
+                                const result = await action();
+                                await persistence.waitForLatestWrite();
+                                for (const id of unlocked) await get().retryPendingSaves(id);
+                                return result;
+                            } finally {
+                                for (const id of unlocked) get().releaseProjectEditor(id);
+                                await persistence.waitForLatestWrite();
+                            }
+                        });
+                    },
+                    waitForLocalPersistence: () => persistence.waitForLatestWrite(),
+                    readPersistedProjects: async (): Promise<CanvasProject[]> => {
+                        await persistence.waitForLatestWrite();
+                        const name = store.persist.getOptions().name!;
+                        return localStorage.readProjects ? localStorage.readProjects(name) : get().projects;
+                    },
+                    reloadProjectFromStorage: async (id) => {
+                        const scope = get().syncScope;
+                        await persistence.waitForLatestWrite();
+                        const name = store.persist.getOptions().name!;
+                        const record = localStorage.readProject ? await localStorage.readProject(name, id) : null;
+                        if (get().syncScope !== scope) throw new Error("画布账号已变更，请重新进入");
+                        if (!record) return;
+                        set((state) => {
+                            const projectSync = { ...state.projectSync };
+                            if (record.sync) projectSync[id] = record.sync;
+                            else delete projectSync[id];
+                            const current = state.projects.find((p) => p.id === id);
+                            if (sameCanvasJSON(current, record.project) && sameCanvasJSON(state.projectSync[id], record.sync)) return state;
+                            return { projects: [...state.projects.filter((p) => p.id !== id), ...(record.project ? [record.project] : [])], projectSync, canonicalGeneration: state.canonicalGeneration + 1 };
+                        });
                     },
                     releaseProjectEditor: (id) => {
                         releasedEditors.add(id);
@@ -792,6 +1007,18 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             const record = await api.get(id);
                             if (!isCurrent()) throw new Error("画布刷新已失效，请重试");
                             const serverProject = localProject(record);
+                            for (let attempt = 0; ; attempt++) {
+                                const local = get().projects.find((p) => p.id === id);
+                                if (!local) break;
+                                const snapshot = { ...local, ...(draftReaders.get(id)?.() || {}) };
+                                const differs = snapshot.title !== serverProject.title || !sameCanvasJSON(canvasDocument(snapshot), canvasDocument(serverProject)) || snapshot.nodes.some(isLocalImageUploadNode);
+                                if (!differs) break;
+                                if (attempt >= 4) throw new Error("画布仍在变化，请停止编辑后重试加载服务器版本");
+                                await get().preserveProjectDraft(id, snapshot);
+                                if (!isCurrent()) throw new Error("画布刷新已失效，请重试");
+                                const latest = get().projects.find((p) => p.id === id);
+                                if (latest && sameCanvasJSON(snapshot, { ...latest, ...(draftReaders.get(id)?.() || {}) })) break;
+                            }
                             set((state) => {
                                 const index = state.projects.findIndex((item) => item.id === id);
                                 const project = index >= 0 ? preserveLocalImageUploads(serverProject, state.projects[index]!) : serverProject;
@@ -805,6 +1032,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                     canonicalGeneration: state.canonicalGeneration + 1,
                                 };
                             });
+                            await persistence.waitForLatestWrite();
                         } catch (error) {
                             if (isCurrent()) updateSync(id, (current) => (current ? { ...current, saving: false, error: error instanceof Error ? error.message : "画布刷新失败" } : current));
                             throw error;
@@ -931,6 +1159,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         projects: state.projects,
                         summaries: state.summaries,
                         projectSync: state.projectSync,
+                        blockedProjectSync: state.blockedProjectSync,
                     }) as StorageValue<CanvasStore>["state"],
             },
         ),

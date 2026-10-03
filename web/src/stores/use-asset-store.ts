@@ -257,8 +257,17 @@ export const useAssetStore = create<AssetStore>()(
             cleanupImages: (extra) => {
                 window.setTimeout(async () => {
                     const { useCanvasStore } = await import("@/app/(user)/canvas/stores/use-canvas-store");
-                    await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
-                    await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
+                    try {
+                        const state = useCanvasStore.getState(),
+                            scope = state.syncScope;
+                        const persisted = await state.readPersistedProjects();
+                        if (useCanvasStore.getState().syncScope !== scope) return;
+                        const data = { assets: get().assets, projects: useCanvasStore.getState().projects, persisted, extra };
+                        await cleanupUnusedImages(data);
+                        await cleanupUnusedMedia(data);
+                    } catch (error) {
+                        console.warn("读取画布缓存保护清单失败，已跳过清理", error instanceof Error ? error.message : String(error));
+                    }
                 }, 0);
             },
             hydrate: async (uid) => {

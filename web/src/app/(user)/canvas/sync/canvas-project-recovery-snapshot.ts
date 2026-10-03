@@ -7,32 +7,21 @@ const recoverySnapshots = localforage.createInstance({
     storeName: "canvas_recovery_snapshots",
 });
 const recoverySnapshotsReady = typeof window === "undefined" ? Promise.resolve() : recoverySnapshots.setDriver([recoverySnapshots.INDEXEDDB]);
-const retentionMs = 24 * 60 * 60 * 1000;
+// Legacy snapshots had no user field. Import only IDs already present in the
+// current user's local documents; retain unmatched snapshots for manual recovery.
+type RecoverySnapshot = { savedAt: number; project: CanvasProject };
 
-type RecoverySnapshot = {
-    savedAt: number;
-    project: CanvasProject;
-};
-
-function snapshotKey(projectId: string, tabId: string) {
-    return `project:${projectId}:tab:${tabId}`;
-}
-
-export async function saveCanvasProjectRecoverySnapshot(projectId: string, tabId: string, project: CanvasProject) {
+export async function readCanvasProjectRecoverySnapshots(projectIds: Set<string>) {
+    if (typeof window === "undefined" || !projectIds.size) return [];
     await recoverySnapshotsReady;
-    await recoverySnapshots.setItem<RecoverySnapshot>(snapshotKey(projectId, tabId), {
-        savedAt: Date.now(),
-        project,
+    const result: { key: string; project: CanvasProject }[] = [];
+    await recoverySnapshots.iterate<RecoverySnapshot, void>((snapshot, key) => {
+        if (snapshot?.project && projectIds.has(snapshot.project.id) && Array.isArray(snapshot.project.nodes) && Array.isArray(snapshot.project.connections)) result.push({ key, project: snapshot.project });
     });
+    return result;
 }
 
-export async function cleanupExpiredCanvasProjectRecoverySnapshots(now = Date.now()) {
+export async function removeCanvasProjectRecoverySnapshot(key: string) {
     await recoverySnapshotsReady;
-    const keys = await recoverySnapshots.keys();
-    await Promise.all(
-        keys.map(async (key) => {
-            const snapshot = await recoverySnapshots.getItem<RecoverySnapshot>(key);
-            if (!snapshot || snapshot.savedAt + retentionMs <= now) await recoverySnapshots.removeItem(key);
-        }),
-    );
+    await recoverySnapshots.removeItem(key);
 }

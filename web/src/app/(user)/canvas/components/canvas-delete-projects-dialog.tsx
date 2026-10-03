@@ -1,20 +1,35 @@
 "use client";
 
-import { Button, Modal } from "antd";
+import { App, Button, Modal } from "antd";
+
+import { useState } from "react";
 
 import { useAssetStore } from "@/stores/use-asset-store";
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { useCanvasUiStore } from "../stores/use-canvas-ui-store";
 
 export function CanvasDeleteProjectsDialog() {
+    const { message } = App.useApp();
+    const [deleting, setDeleting] = useState(false);
+    const withProjectMutation = useCanvasStore((state) => state.withProjectMutation);
     const ids = useCanvasUiStore((state) => state.deleteProjectIds);
     const setDeleteIds = useCanvasUiStore((state) => state.setDeleteProjectIds);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const cleanupImages = useAssetStore((state) => state.cleanupImages);
-    const confirm = () => {
-        deleteProjects(ids);
-        cleanupImages();
-        setDeleteIds([]);
+    const confirm = async () => {
+        if (deleting) return;
+        setDeleting(true);
+        try {
+            await withProjectMutation(ids, async () => {
+                deleteProjects(ids);
+            });
+            cleanupImages();
+            setDeleteIds([]);
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "删除画布失败");
+        } finally {
+            setDeleting(false);
+        }
     };
 
     return (
@@ -26,7 +41,7 @@ export function CanvasDeleteProjectsDialog() {
             footer={
                 <>
                     <Button onClick={() => setDeleteIds([])}>取消</Button>
-                    <Button danger type="primary" onClick={confirm}>
+                    <Button danger type="primary" loading={deleting} onClick={() => void confirm()}>
                         删除
                     </Button>
                 </>

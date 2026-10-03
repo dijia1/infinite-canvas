@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Tag } from "antd";
+import { App, Button, Tag } from "antd";
 import { Check, CloudOff, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { EditorSyncStatus } from "@/components/editor-sync-status";
 import { useState } from "react";
@@ -17,7 +17,7 @@ export type CanvasSyncDescription = {
 const canvasDocumentTooLargeMessage = "画板数据超过保存上限（4MB）";
 
 export function describeCanvasSync(sync: CanvasProjectSync, blocked = false, pendingDocument = false): CanvasSyncDescription {
-    if (blocked) return { label: "另一标签页正在编辑", kind: "blocked", presentation: "tag", refreshable: false };
+    if (blocked) return { label: sync.error?.startsWith("本地备份失败") ? "本地备份失败" : "另一标签页正在编辑", kind: "blocked", presentation: "tag", refreshable: false };
     if (sync.conflict) return { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true };
     if (sync.error) return { label: sync.error.includes(canvasDocumentTooLargeMessage) ? canvasDocumentTooLargeMessage : "保存失败", kind: "error", presentation: "tag", refreshable: false };
     if (sync.offline && (sync.dirty || sync.pending || pendingDocument)) return { label: "离线待同步", kind: "offline", presentation: "tag", refreshable: false };
@@ -82,6 +82,8 @@ export function CanvasBootstrapFeedback() {
 }
 
 export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { projectId: string; pendingDocument?: boolean }) {
+    const { modal, message } = App.useApp();
+    const withProjectMutation = useCanvasStore((state) => state.withProjectMutation);
     const syncEnabled = useCanvasStore((state) => state.syncEnabled);
     const sync = useCanvasStore((state) => state.projectSync[projectId]);
     const blocked = useCanvasStore((state) => Boolean(state.blockedProjectSync[projectId]));
@@ -94,9 +96,9 @@ export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { pro
     const refresh = async () => {
         setRefreshing(true);
         try {
-            await refreshProjectFromServer(projectId);
-        } catch {
-            // The store keeps the project and exposes the refresh error through sync metadata.
+            await withProjectMutation([projectId], () => refreshProjectFromServer(projectId));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "画布刷新失败");
         } finally {
             setRefreshing(false);
         }
@@ -118,7 +120,22 @@ export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { pro
                 </Button>
             ) : null}
             {description.refreshable ? (
-                <Button type="link" size="small" loading={refreshing} icon={<RefreshCw className="size-3" />} className="h-6 px-1 text-xs" onClick={() => void refresh()}>
+                <Button
+                    type="link"
+                    size="small"
+                    loading={refreshing}
+                    icon={<RefreshCw className="size-3" />}
+                    className="h-6 px-1 text-xs"
+                    onClick={() =>
+                        modal.confirm({
+                            title: "加载服务器版本？",
+                            content: "内容不一致时，会先将本地修改保存为冲突副本。未上传图片仍保留在当前浏览器，需要进入副本继续上传。",
+                            okText: "保留副本并加载",
+                            cancelText: "取消",
+                            onOk: refresh,
+                        })
+                    }
+                >
                     加载服务器版本
                 </Button>
             ) : null}

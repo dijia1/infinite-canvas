@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { StateStorage, StorageValue } from "zustand/middleware";
+import type { StorageValue } from "zustand/middleware";
+import type { CanvasDocumentStorage } from "@/lib/localforage-storage";
 import { createFileStorageOperations } from "@/services/file-storage";
 import { createImageStorageOperations, type ImageCacheStore } from "@/services/image-storage";
 import { CanvasNodeType } from "../types";
@@ -35,7 +36,17 @@ class MemoryImageStore implements ImageCacheStore {
 
 function memoryStateStorage() {
     const values = new Map<string, string>();
-    const storage: StateStorage = {
+    const storage: CanvasDocumentStorage = {
+        getEntries: async (prefix) => [...values].filter(([key]) => key.startsWith(prefix)),
+        getItems: async (keys) => keys.map((key) => values.get(key) ?? null),
+        setItems: async (entries) => {
+            entries.forEach(([key, value]) => values.set(key, value));
+        },
+        compareAndSetItems: async (entries, expected) => {
+            if (expected.some(([key, value]) => (values.get(key) ?? null) !== value)) return false;
+            entries.forEach(([key, value]) => values.set(key, value));
+            return true;
+        },
         getItem: async (key) => values.get(key) ?? null,
         setItem: async (key, value) => {
             values.set(key, value);

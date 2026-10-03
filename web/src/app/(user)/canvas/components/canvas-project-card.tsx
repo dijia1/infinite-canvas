@@ -18,6 +18,7 @@ type CanvasProjectCardAction = "copy" | "rename" | "share";
 export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
     const { message } = App.useApp();
     const router = useRouter();
+    const withProjectMutation = useCanvasStore((state) => state.withProjectMutation);
     const ensureProjectDetail = useCanvasStore((state) => state.ensureProjectDetail);
     const duplicateProject = useCanvasStore((state) => state.duplicateProject);
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -44,16 +45,18 @@ export function CanvasProjectCard({ project }: { project: CanvasSummary }) {
     const editing = editingId === project.id;
     const shareStatus = shareCanvasProjectStatus(localProject, projectSync);
     const open = () => router.push(appPath(`/canvas/${project.id}`));
-    const runDetailAction = async (kind: CanvasProjectCardAction, callback: (context: Awaited<ReturnType<typeof loadCanvasProjectForCardAction>>) => void, revalidate = false) => {
+    const runDetailAction = async (kind: CanvasProjectCardAction, callback: (context: Awaited<ReturnType<typeof loadCanvasProjectForCardAction>>) => Promise<void> | void, revalidate = false) => {
         let succeeded = false;
         const generation = actionGeneration.current;
         await actionGate.run(async () => {
             setAction(kind);
             try {
-                const context = await loadCanvasProjectForCardAction({ id: project.id, revalidate, ensureProjectDetail, readState: useCanvasStore.getState });
-                if (actionGeneration.current !== generation) return;
-                callback(context);
-                succeeded = true;
+                await withProjectMutation([project.id], async () => {
+                    const context = await loadCanvasProjectForCardAction({ id: project.id, revalidate, ensureProjectDetail, readState: useCanvasStore.getState });
+                    if (actionGeneration.current !== generation) return;
+                    await callback(context);
+                    succeeded = true;
+                });
             } catch (error) {
                 if (actionGeneration.current === generation) message.error(error instanceof Error ? error.message : "画布加载失败，请重试");
             } finally {

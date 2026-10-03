@@ -36,6 +36,7 @@ function environment(ensureProjectDetail: () => Promise<typeof loadedProject>) {
     let duplicateCalls = 0;
     const state = {
         ensureProjectDetail,
+        withProjectMutation: async (_ids: string[], action: () => Promise<void>) => action(),
         duplicateProject: () => {
             duplicateCalls += 1;
             return "copy-1";

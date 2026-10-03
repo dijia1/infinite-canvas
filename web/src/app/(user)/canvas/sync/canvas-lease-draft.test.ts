@@ -17,15 +17,32 @@ for (const conflict of [false, true]) {
         hasConflict = conflict;
         const url = new URL("./use-canvas-project-editor-lease.ts", import.meta.url);
         const preserveLocalDraft = sourceBehavior(url, {
-            useCanvasStore: { getState: () => ({ projects: [stored], projectSync: { P: { conflict: hasConflict } } }) },
-            projectId: "P", tabId: "T", readPendingDocumentRef: { current: publisher.getPendingDocument },
-            saveCanvasProjectRecoverySnapshot: async (_project: string, _tab: string, document: unknown) => { recovery = document; },
-            cleanupExpiredCanvasProjectRecoverySnapshots: async () => undefined,
+            useCanvasStore: {
+                getState: () => ({
+                    projects: [stored],
+                    projectSync: { P: { conflict: hasConflict } },
+                    preserveProjectDraft: async (_id: string, document: unknown) => {
+                        recovery = document;
+                    },
+                }),
+            },
+            projectId: "P",
+            tabId: "T",
+            readPendingDocumentRef: { current: publisher.getPendingDocument },
         }).named("preserveLocalDraft");
         const loseLease = sourceBehavior(url, {
-            disposed: false, ownsEditor: true, projectId: "P",
-            setProjectSyncBlocked: () => { blocked = true; }, preserveLocalDraft,
-            refreshProjectFromServer: async () => undefined,
+            disposed: false,
+            ownsEditor: true,
+            projectId: "P",
+            setProjectSyncBlocked: () => {
+                blocked = true;
+            },
+            preserveLocalDraft,
+            refreshProjectFromServer: async () => {
+                assert.ok(recovery, "refreshed before copy became durable");
+            },
+            setProjectEditorOwned: () => {},
+            useCanvasStore: { getState: () => ({ reportProjectRecoveryError: () => assert.fail("backup failed") }) },
         }).named("becomeReadonly");
         loseLease();
         publisher.cancel();

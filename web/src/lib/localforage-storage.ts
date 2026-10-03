@@ -45,6 +45,8 @@ export const localForageStorage: StateStorage = {
 export type CanvasDocumentStorage = StateStorage & {
     getItems: (keys: string[]) => Promise<(string | null)[]>;
     setItems: (entries: [string, string][]) => Promise<void>;
+    getEntries: (prefix: string) => Promise<[string, string][]>;
+    compareAndSetItems: (entries: [string, string][], expected: [string, string | null][]) => Promise<boolean>;
 };
 
 async function canvasTransaction<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore, result: (value: T) => void) => void): Promise<T> {
@@ -94,6 +96,42 @@ async function canvasTransaction<T>(mode: IDBTransactionMode, run: (store: IDBOb
 }
 
 export const canvasDocumentStorage: CanvasDocumentStorage = {
+    getEntries: async (prefix) => {
+        if (typeof window === "undefined") return [];
+        return canvasTransaction("readonly", (store, result) => {
+            const entries: [string, string][] = [];
+            const request = store.openCursor(IDBKeyRange.bound(prefix, prefix + "\uffff"));
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) return;
+                entries.push([String(cursor.key), cursor.value]);
+                cursor.continue();
+            };
+            result(entries);
+        });
+    },
+    compareAndSetItems: async (entries, expected) => {
+        if (typeof window === "undefined") return true;
+        return canvasTransaction("readwrite", (store, result) => {
+            let remaining = expected.length,
+                matches = true;
+            const commit = () => {
+                if (matches) entries.forEach(([key, value]) => store.put(value, key));
+                result(matches);
+            };
+            if (!remaining) {
+                commit();
+                return;
+            }
+            expected.forEach(([key, value]) => {
+                const request = store.get(key);
+                request.onsuccess = () => {
+                    if ((request.result ?? null) !== value) matches = false;
+                    if (--remaining === 0) commit();
+                };
+            });
+        });
+    },
     getItems: async (keys) => {
         if (typeof window === "undefined") return keys.map(() => null);
         return canvasTransaction("readonly", (store, result) => {

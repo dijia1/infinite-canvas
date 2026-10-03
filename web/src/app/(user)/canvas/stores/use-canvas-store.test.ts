@@ -456,7 +456,7 @@ test("persists local projects and sync metadata before the server debounce", asy
     assert.equal(persisted.projectSync["project-1"]?.pending, true);
 });
 
-test("does not reserialize project documents when only save metadata changes", async () => {
+test("commits only the changed canvas document and sync record together", async () => {
     const values = new Map<string, string>();
     const writes: string[] = [];
     const backingStorage: StateStorage = {
@@ -471,6 +471,12 @@ test("does not reserialize project documents when only save metadata changes", a
     };
     const storage = createCanvasStorage({
         ...backingStorage,
+        getEntries: async (prefix) => [...values].filter(([key]) => key.startsWith(prefix)),
+        compareAndSetItems: async (entries, expected) => {
+            if (expected.some(([key, value]) => (values.get(key) ?? null) !== value)) return false;
+            for (const [key, value] of entries) await backingStorage.setItem(key, value);
+            return true;
+        },
         getItems: async (keys) => Promise.all(keys.map((key) => backingStorage.getItem(key))),
         setItems: async (entries) => {
             for (const [key, value] of entries) await backingStorage.setItem(key, value);
@@ -491,8 +497,8 @@ test("does not reserialize project documents when only save metadata changes", a
         state: { projects, projectSync: { "project-1": { serverRevision: 1, dirty: true, pending: true, saving: false, offline: false, error: null, conflict: false, operation: "save" } } },
     } as unknown as StorageValue<CanvasStore>);
 
-    assert.equal(writes.filter((name) => name === "canvas:projects").length, 1);
-    assert.equal(writes.filter((name) => name === "canvas:sync").length, 2);
+    assert.equal(writes.filter((name) => name === "canvas:v2:project:project-1").length, 2);
+    assert.equal(writes.filter((name) => name === "canvas:sync").length, 0);
     const restored = await storage.getItem("canvas");
     assert.equal((restored?.state as CanvasStore).projects[0]?.title, "本地画布");
     assert.equal((restored?.state as CanvasStore).projectSync["project-1"]?.pending, true);

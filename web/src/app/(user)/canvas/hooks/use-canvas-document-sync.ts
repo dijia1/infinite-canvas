@@ -6,12 +6,19 @@ import { useCanvasStore, type CanvasProject } from "../stores/use-canvas-store";
 export type CanvasEditorDocument = Pick<CanvasProject, "nodes" | "connections" | "maskResources" | "backgroundMode" | "showImageInfo" | "viewport">;
 
 const sameDocument = (a: CanvasEditorDocument, b: CanvasEditorDocument) =>
-    a.nodes === b.nodes && a.connections === b.connections && a.maskResources === b.maskResources &&
-    a.backgroundMode === b.backgroundMode && a.showImageInfo === b.showImageInfo &&
-    a.viewport.x === b.viewport.x && a.viewport.y === b.viewport.y && a.viewport.k === b.viewport.k;
+    a.nodes === b.nodes &&
+    a.connections === b.connections &&
+    a.maskResources === b.maskResources &&
+    a.backgroundMode === b.backgroundMode &&
+    a.showImageInfo === b.showImageInfo &&
+    a.viewport.x === b.viewport.x &&
+    a.viewport.y === b.viewport.y &&
+    a.viewport.k === b.viewport.k;
 
 export function createCanvasDocumentPublisher({
-    publish, isCurrent, onPendingChange = () => undefined,
+    publish,
+    isCurrent,
+    onPendingChange = () => undefined,
     schedule = (callback: () => void) => setTimeout(callback, 500),
     clear = (timer: ReturnType<typeof setTimeout>) => clearTimeout(timer),
 }: {
@@ -43,10 +50,15 @@ export function createCanvasDocumentPublisher({
         setPending(false);
     };
     return {
-        get pending() { return pending; },
-        getPendingDocument: () => pending ? latest : null,
+        get pending() {
+            return pending;
+        },
+        getPendingDocument: () => (pending ? latest : null),
         acceptBaseline(document: CanvasEditorDocument) {
-            cancelTimer(); latest = document; published = document; setPending(false);
+            cancelTimer();
+            latest = document;
+            published = document;
+            setPending(false);
         },
         capture(document: CanvasEditorDocument, baseline: CanvasEditorDocument) {
             // Capture current editor data for recovery even while publication is blocked.
@@ -66,20 +78,31 @@ export function createCanvasDocumentPublisher({
             }
             flush();
         },
-        cancel() { cancelTimer(); setPending(false); },
+        cancel() {
+            cancelTimer();
+            setPending(false);
+        },
     };
 }
 
 export function isCanvasDocumentPublicationCurrent(
     state: { syncScope: string | null; canonicalGeneration: number; readyForCanvasMutations: boolean; blockedProjectSync: Record<string, true>; projects: { id: string }[] },
-    projectId: string, syncScope: string | null, canonicalGeneration: number,
+    projectId: string,
+    syncScope: string | null,
+    canonicalGeneration: number,
 ) {
-    return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration &&
-        state.readyForCanvasMutations && !state.blockedProjectSync[projectId] &&
-        state.projects.some((project) => project.id === projectId);
+    return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration && state.readyForCanvasMutations && !state.blockedProjectSync[projectId] && state.projects.some((project) => project.id === projectId);
 }
 
-export function useCanvasDocumentSync({ projectId, syncScope, canonicalGeneration, isReady, document, baseline, getViewport }: {
+export function useCanvasDocumentSync({
+    projectId,
+    syncScope,
+    canonicalGeneration,
+    isReady,
+    document,
+    baseline,
+    getViewport,
+}: {
     projectId: string;
     syncScope: string | null;
     canonicalGeneration: number;
@@ -89,14 +112,34 @@ export function useCanvasDocumentSync({ projectId, syncScope, canonicalGeneratio
     getViewport: () => CanvasEditorDocument["viewport"] | undefined;
 }) {
     const [pendingDocument, setPendingDocument] = useState(false);
-    const publisher = useMemo(() => createCanvasDocumentPublisher({
-        publish: (next) => useCanvasStore.getState().updateProject(projectId, next),
-        isCurrent: () => {
-            const state = useCanvasStore.getState();
-            return isCanvasDocumentPublicationCurrent(state, projectId, syncScope, canonicalGeneration);
-        },
-        onPendingChange: setPendingDocument,
-    }), [projectId, syncScope, canonicalGeneration]);
+    const publisher = useMemo(
+        () =>
+            createCanvasDocumentPublisher({
+                publish: (next) => {
+                    const state = useCanvasStore.getState();
+                    state.updateProject(projectId, next);
+                    void state.waitForLocalPersistence().catch((error) => {
+                        const current = useCanvasStore.getState();
+                        if (current.syncScope === syncScope && current.canonicalGeneration === canonicalGeneration) current.reportProjectPersistenceError(projectId, error);
+                    });
+                },
+                isCurrent: () => {
+                    const state = useCanvasStore.getState();
+                    return isCanvasDocumentPublicationCurrent(state, projectId, syncScope, canonicalGeneration);
+                },
+                onPendingChange: setPendingDocument,
+            }),
+        [projectId, syncScope, canonicalGeneration],
+    );
+
+    useLayoutEffect(
+        () =>
+            useCanvasStore.getState().registerProjectDraftReader(projectId, () => {
+                const state = useCanvasStore.getState();
+                return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration ? publisher.getPendingDocument() : null;
+            }),
+        [projectId, syncScope, canonicalGeneration, publisher],
+    );
 
     useLayoutEffect(() => {
         if (isReady && baseline) publisher.capture(document, baseline);

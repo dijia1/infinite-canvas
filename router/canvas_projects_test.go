@@ -164,6 +164,20 @@ func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 	request.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d72")
 	request.Header.Set("X-Canvas-Request-Seq", "2")
 	request.Header.Set("X-Canvas-Save-Reason", "autosave")
+	matched := httptest.NewRecorder()
+	servePortalRequest(matched, request)
+	if matched.Code != http.StatusOK || !strings.Contains(output.String(), "canvas_project_write outcome=state_matched") {
+		t.Fatalf("matching stale state = %d/%s, log=%q", matched.Code, matched.Body.String(), output.String())
+	}
+
+	output.Reset()
+	request = httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(`{"revision":1,"title":"不同的本地草稿","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Portal-User-Uid", owner)
+	request.Header.Set("X-Canvas-Tab-Id", "tab-1")
+	request.Header.Set("X-Canvas-Request-Id", "c75e2ccf-40e9-4d29-bbb9-b5de9ee39d73")
+	request.Header.Set("X-Canvas-Request-Seq", "3")
+	request.Header.Set("X-Canvas-Save-Reason", "autosave")
 	conflict := httptest.NewRecorder()
 	servePortalRequest(conflict, request)
 	if conflict.Code != http.StatusConflict {
@@ -178,7 +192,7 @@ func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 	if err := json.Unmarshal(decodeCanvasResponse(t, conflict).Data, &conflictData); err != nil || conflictData.Code != "canvas_revision_conflict" || conflictData.ProjectID != id || conflictData.RequestedRevision != 1 || conflictData.ServerRevision != 2 {
 		t.Fatalf("conflict payload = %s, decoded=%#v, err=%v", conflict.Body.String(), conflictData, err)
 	}
-	if !strings.Contains(output.String(), "canvas_project_write outcome=conflict") || !strings.Contains(output.String(), "requested_revision=1") || !strings.Contains(output.String(), "server_revision=2") || !strings.Contains(output.String(), `request_id="c75e2ccf-40e9-4d29-bbb9-b5de9ee39d72"`) {
+	if !strings.Contains(output.String(), "canvas_project_write outcome=conflict") || !strings.Contains(output.String(), "requested_revision=1") || !strings.Contains(output.String(), "server_revision=2") || !strings.Contains(output.String(), `request_id="c75e2ccf-40e9-4d29-bbb9-b5de9ee39d73"`) {
 		t.Fatalf("conflict log = %q", output.String())
 	}
 }
@@ -259,8 +273,8 @@ func TestCanvasSaveRequestRetentionRemovesOnlyExpiredRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	expired := model.CanvasSaveRequest{RequestID: "d75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)}
-	recent := model.CanvasSaveRequest{RequestID: "e75e2ccf-40e9-4d29-bbb9-b5de9ee39d72", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-23 * time.Hour).Format(time.RFC3339Nano)}
+	expired := model.CanvasSaveRequest{RequestID: "d75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339Nano)}
+	recent := model.CanvasSaveRequest{RequestID: "e75e2ccf-40e9-4d29-bbb9-b5de9ee39d72", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)}
 	if err := database.Create(&expired).Error; err != nil {
 		t.Fatal(err)
 	}

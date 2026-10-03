@@ -5,7 +5,6 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { CanvasEditorDocument } from "../hooks/use-canvas-document-sync";
 import { useCanvasStore } from "../stores/use-canvas-store";
 import { canvasProjectEditorLeaseKey, claimCanvasProjectEditorLease, readCanvasProjectEditorLease } from "./canvas-project-editor-lease";
-import { cleanupExpiredCanvasProjectRecoverySnapshots, saveCanvasProjectRecoverySnapshot } from "./canvas-project-recovery-snapshot";
 import { createCanvasProjectWriteTracer } from "./canvas-project-write-trace";
 
 const canvasEditorLeaseChannel = "infinite-canvas:project-editor-lease";
@@ -36,6 +35,8 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
     }, [readPendingDocument]);
     const setProjectSyncBlocked = useCanvasStore((state) => state.setProjectSyncBlocked);
     const releaseProjectEditor = useCanvasStore((state) => state.releaseProjectEditor);
+    const reloadProjectFromStorage = useCanvasStore((state) => state.reloadProjectFromStorage);
+    const setProjectEditorOwned = useCanvasStore((state) => state.setProjectEditorOwned);
     const ensureProjectDetail = useCanvasStore((state) => state.ensureProjectDetail);
     const refreshProjectFromServer = useCanvasStore((state) => state.refreshProjectFromServer);
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
@@ -61,31 +62,36 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
 
         const publish = (type: EditorMessage["type"]) => channel?.postMessage({ type, projectId, tabId } satisfies EditorMessage);
 
-        const preserveLocalDraft = () => {
+        const preserveLocalDraft = async () => {
             const state = useCanvasStore.getState();
             const project = state.projects.find((item) => item.id === projectId);
             const sync = state.projectSync[projectId];
             const pendingDocument = readPendingDocumentRef.current?.();
             if (!project || (!pendingDocument && (!sync || (!sync.dirty && !sync.pending && !sync.saving && !sync.conflict)))) return;
-            // Recovery must include edits still in the editor even if a 409 or lease
-            // takeover already forbids publishing them to the shared Store.
-            void saveCanvasProjectRecoverySnapshot(projectId, tabId, pendingDocument ? { ...project, ...pendingDocument } : project)
-                .then(() => cleanupExpiredCanvasProjectRecoverySnapshots())
-                .catch(() => undefined);
+            // Capture the publisher synchronously before awaiting a durable copy.
+            await state.preserveProjectDraft(projectId, pendingDocument ? { ...project, ...pendingDocument } : project);
         };
 
         const becomeReadonly = (refresh = true) => {
             if (disposed) return;
             ownsEditor = false;
+            setProjectEditorOwned(projectId, false);
             setProjectSyncBlocked(projectId, true);
-            if (refresh) preserveLocalDraft();
-            if (refresh) void refreshProjectFromServer(projectId).catch(() => undefined);
+            if (refresh)
+                void preserveLocalDraft()
+                    .then(() => {
+                        if (!disposed) return refreshProjectFromServer(projectId);
+                    })
+                    .catch((error) => useCanvasStore.getState().reportProjectRecoveryError(projectId, error));
         };
 
         const activateOwner = async () => {
             if (disposed || !ownsEditor) return;
+            setProjectEditorOwned(projectId, true);
             setProjectSyncBlocked(projectId, true);
             try {
+                await reloadProjectFromStorage(projectId);
+                if (disposed || !ownsEditor) return;
                 await ensureProjectDetail(projectId, { revalidate: true });
                 if (!disposed && ownsEditor) setProjectSyncBlocked(projectId, false);
             } catch {
@@ -187,12 +193,23 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
         };
 
         const releaseOwnership = () => {
+            const state = useCanvasStore.getState();
+            const pending = readPendingDocumentRef.current?.();
+            if (ownsEditor && pending) state.updateProject(projectId, pending);
+            const saved = state.waitForLocalPersistence();
             releaseProjectEditor(projectId);
+            setProjectEditorOwned(projectId, false);
             if (!ownsEditor) return;
-            publish("released");
-            if (usingFallback && readCanvasProjectEditorLease(window.localStorage, leaseKey)?.tabId === tabId) window.localStorage.removeItem(leaseKey);
-            releaseWebLock?.();
             ownsEditor = false;
+            const unlock = () => {
+                publish("released");
+                if (usingFallback && readCanvasProjectEditorLease(window.localStorage, leaseKey)?.tabId === tabId) window.localStorage.removeItem(leaseKey);
+                releaseWebLock?.();
+            };
+            void saved.then(unlock, (error) => {
+                console.warn("画布离开时本地保存失败", error instanceof Error ? error.message : String(error));
+                unlock();
+            });
         };
 
         setProjectSyncBlocked(projectId, true);
@@ -220,5 +237,5 @@ export function useCanvasProjectEditorLease(projectId: string, readPendingDocume
             window.removeEventListener("focus", onFocus);
             window.removeEventListener("pagehide", releaseOwnership);
         };
-    }, [projectId, readyForCanvasMutations, ensureProjectDetail, refreshProjectFromServer, setProjectSyncBlocked, releaseProjectEditor, tabId, loadAttempt]);
+    }, [projectId, readyForCanvasMutations, reloadProjectFromStorage, setProjectEditorOwned, ensureProjectDetail, refreshProjectFromServer, setProjectSyncBlocked, releaseProjectEditor, tabId, loadAttempt]);
 }
