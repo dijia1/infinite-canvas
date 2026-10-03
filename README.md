@@ -20,6 +20,7 @@
 - [后端数据库说明](docs/backend-database.md)
 - [系统配置数据结构](docs/system-settings.md)
 - [接口响应约定](docs/api-response.md)
+- [Portal 身份协议与 Go 测试适配](docs/portal-identity-protocol.md)
 
 ## 开源协议
 

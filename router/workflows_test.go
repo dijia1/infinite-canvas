@@ -38,7 +38,7 @@ func workflowResponse(t *testing.T, response *httptest.ResponseRecorder) struct 
 }
 
 func TestWorkflowRoutesRequirePortalIdentity(t *testing.T) {
-	response := workflowRequest(http.MethodGet, "/api/v1/workflows", "", "")
+	response := workflowRequest(http.MethodGet, "/api/v1/workflows", fixtureUID(""), "")
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated workflow list = %d/%s", response.Code, response.Body.String())
 	}
@@ -46,7 +46,7 @@ func TestWorkflowRoutesRequirePortalIdentity(t *testing.T) {
 
 func TestWorkflowOwnerCRUDPaginationCopyDeleteAndRevisionConflict(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "workflow-owner-" + stamp
+	owner := fixtureUID("workflow-owner-" + stamp)
 	create := workflowRequest(http.MethodPost, "/api/v1/workflows", owner, `{"name":"  图片视频流程  ","graph":{"version":1,"nodes":[{"id":"image","type":"image_input","position":{"x":0,"y":0}},{"id":"prompt","type":"text_input","position":{"x":0,"y":120},"text":"产品图"},{"id":"generate","type":"image_generation","position":{"x":300,"y":0},"inputPorts":[{"id":"image","type":"image"},{"id":"prompt","type":"text"}],"config":{"providerId":"image-provider","size":"1024x1024","options":{"seed":1}},"outputs":[{"id":"slot-a","type":"image"},{"id":"slot-b","type":"image"}]}],"connections":[{"sourceNodeId":"image","sourceSlotId":"output","targetNodeId":"generate","targetPortId":"image","order":0},{"sourceNodeId":"prompt","sourceSlotId":"output","targetNodeId":"generate","targetPortId":"prompt","order":2}]}}`)
 	if create.Code != http.StatusOK || workflowResponse(t, create).Code != 0 {
 		t.Fatalf("create workflow = %d/%s", create.Code, create.Body.String())
@@ -90,7 +90,7 @@ func TestWorkflowOwnerCRUDPaginationCopyDeleteAndRevisionConflict(t *testing.T) 
 		t.Fatalf("paginated list = %d/%s decoded=%#v", list.Code, list.Body.String(), listed)
 	}
 
-	other := workflowRequest(http.MethodGet, "/api/v1/workflows/"+created.ID, "other-"+owner, "")
+	other := workflowRequest(http.MethodGet, "/api/v1/workflows/"+created.ID, fixtureUID("other-"+owner), "")
 	if other.Code != http.StatusOK || workflowResponse(t, other).Code != 1 {
 		t.Fatalf("cross-owner get = %d/%s", other.Code, other.Body.String())
 	}
@@ -135,7 +135,7 @@ func TestWorkflowOwnerCRUDPaginationCopyDeleteAndRevisionConflict(t *testing.T) 
 }
 
 func TestWorkflowRoutesRejectCyclesLimitsAndUnknownURLFields(t *testing.T) {
-	owner := "workflow-validation-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("workflow-validation-" + time.Now().Format("20060102150405.000000000"))
 	tests := []struct {
 		name string
 		body string

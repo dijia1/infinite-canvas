@@ -97,9 +97,9 @@ func TestAdminSettingsRejectsStaleFullDocumentAndAuditsOnlyWinner(t *testing.T) 
 	if err := database.Where("action = ?", "ai_settings_save").Delete(&model.OperationLog{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	const adminA = "settings-cas-admin-a"
-	const adminB = "settings-cas-admin-b"
-	const manager = "settings-cas-assets-manager"
+	adminA := fixtureUID("settings-cas-admin-a")
+	adminB := fixtureUID("settings-cas-admin-b")
+	manager := fixtureUID("settings-cas-assets-manager")
 	grantLocalAppRole(t, adminA, model.AppRoleAdmin, true)
 	grantLocalAppRole(t, adminB, model.AppRoleAdmin, true)
 	grantLocalAppRole(t, manager, model.AppRolePublicAssetsManager, true)

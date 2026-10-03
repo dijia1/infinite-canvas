@@ -3,52 +3,67 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-// Keep both processes under one container lifecycle. Docker's restart policy
-// only runs when PID 1 exits; a surviving frontend must not hide a failed API.
-export async function startApplication({ root = process.cwd(), apiPort = 8082, readinessTimeoutMs = 120_000, shutdownTimeoutMs = 8_000 } = {}) {
-    const children = new Set();
+// Frontend requests can still call the API while Next drains. Stop the API only
+// after Next's native server.close completes. One deadline covers both children.
+export async function startApplication({ root = process.cwd(), apiPort = 8082, readinessTimeoutMs = 120_000, shutdownTimeoutMs = 25_000 } = {}) {
+    const children = new Map();
     const abort = new AbortController();
     let stopping = false;
     let exitCode = 1;
     let killTimer;
     let complete;
     const finished = new Promise(resolve => { complete = resolve; });
-    const finishIfStopped = () => {
-        if (stopping && children.size === 0) {
-            clearTimeout(killTimer);
-            complete(exitCode);
-        }
+    const stopChild = async name => {
+        const record = children.get(name);
+        if (!record) return;
+        record.expectedStop = true;
+        record.child.kill("SIGTERM");
+        const { code, signal } = await record.done;
+        // Next 16 exits 143 after its native SIGTERM cleanup. A killed or failed
+        // backend, or any other frontend exit, must never report a clean stop.
+        if (signal || (code !== 0 && !(name === "frontend" && code === 143))) exitCode = 1;
     };
     const stop = code => {
         if (stopping) return;
         stopping = true;
         exitCode = code;
         abort.abort();
-        for (const child of children) child.kill("SIGTERM");
-        if (children.size) {
-            killTimer = setTimeout(() => {
-                for (const child of children) child.kill("SIGKILL");
-            }, shutdownTimeoutMs);
-        }
-        finishIfStopped();
+        // Quiesce background admission while keeping HTTP available to the draining
+        // frontend. The native Go process reserves SIGUSR1 for this first phase.
+        children.get("API")?.child.kill("SIGUSR1");
+        console.log("[shutdown] stopping frontend before API");
+        killTimer = setTimeout(() => {
+            exitCode = 1;
+            console.error("[shutdown] deadline exceeded; force-stopping children");
+            for (const { child } of children.values()) child.kill("SIGKILL");
+        }, shutdownTimeoutMs);
+        void (async () => {
+            await stopChild("frontend");
+            await stopChild("API");
+            clearTimeout(killTimer);
+            console.log(`[shutdown] complete (${exitCode})`);
+            complete(exitCode);
+        })();
     };
     const start = (name, command, args, cwd, env) => {
         const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: "inherit" });
-        children.add(child);
-        child.once("error", error => {
-            console.error(`[startup] ${name} could not start (${error.code || "spawn error"})`);
-            children.delete(child);
-            stop(1);
-            finishIfStopped();
-        });
-        child.once("exit", (code, signal) => {
-            children.delete(child);
-            if (!stopping) {
+        let resolveDone;
+        const record = { child, expectedStop: false, done: new Promise(resolve => { resolveDone = resolve; }) };
+        children.set(name, record);
+        const onExit = (code, signal) => {
+            children.delete(name);
+            resolveDone({ code, signal });
+            if (!record.expectedStop) {
+                exitCode = 1;
                 console.error(`[startup] ${name} exited (${signal || code}); stopping container`);
                 stop(1);
             }
-            finishIfStopped();
+        };
+        child.once("error", error => {
+            console.error(`[startup] ${name} could not start (${error.code || "spawn error"})`);
+            onExit(1, null);
         });
+        child.once("exit", onExit);
     };
     const onStop = () => stop(0);
     process.on("SIGTERM", onStop);

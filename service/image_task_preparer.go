@@ -26,7 +26,7 @@ type permanentImagePreparationError struct{ message string }
 
 func (err permanentImagePreparationError) Error() string { return err.message }
 
-func runImageTaskPreparer(ctx context.Context, concurrency int) {
+func runImageTaskPreparer(ctx, execution context.Context, concurrency int) {
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -35,11 +35,17 @@ func runImageTaskPreparer(ctx context.Context, concurrency int) {
 	var children sync.WaitGroup
 	defer children.Wait()
 	for {
+		if ctx.Err() != nil || workersStopping() {
+			return
+		}
 		items, err := repository.ListPreparingImageGenerationTasks()
 		if err != nil {
 			log.Printf("image task preparer scan failed: %v", err)
 		} else {
 			for _, item := range items {
+				if ctx.Err() != nil || workersStopping() {
+					return
+				}
 				if _, loaded := active.LoadOrStore(item.ID, struct{}{}); loaded {
 					continue
 				}
@@ -49,7 +55,7 @@ func runImageTaskPreparer(ctx context.Context, concurrency int) {
 					go func(task model.ImageGenerationTask) {
 						defer children.Done()
 						defer func() { <-semaphore; active.Delete(task.ID) }()
-						prepareImageGenerationTask(ctx, task)
+						prepareImageGenerationTask(execution, task)
 					}(item)
 				case <-ctx.Done():
 					active.Delete(item.ID)

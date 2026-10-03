@@ -58,11 +58,16 @@ func StartWorkflowScheduler(ctx context.Context) (func(), error) {
 		return nil, err
 	}
 	workerContext, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			if _, err := RunWorkflowSchedulerOnce(workerContext); err != nil && !errors.Is(err, context.Canceled) {
+			if workerContext.Err() != nil || workersStopping() {
+				return
+			}
+			if _, err := RunWorkflowSchedulerOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("workflow scheduler failed: %v", err)
 			}
 			select {
@@ -72,12 +77,15 @@ func StartWorkflowScheduler(ctx context.Context) (func(), error) {
 			}
 		}
 	}()
-	return cancel, nil
+	return func() { cancel(); <-done }, nil
 }
 
 // RunWorkflowSchedulerOnce is intentionally bounded so every pass releases DB
 // leases quickly and another service instance can take over after a crash.
 func RunWorkflowSchedulerOnce(ctx context.Context) (bool, error) {
+	if ctx.Err() != nil || workersStopping() {
+		return false, ctx.Err()
+	}
 	if err := reevaluateOpenWorkflowRuns(); err != nil {
 		return false, err
 	}
@@ -87,6 +95,9 @@ func RunWorkflowSchedulerOnce(ctx context.Context) (bool, error) {
 	// capacity for ready outputs. Since every processed attempt is scheduled in
 	// the future, one batch cannot immediately reclaim the same row.
 	for count := 0; count < global*2; count++ {
+		if ctx.Err() != nil || workersStopping() {
+			return processed, ctx.Err()
+		}
 		attempt, found, err := repository.ClaimWorkflowAttempt(global, perRun, workflowsEnabled(), time.Now().UTC(), workflowAttemptLease)
 		if err != nil {
 			return processed, err

@@ -121,27 +121,7 @@ func CleanupExpiredOperationLogs(now time.Time) error {
 }
 
 func StartOperationLogRetention(ctx context.Context) func() {
-	if err := CleanupExpiredOperationLogs(time.Now()); err != nil {
-		log.Printf("operation audit cleanup failed: %v", err)
-	}
-	stop := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(24 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-stop:
-				return
-			case current := <-ticker.C:
-				if err := CleanupExpiredOperationLogs(current); err != nil {
-					log.Printf("operation audit cleanup failed: %v", err)
-				}
-			}
-		}
-	}()
-	return func() { close(stop) }
+	return startPeriodicWorker(ctx, 24*time.Hour, "OperationLog", func(_ context.Context, current time.Time) error { return CleanupExpiredOperationLogs(current) })
 }
 
 func videoOperationDetails(task model.VideoGenerationTask) *model.VideoOperationDetails {

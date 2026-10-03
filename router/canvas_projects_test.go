@@ -54,7 +54,7 @@ func decodeCanvasResponse(t *testing.T, response *httptest.ResponseRecorder) str
 }
 
 func TestCanvasProjectRoutesRequirePortalIdentity(t *testing.T) {
-	response := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects", "", "")
+	response := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects", fixtureUID(""), "")
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated canvas list = %d/%s", response.Code, response.Body.String())
 	}
@@ -62,7 +62,7 @@ func TestCanvasProjectRoutesRequirePortalIdentity(t *testing.T) {
 
 func TestCanvasProjectOwnerCRUDSanitizesTransientImageContent(t *testing.T) {
 	id := "canvas-crud-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-owner-" + id
+	owner := fixtureUID("canvas-owner-" + id)
 	if _, err := repository.SaveMedia(model.Media{ID: "media-1", OwnerUID: owner, Source: model.MediaSourceUpload, ObjectKey: "canvas-crud/media-1"}); err != nil {
 		t.Fatalf("SaveMedia(): %v", err)
 	}
@@ -100,7 +100,7 @@ func TestCanvasProjectOwnerCRUDSanitizesTransientImageContent(t *testing.T) {
 		t.Fatalf("owner list = %d/%s", list.Code, list.Body.String())
 	}
 
-	other := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, "another-owner", "")
+	other := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, fixtureUID("another-owner"), "")
 	if other.Code != http.StatusOK || decodeCanvasResponse(t, other).Code != 1 {
 		t.Fatalf("cross-owner get must be hidden = %d/%s", other.Code, other.Body.String())
 	}
@@ -125,7 +125,7 @@ func TestCanvasProjectOwnerCRUDSanitizesTransientImageContent(t *testing.T) {
 
 func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 	id := "canvas-log-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-log-owner-" + id
+	owner := fixtureUID("canvas-log-owner-" + id)
 	body := `{"id":"` + id + `","title":"日志画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`
 	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, body); response.Code != http.StatusOK {
 		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
@@ -199,7 +199,7 @@ func TestCanvasProjectWritesLogTraceAndRevisions(t *testing.T) {
 
 func TestCanvasProjectConcurrentRevisionAndRequestIDGuards(t *testing.T) {
 	id := "canvas-concurrent-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-concurrent-owner-" + id
+	owner := fixtureUID("canvas-concurrent-owner-" + id)
 	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"并发画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`); response.Code != http.StatusOK {
 		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
 	}
@@ -273,8 +273,8 @@ func TestCanvasSaveRequestRetentionRemovesOnlyExpiredRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	expired := model.CanvasSaveRequest{RequestID: "d75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339Nano)}
-	recent := model.CanvasSaveRequest{RequestID: "e75e2ccf-40e9-4d29-bbb9-b5de9ee39d72", ProjectID: "retention-project", UserUID: "retention-user", CreatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)}
+	expired := model.CanvasSaveRequest{RequestID: "d75e2ccf-40e9-4d29-bbb9-b5de9ee39d71", ProjectID: "retention-project", UserUID: fixtureUID("retention-user"), CreatedAt: now.Add(-8 * 24 * time.Hour).Format(time.RFC3339Nano)}
+	recent := model.CanvasSaveRequest{RequestID: "e75e2ccf-40e9-4d29-bbb9-b5de9ee39d72", ProjectID: "retention-project", UserUID: fixtureUID("retention-user"), CreatedAt: now.Add(-25 * time.Hour).Format(time.RFC3339Nano)}
 	if err := database.Create(&expired).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestCanvasSaveRequestRetentionRemovesOnlyExpiredRequests(t *testing.T) {
 
 func TestCanvasProjectImportIsIdempotentAndDoesNotOverwriteExistingProject(t *testing.T) {
 	id := "canvas-import-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-import-owner-" + id
+	owner := fixtureUID("canvas-import-owner-" + id)
 	body := `{"projects":[{"id":"` + id + `","title":"本地画布","createdAt":"2026-09-01T01:00:00Z","updatedAt":"2026-09-01T01:00:00Z","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}]}`
 	first := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/import", owner, body)
 	if first.Code != http.StatusOK || decodeCanvasResponse(t, first).Code != 0 {
@@ -320,7 +320,7 @@ func TestCanvasProjectImportIsIdempotentAndDoesNotOverwriteExistingProject(t *te
 
 func TestCanvasProjectCreateAndDeleteAreIdempotentAfterAmbiguousResponses(t *testing.T) {
 	id := "canvas-idempotent-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-idempotent-owner-" + id
+	owner := fixtureUID("canvas-idempotent-owner-" + id)
 	body := `{"id":"` + id + `","title":"首次创建","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`
 	first := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, body)
 	if first.Code != http.StatusOK || decodeCanvasResponse(t, first).Code != 0 {
@@ -345,8 +345,8 @@ func TestCanvasProjectCreateAndDeleteAreIdempotentAfterAmbiguousResponses(t *tes
 
 func TestCanvasProjectImportAllowsDifferentOwnersToUseTheSameClientID(t *testing.T) {
 	id := "canvas-shared-" + time.Now().Format("20060102150405.000000000")
-	firstOwner := "canvas-shared-first-" + id
-	secondOwner := "canvas-shared-second-" + id
+	firstOwner := fixtureUID("canvas-shared-first-" + id)
+	secondOwner := fixtureUID("canvas-shared-second-" + id)
 	first := `{"projects":[{"id":"` + id + `","title":"第一个用户画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}]}`
 	second := strings.Replace(first, "第一个用户画布", "第二个用户画布", 1)
 	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/import", firstOwner, first); response.Code != http.StatusOK || decodeCanvasResponse(t, response).Code != 0 {
@@ -371,7 +371,7 @@ func TestCanvasProjectImportAllowsDifferentOwnersToUseTheSameClientID(t *testing
 
 func TestCanvasProjectShareCopiesImageIntoRecipientLibrary(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-share-owner-" + stamp
+	owner := fixtureUID("canvas-share-owner-" + stamp)
 	recipient := "f3dbfc1a-06c5-4d31-a0cc-62e9475e34f1"
 	secondRecipient := "e3151d80-937a-4b20-85e4-4a17b4256f1c"
 	mediaID := "media-share-source-" + stamp
@@ -444,7 +444,7 @@ func TestCanvasProjectShareCopiesImageIntoRecipientLibrary(t *testing.T) {
 
 func TestCanvasProjectShareRejectsLocalOnlyVideos(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-share-video-owner-" + stamp
+	owner := fixtureUID("canvas-share-video-owner-" + stamp)
 	projectID := "canvas-share-video-" + stamp
 	recipient := "45b16146-f248-48b2-a0bb-b9017d1cb2b2"
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}}); err != nil {
@@ -462,7 +462,7 @@ func TestCanvasProjectShareRejectsLocalOnlyVideos(t *testing.T) {
 
 func TestCanvasProjectShareRollsBackRecipientMediaAfterCopyFailure(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-share-rollback-owner-" + stamp
+	owner := fixtureUID("canvas-share-rollback-owner-" + stamp)
 	recipient := "a35b1ca2-e8ba-47d8-95ba-9c32682e6b8e"
 	firstMediaID := "media-share-rollback-first-" + stamp
 	secondMediaID := "media-share-rollback-second-" + stamp
@@ -520,7 +520,7 @@ func TestCanvasProjectShareRollsBackRecipientMediaAfterCopyFailure(t *testing.T)
 
 func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-share-public-owner-" + stamp
+	owner := fixtureUID("canvas-share-public-owner-" + stamp)
 	recipient := "5919bfb6-d177-4fed-ad97-4bf1f8d2a97d"
 	mediaID := "media-share-public-" + stamp
 	objectKey := "share-public/" + mediaID + ".png"
@@ -530,10 +530,10 @@ func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(mediaTestDirectory, objectKey), []byte("public-image"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SaveMedia(model.Media{ID: mediaID, OwnerUID: "public-owner", Source: model.MediaSourceUpload, ObjectKey: objectKey, ContentType: "image/png", Bytes: 12, Filename: "public.png", Title: "公共图片", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+	if _, err := repository.SaveMedia(model.Media{ID: mediaID, OwnerUID: fixtureUID("public-owner"), Source: model.MediaSourceUpload, ObjectKey: objectKey, ContentType: "image/png", Bytes: 12, Filename: "public.png", Title: "公共图片", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-share-" + stamp, MediaID: mediaID, Title: "公共图片", UploaderUID: "public-owner", CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
+	if _, err := repository.SavePublicImage(model.PublicImage{ID: "public-share-" + stamp, MediaID: mediaID, Title: "公共图片", UploaderUID: fixtureUID("public-owner"), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repository.UpsertPortalMembers([]model.PortalMember{{UserUID: recipient, DisplayName: "接收成员", Enabled: true}}); err != nil {
@@ -573,7 +573,7 @@ func TestCanvasProjectShareCopiesPublicImageIntoRecipientLibrary(t *testing.T) {
 
 func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithRoles(t *testing.T) {
 	stamp := time.Now().Format("20060102150405.000000000")
-	owner := "canvas-share-members-owner-" + stamp
+	owner := fixtureUID("canvas-share-members-owner-" + stamp)
 	enabled := "6315d7db-5f11-45f7-8728-f2c5825ee573"
 	disabled := "d6d09b8e-f737-42d4-96a4-d99e5d722848"
 	if err := repository.UpsertPortalMembers([]model.PortalMember{
@@ -601,7 +601,7 @@ func TestCanvasShareRecipientsOnlyListsOtherEnabledMembersWithRoles(t *testing.T
 }
 
 func TestCanvasProjectImportRejectsAnInvalidBatchWithoutSavingEarlierProjects(t *testing.T) {
-	owner := "canvas-import-invalid-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("canvas-import-invalid-" + time.Now().Format("20060102150405.000000000"))
 	validID := "canvas-import-valid-" + owner
 	batch := `{"projects":[{"id":"` + validID + `","title":"有效画布","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}},{"id":"canvas-import-invalid","title":" ","document":{}}]}`
 	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/import", owner, batch)
@@ -616,7 +616,7 @@ func TestCanvasProjectImportRejectsAnInvalidBatchWithoutSavingEarlierProjects(t 
 
 func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 	id := "canvas-conflict-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-conflict-owner-" + id
+	owner := fixtureUID("canvas-conflict-owner-" + id)
 	invalid := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"bad","title":" ","document":{}}`)
 	if invalid.Code != http.StatusBadRequest || decodeCanvasResponse(t, invalid).Code != 1 {
 		t.Fatalf("invalid canvas payload = %d/%s", invalid.Code, invalid.Body.String())
@@ -650,7 +650,7 @@ func TestCanvasProjectRejectsInvalidPayloadsAndStaleRevisions(t *testing.T) {
 
 func TestCanvasProjectUpdateDeduplicatesAnUnknownResultRetry(t *testing.T) {
 	id := "canvas-idempotency-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-idempotency-owner-" + id
+	owner := fixtureUID("canvas-idempotency-owner-" + id)
 	document := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 	if response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"初始画布","document":`+document+`}`); response.Code != http.StatusOK {
 		t.Fatalf("create canvas project = %d/%s", response.Code, response.Body.String())
@@ -690,7 +690,7 @@ func TestCanvasProjectUpdateDeduplicatesAnUnknownResultRetry(t *testing.T) {
 }
 
 func TestCanvasProjectExplainsWhenDocumentExceedsSaveLimit(t *testing.T) {
-	owner := "canvas-limit-owner-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("canvas-limit-owner-" + time.Now().Format("20060102150405.000000000"))
 	document := fmt.Sprintf(`{"nodes":[{"id":"large-text","type":"text","title":"large","position":{"x":0,"y":0},"width":100,"height":80,"metadata":{"content":"%s"}}],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`, strings.Repeat("x", 4<<20))
 	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"oversized-canvas","title":"oversized","document":`+document+`}`)
 	payload := decodeCanvasResponse(t, response)
@@ -704,7 +704,7 @@ func TestCanvasProjectExplainsWhenDocumentExceedsSaveLimit(t *testing.T) {
 }
 
 func TestCanvasProjectRejectsUnsafeIDsAndDocumentsTheFrontendCannotLoad(t *testing.T) {
-	owner := "canvas-validation-owner-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("canvas-validation-owner-" + time.Now().Format("20060102150405.000000000"))
 	validDocument := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 	unsafeID := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"unsafe/id","title":"非法 ID","document":`+validDocument+`}`)
 	if unsafeID.Code != http.StatusBadRequest || decodeCanvasResponse(t, unsafeID).Code != 1 {
@@ -739,7 +739,7 @@ func TestCanvasProjectRejectsUnsafeIDsAndDocumentsTheFrontendCannotLoad(t *testi
 }
 
 func TestCanvasProjectRejectsDotPathSegmentsAcrossCRUD(t *testing.T) {
-	owner := "canvas-dot-id-owner-" + time.Now().Format("20060102150405.000000000")
+	owner := fixtureUID("canvas-dot-id-owner-" + time.Now().Format("20060102150405.000000000"))
 	validDocument := `{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}`
 
 	for _, id := range []string{".", ".."} {
@@ -772,7 +772,7 @@ func TestCanvasProjectRejectsDotPathSegmentsAcrossCRUD(t *testing.T) {
 
 func TestCanvasProjectUpdateReturnsTheExactSnapshotAcceptedBeforeALaterWriter(t *testing.T) {
 	id := "canvas-interleaved-" + time.Now().Format("20060102150405.000000000")
-	owner := "canvas-interleaved-owner-" + id
+	owner := fixtureUID("canvas-interleaved-owner-" + id)
 	create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"初始版本","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
 	if create.Code != http.StatusOK || decodeCanvasResponse(t, create).Code != 0 {
 		t.Fatalf("create canvas project = %d/%s", create.Code, create.Body.String())

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/basketikun/infinite-canvas/repository"
@@ -25,6 +24,9 @@ func cleanupExpiredMediaUploadIntents(ctx context.Context, current time.Time, st
 	var failures []error
 	after := ""
 	for {
+		if ctx.Err() != nil || workersStopping() {
+			return errors.Join(append(failures, ctx.Err())...)
+		}
 		items, err := repository.ListMediaUploadCleanupCandidates(current, after)
 		if err != nil {
 			return err
@@ -33,6 +35,9 @@ func cleanupExpiredMediaUploadIntents(ctx context.Context, current time.Time, st
 			break
 		}
 		for _, item := range items {
+			if ctx.Err() != nil || workersStopping() {
+				return errors.Join(append(failures, ctx.Err())...)
+			}
 			after = item.ID
 			deleteCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			err := cleanupMediaUploadIntent(deleteCtx, store, item.ID, current)
@@ -46,25 +51,11 @@ func cleanupExpiredMediaUploadIntents(ctx context.Context, current time.Time, st
 }
 
 func StartMediaUploadIntentRetention(ctx context.Context) func() {
-	if err := CleanupExpiredMediaUploadIntents(time.Now()); err != nil {
-		log.Printf("media upload intent cleanup failed: %v", err)
-	}
-	stop := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(time.Minute)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-stop:
-				return
-			case current := <-ticker.C:
-				if err := CleanupExpiredMediaUploadIntents(current); err != nil {
-					log.Printf("media upload intent cleanup failed: %v", err)
-				}
-			}
+	return startPeriodicWorker(ctx, time.Minute, "media upload intent", func(ctx context.Context, current time.Time) error {
+		store, err := newImageStore()
+		if err != nil {
+			return err
 		}
-	}()
-	return func() { close(stop) }
+		return cleanupExpiredMediaUploadIntents(ctx, current, store)
+	})
 }

@@ -20,6 +20,8 @@ services:
       portal_directory:
         aliases:
           - infinite-canvas-directory
+    init: true
+    stop_grace_period: 30s
     restart: unless-stopped
     logging:
       driver: json-file
