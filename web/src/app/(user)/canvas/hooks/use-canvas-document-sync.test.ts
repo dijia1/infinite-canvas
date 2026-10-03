@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCanvasDocumentPublisher, type CanvasEditorDocument } from "./use-canvas-document-sync";
+import { createCanvasDocumentPublisher, isCanvasDocumentPublicationCurrent, type CanvasEditorDocument } from "./use-canvas-document-sync";
 import { CanvasNodeType } from "../types";
 
 const baseline = (): CanvasEditorDocument => ({ nodes: [], connections: [], maskResources: {}, backgroundMode: "lines", showImageInfo: false, viewport: { x: 0, y: 0, k: 1 } });
@@ -60,7 +60,7 @@ test("returning to the published document cancels the pending write", () => {
     assert.equal(publisher.pending, false);
 });
 
-test("scope changes, conflict or read-only takeover invalidate a queued publication", () => {
+test("scope changes or read-only takeover invalidate a queued publication", () => {
     const { publisher, writes, tick, obsolete } = setup();
     const initial = baseline();
     publisher.capture({ ...initial, nodes: [node("A")] }, initial);
@@ -73,7 +73,7 @@ test("scope changes, conflict or read-only takeover invalidate a queued publicat
     assert.equal(publisher.pending, false);
 });
 
-test("edits after a save conflict remain available to local recovery without remote publication", () => {
+test("edits after ownership loss remain available to local recovery", () => {
     const { publisher, writes, obsolete } = setup();
     const initial = baseline();
     publisher.capture({ ...initial, nodes: [node("A")] }, initial);
@@ -94,4 +94,17 @@ test("adopting a confirmed conversion baseline does not publish another document
     assert.equal(publisher.pending, false); assert.deepEqual(writes, []);
     const edited = { ...converted, nodes: [...converted.nodes, node("new-edit")] };
     publisher.capture(edited, converted); tick(); assert.deepEqual(writes, [edited]);
+});
+
+
+test("a conflict permits local publication, while account, generation and ownership changes fence it", () => {
+    const state = {
+        syncScope: "owner", canonicalGeneration: 3, readyForCanvasMutations: true,
+        blockedProjectSync: {}, projects: [{ id: "canvas" }],
+        projectSync: { canvas: { conflict: true } },
+    };
+    assert.equal(isCanvasDocumentPublicationCurrent(state, "canvas", "owner", 3), true);
+    assert.equal(isCanvasDocumentPublicationCurrent({ ...state, syncScope: "other" }, "canvas", "owner", 3), false);
+    assert.equal(isCanvasDocumentPublicationCurrent({ ...state, canonicalGeneration: 4 }, "canvas", "owner", 3), false);
+    assert.equal(isCanvasDocumentPublicationCurrent({ ...state, blockedProjectSync: { canvas: true } }, "canvas", "owner", 3), false);
 });

@@ -130,7 +130,7 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 			Trace:             trace,
 		})
 	}
-	item, deduplicated, err := service.UpdateCanvasProject(r.Context(), user, id, input, requestID)
+	item, outcome, err := service.UpdateCanvasProject(r.Context(), user, id, input, requestID)
 	if err != nil {
 		if errors.Is(err, service.ErrCanvasProjectConflict) {
 			serverRevision := 0
@@ -150,11 +150,7 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		writeCanvasSaveError(w, err)
 		return
 	}
-	outcome := "saved"
-	if deduplicated {
-		outcome = "deduplicated"
-	}
-	writeLog(outcome, item.Revision, "")
+	writeLog(string(outcome), item.Revision, "")
 	OK(w, item)
 }
 

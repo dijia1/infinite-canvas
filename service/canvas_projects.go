@@ -188,70 +188,94 @@ func ImportCanvasProjects(ctx context.Context, user PortalUser, inputs []CanvasP
 	return model.CanvasProjectImportResult{Items: imported, Total: len(imported)}, nil
 }
 
-func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput, requestID string) (model.CanvasProject, bool, error) {
+type CanvasSaveOutcome string
+
+const (
+	CanvasSaveWritten       CanvasSaveOutcome = "saved"
+	CanvasSaveReceiptReplay CanvasSaveOutcome = "deduplicated"
+	CanvasSaveStateMatch    CanvasSaveOutcome = "state_matched"
+)
+
+func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input CanvasProjectUpdateInput, requestID string) (model.CanvasProject, CanvasSaveOutcome, error) {
 	id, err := normalizeCanvasProjectID(id)
 	if err != nil {
-		return model.CanvasProject{}, false, err
+		return model.CanvasProject{}, CanvasSaveWritten, err
 	}
 	if input.Revision < 1 {
-		return model.CanvasProject{}, false, ErrCanvasProjectConflict
+		return model.CanvasProject{}, CanvasSaveWritten, ErrCanvasProjectConflict
 	}
 	title, err := normalizeCanvasProjectTitle(input.Title)
 	if err != nil {
-		return model.CanvasProject{}, false, rejectInvalidCanvasSavePayload(err, requestID)
+		return model.CanvasProject{}, CanvasSaveWritten, rejectInvalidCanvasSavePayload(err, requestID)
 	}
 	document, err := sanitizeCanvasDocumentBase(input.Document)
 	if err != nil {
-		return model.CanvasProject{}, false, rejectInvalidCanvasSavePayload(err, requestID)
+		return model.CanvasProject{}, CanvasSaveWritten, rejectInvalidCanvasSavePayload(err, requestID)
 	}
 	requestID = strings.TrimSpace(requestID)
 	if requestID != "" {
 		parsedRequestID, err := uuid.Parse(requestID)
 		if err != nil {
-			return model.CanvasProject{}, false, canvasProjectValidationError{message: "保存请求标识无效"}
+			return model.CanvasProject{}, CanvasSaveWritten, canvasProjectValidationError{message: "保存请求标识无效"}
 		}
 		requestID = parsedRequestID.String()
 	}
 	payloadHash := canvasProjectPayloadHash(title, input.Revision, document)
 	if item, replayed, err := canvasSaveReceipt(user.UID, id, input.Revision, title, document, requestID, payloadHash); err != nil || replayed {
-		return item, replayed, err
+		return item, CanvasSaveReceiptReplay, err
 	}
 
 	existing, found, err := repository.GetCanvasProject(user.UID, id)
 	if err != nil {
-		return model.CanvasProject{}, false, err
+		return model.CanvasProject{}, CanvasSaveWritten, err
 	}
 	if !found || existing.Revision != input.Revision {
 		// The original transaction may have committed after our first receipt
 		// lookup. Its document and receipt commit together; check again before
 		// reporting a conflict (or a deletion that followed that commit).
 		if item, replayed, err := canvasSaveReceipt(user.UID, id, input.Revision, title, document, requestID, payloadHash); err != nil || replayed {
-			return item, replayed, err
+			return item, CanvasSaveReceiptReplay, err
 		}
 		if !found {
-			return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
+			return model.CanvasProject{}, CanvasSaveWritten, safeMessageError{message: "画布不存在"}
 		}
-		return model.CanvasProject{}, false, ErrCanvasProjectConflict
+		// With an expired receipt we can confirm only the current state, not
+		// the historical request identity. Never advance a revision here.
+		if requestID != "" && existing.Revision == input.Revision+1 && existing.Title == title {
+			stored, err := sanitizeCanvasDocumentBase(json.RawMessage(existing.Document))
+			if err != nil {
+				return model.CanvasProject{}, CanvasSaveWritten, err
+			}
+			if bytes.Equal(stored, document) {
+				return existing, CanvasSaveStateMatch, nil
+			}
+		}
+		return model.CanvasProject{}, CanvasSaveWritten, ErrCanvasProjectConflict
 	}
 	if err := validateCanvasGraphAgainstBaseline(document, json.RawMessage(existing.Document)); err != nil {
-		return model.CanvasProject{}, false, rejectedCanvasSave(err)
+		return model.CanvasProject{}, CanvasSaveWritten, rejectedCanvasSave(err)
 	}
 	if requestID != "" {
-		return updateCanvasProjectIdempotently(user.UID, id, input.Revision, title, document, requestID, canvasProjectPayloadHash(title, input.Revision, document))
+		item, replayed, err := updateCanvasProjectIdempotently(user.UID, id, input.Revision, title, document, requestID, canvasProjectPayloadHash(title, input.Revision, document))
+		outcome := CanvasSaveWritten
+		if replayed {
+			outcome = CanvasSaveReceiptReplay
+		}
+		return item, outcome, err
 	}
 	updated, accepted, err := repository.UpdateCanvasProject(user.UID, id, input.Revision, title, document, now())
 	if err != nil {
-		return model.CanvasProject{}, false, rejectedCanvasSave(canvasMediaSaveError(err))
+		return model.CanvasProject{}, CanvasSaveWritten, rejectedCanvasSave(canvasMediaSaveError(err))
 	}
 	if accepted {
-		return updated, false, nil
+		return updated, CanvasSaveWritten, nil
 	}
 	if _, found, err := repository.GetCanvasProject(user.UID, id); err != nil {
-		return model.CanvasProject{}, false, err
+		return model.CanvasProject{}, CanvasSaveWritten, err
 	} else if !found {
-		return model.CanvasProject{}, false, safeMessageError{message: "画布不存在"}
+		return model.CanvasProject{}, CanvasSaveWritten, safeMessageError{message: "画布不存在"}
 	}
-	return model.CanvasProject{}, false, ErrCanvasProjectConflict
+	return model.CanvasProject{}, CanvasSaveWritten, ErrCanvasProjectConflict
 }
 
 func updateCanvasProjectIdempotently(ownerUID, id string, revision int, title string, document []byte, requestID, payloadHash string) (model.CanvasProject, bool, error) {

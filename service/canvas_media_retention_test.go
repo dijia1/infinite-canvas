@@ -138,14 +138,14 @@ func TestUpdateCanvasProjectDoesNotReprocessAnIdempotentSave(t *testing.T) {
 	input := CanvasProjectUpdateInput{Revision: 1, Title: projectID, Document: testValidCanvasDocument()}
 	requestID := "2c3aeaf5-a6f8-4d6b-b21b-166f47cd09d5"
 
-	if _, deduplicated, err := UpdateCanvasProject(context.Background(), PortalUser{UID: ownerUID}, projectID, input, requestID); err != nil || deduplicated {
-		t.Fatalf("first UpdateCanvasProject() deduplicated=%t err=%v", deduplicated, err)
+	if _, deduplicated, err := UpdateCanvasProject(context.Background(), PortalUser{UID: ownerUID}, projectID, input, requestID); err != nil || deduplicated != CanvasSaveWritten {
+		t.Fatalf("first UpdateCanvasProject() deduplicated=%s err=%v", deduplicated, err)
 	}
 	if _, err := repository.SetPrivateMediaExpiry(mediaID, ownerUID, nil); err != nil {
 		t.Fatalf("SetPrivateMediaExpiry(): %v", err)
 	}
-	if _, deduplicated, err := UpdateCanvasProject(context.Background(), PortalUser{UID: ownerUID}, projectID, input, requestID); err != nil || !deduplicated {
-		t.Fatalf("retry UpdateCanvasProject() deduplicated=%t err=%v", deduplicated, err)
+	if _, deduplicated, err := UpdateCanvasProject(context.Background(), PortalUser{UID: ownerUID}, projectID, input, requestID); err != nil || deduplicated != CanvasSaveReceiptReplay {
+		t.Fatalf("retry UpdateCanvasProject() deduplicated=%s err=%v", deduplicated, err)
 	}
 	stored, found, err := repository.GetMedia(mediaID)
 	if err != nil || !found || stored.ExpiresAt != nil {

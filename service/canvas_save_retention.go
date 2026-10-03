@@ -8,7 +8,7 @@ import (
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-const canvasSaveRequestRetention = 24 * time.Hour
+const canvasSaveRequestRetention = 7 * 24 * time.Hour
 
 func CleanupExpiredCanvasSaveRequests(current time.Time) error {
 	return repository.DeleteCanvasSaveRequestsBefore(current.UTC().Add(-canvasSaveRequestRetention).Format(time.RFC3339Nano))

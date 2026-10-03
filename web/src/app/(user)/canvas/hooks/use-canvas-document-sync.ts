@@ -70,6 +70,15 @@ export function createCanvasDocumentPublisher({
     };
 }
 
+export function isCanvasDocumentPublicationCurrent(
+    state: { syncScope: string | null; canonicalGeneration: number; readyForCanvasMutations: boolean; blockedProjectSync: Record<string, true>; projects: { id: string }[] },
+    projectId: string, syncScope: string | null, canonicalGeneration: number,
+) {
+    return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration &&
+        state.readyForCanvasMutations && !state.blockedProjectSync[projectId] &&
+        state.projects.some((project) => project.id === projectId);
+}
+
 export function useCanvasDocumentSync({ projectId, syncScope, canonicalGeneration, isReady, document, baseline, getViewport }: {
     projectId: string;
     syncScope: string | null;
@@ -84,9 +93,7 @@ export function useCanvasDocumentSync({ projectId, syncScope, canonicalGeneratio
         publish: (next) => useCanvasStore.getState().updateProject(projectId, next),
         isCurrent: () => {
             const state = useCanvasStore.getState();
-            return state.syncScope === syncScope && state.canonicalGeneration === canonicalGeneration &&
-                state.readyForCanvasMutations && !state.blockedProjectSync[projectId] && !state.projectSync[projectId]?.conflict &&
-                state.projects.some((project) => project.id === projectId);
+            return isCanvasDocumentPublicationCurrent(state, projectId, syncScope, canonicalGeneration);
         },
         onPendingChange: setPendingDocument,
     }), [projectId, syncScope, canonicalGeneration]);

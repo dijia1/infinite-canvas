@@ -519,3 +519,29 @@ test("failed rejection persistence keeps the old identity and cannot start a cor
     assert.equal(store.getState().projectSync[base.id].serverRevision, 1);
     store.getState().releaseProjectEditor(base.id);
 });
+
+
+test("edits after conflict persist across navigation and hydration without another remote submission", async () => {
+    const disk = memory(); let calls = 0;
+    const store = setup(disk.storage, async () => {
+        calls++; throw new ApiRequestError("conflict", 409, 1, { code: "canvas_revision_conflict" });
+    });
+    await seed(store);
+    const conflict = Promise.withResolvers<void>();
+    const unsubscribe = store.subscribe((s) => { if (s.projectSync[base.id]?.conflict) conflict.resolve(); });
+    store.getState().renameProject(base.id, "submitted A");
+    await conflict.promise; unsubscribe();
+    const request = store.getState().projectSync[base.id].unknownRequest;
+    assert.equal(store.getState().projectSync[base.id].conflict, true);
+    store.getState().updateProject(base.id, { viewport: { x: 90, y: 50, k: .3 } });
+    store.getState().releaseProjectEditor(base.id);
+    await flush();
+    const restored = setup(disk.storage, async () => { calls++; return base; });
+    await restored.getState().hydrate("owner");
+    restored.getState().startSync("owner");
+    await flush();
+    assert.deepEqual(restored.getState().projects[0].viewport, { x: 90, y: 50, k: .3 });
+    assert.deepEqual(restored.getState().projectSync[base.id].unknownRequest, request);
+    assert.equal(restored.getState().projectSync[base.id].conflict, true);
+    assert.equal(calls, 1);
+});

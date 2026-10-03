@@ -33,7 +33,7 @@ func TestCanvasSaveReplayBetweenReceiptMissAndVersionRead(t *testing.T) {
 	defer db.Callback().Query().Remove(hook)
 	type result struct {
 		item  model.CanvasProject
-		dedup bool
+		dedup CanvasSaveOutcome
 		err   error
 	}
 	done := make(chan result, 1)
@@ -48,12 +48,12 @@ func TestCanvasSaveReplayBetweenReceiptMissAndVersionRead(t *testing.T) {
 	}
 	item, dedup, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID)
 	close(release)
-	if err != nil || dedup || item.Revision != 2 {
+	if err != nil || dedup != CanvasSaveWritten || item.Revision != 2 {
 		t.Fatalf("original: %+v %v %v", item, dedup, err)
 	}
 	select {
 	case replay := <-done:
-		if replay.err != nil || !replay.dedup || replay.item.Revision != 2 {
+		if replay.err != nil || replay.dedup != CanvasSaveReceiptReplay || replay.item.Revision != 2 {
 			t.Fatalf("replay after receipt miss: %+v", replay)
 		}
 	case <-time.After(5 * time.Second):
@@ -80,16 +80,16 @@ func TestCanvasSaveOldReceiptNeverAdvancesOrRevivesTheDocument(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt, replayed, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID)
-	if err != nil || !replayed || receipt.Revision != 2 {
+	if err != nil || replayed != CanvasSaveReceiptReplay || receipt.Revision != 2 {
 		t.Fatalf("old receipt: %+v %v %v", receipt, replayed, err)
 	}
-	if _, _, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, newer, uuid.NewString()); !errors.Is(err, ErrCanvasProjectConflict) {
+	if _, _, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, uuid.NewString()); !errors.Is(err, ErrCanvasProjectConflict) {
 		t.Fatalf("must retain true conflict: %v", err)
 	}
 	if _, err := repository.DeleteCanvasProject(owner, id, 3); err != nil {
 		t.Fatal(err)
 	}
-	if _, replayed, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID); err != nil || !replayed {
+	if _, replayed, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID); err != nil || replayed != CanvasSaveReceiptReplay {
 		t.Fatalf("deleted receipt: %v %v", replayed, err)
 	}
 	if _, found, _ := repository.GetCanvasProject(owner, id); found {
@@ -201,7 +201,57 @@ func TestCanvasSaveRejectionIdentityAndExpiredReceipt(t *testing.T) {
 	if err := db.Where("request_id = ?", requestID).Delete(&model.CanvasSaveRequest{}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, valid, requestID); !errors.Is(err, ErrCanvasProjectConflict) {
-		t.Fatalf("expired receipt must conflict: %v", err)
+	if item, replayed, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, valid, requestID); err != nil || replayed != CanvasSaveStateMatch || item.Revision != 2 {
+		t.Fatalf("expired matching receipt must converge: revision=%d replayed=%v err=%v", item.Revision, replayed, err)
+	}
+}
+
+func TestCanvasSaveMissingReceiptRequiresExactNextState(t *testing.T) {
+	for _, scenario := range []string{"same", "title", "viewport", "later_revision", "no_request_id", "other_owner", "deleted"} {
+		t.Run(scenario, func(t *testing.T) {
+			owner, id := "state-match-owner-"+scenario, "state-match-project-"+scenario
+			saveTestCanvasProject(t, id, owner, testValidCanvasDocument())
+			input := CanvasProjectUpdateInput{Title: "中文 <A> & B", Revision: 1, Document: testValidCanvasDocument()}
+			requestID := uuid.NewString()
+			if _, _, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID); err != nil {
+				t.Fatal(err)
+			}
+			db, _ := repository.DB()
+			if err := db.Where("request_id = ?", requestID).Delete(&model.CanvasSaveRequest{}).Error; err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "title":
+				input.Title += " changed"
+			case "viewport":
+				input.Document = []byte(`{"nodes":[],"connections":[],"viewport":{"x":1,"y":0,"k":1}}`)
+			case "later_revision":
+				next := input
+				next.Revision = 2
+				if _, _, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, next, uuid.NewString()); err != nil {
+					t.Fatal(err)
+				}
+			case "no_request_id":
+				requestID = ""
+			case "other_owner":
+				owner = "unrelated-owner"
+			case "deleted":
+				if _, err := repository.DeleteCanvasProject(owner, id, 2); err != nil {
+					t.Fatal(err)
+				}
+			}
+			item, replayed, err := UpdateCanvasProject(context.Background(), PortalUser{UID: owner}, id, input, requestID)
+			if scenario == "same" {
+				if err != nil || replayed != CanvasSaveStateMatch || item.Revision != 2 {
+					t.Fatalf("matching state: %+v %v %v", item, replayed, err)
+				}
+				stored, _, _ := repository.GetCanvasProject(owner, id)
+				if stored.Revision != 2 {
+					t.Fatal("state match wrote another revision")
+				}
+			} else if err == nil {
+				t.Fatal("nonmatching/unauthorized state accepted")
+			}
+		})
 	}
 }
