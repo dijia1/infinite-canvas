@@ -603,6 +603,7 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                             if (!ownsOperation() || !matchesRequest()) return;
                             if (record.id !== id || !Number.isInteger(record.revision) || (submittedRevision !== null && record.revision !== submittedRevision + 1)) throw new Error("画布保存回执无效，请重试确认");
                             if ((get().projectSync[id]?.serverRevision ?? 0) > record.revision) throw new ApiRequestError("画布已在其他位置更新，请保留草稿并核对", 409, 1);
+                            const savedSummary = summarizeCanvasProject(record);
                             confirming = true;
                             set((state) => {
                                 const current = state.projectSync[id];
@@ -613,11 +614,11 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                                     !latest ||
                                     latest.title !== submittedTitle ||
                                     !sameCanvasJSON(canvasDocument(latest), submittedDocument) ||
-                                    (submittedRevision === null && !serverRecordMatchesSubmittedProject(record, project, submittedDocument!));
+                                    (submittedRevision === null && (!("document" in record) || !serverRecordMatchesSubmittedProject(record, project, submittedDocument!)));
                                 const { unknownRequest: _, needsRevalidation: _validation, ...synced } = current;
                                 const summary = state.summaries.find((item) => item.id === id);
                                 return {
-                                    summaries: !latest || (summary && summary.revision > record.revision) ? state.summaries : [...state.summaries.filter((item) => item.id !== id), summarizeCanvasProject(record)],
+                                    summaries: !latest || (summary && summary.revision > record.revision) ? state.summaries : [...state.summaries.filter((item) => item.id !== id), savedSummary],
                                     projectSync: { ...state.projectSync, [id]: { ...synced, serverRevision: record.revision, saving: false, dirty: changed, pending: changed, offline: false, error: null } },
                                 };
                             });

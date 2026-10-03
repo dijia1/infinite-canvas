@@ -47,6 +47,7 @@ test("uses the typed canvas CRUD and import endpoints", async () => {
                         "X-Canvas-Request-Seq": "7",
                         "X-Canvas-Save-Reason": "autosave",
                         "X-Canvas-Tab-Id": "tab-a",
+                        "X-Canvas-Save-Response": "summary",
                     },
                 },
                 { url: "/api/v1/canvas/projects/project-1", method: "DELETE", data: { revision: 2 }, headers: { "Content-Type": "application/json" } },

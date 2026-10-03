@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/service"
 	"github.com/google/uuid"
 )
@@ -151,6 +152,24 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	writeLog(string(outcome), item.Revision, "")
+	if r.Header.Get("X-Canvas-Save-Response") == "summary" {
+		// Project and receipt paths both return the state accepted by this PUT,
+		// which can be older than the current project on an idempotent replay.
+		var document struct {
+			Nodes       []json.RawMessage `json:"nodes"`
+			Connections []json.RawMessage `json:"connections"`
+		}
+		if err := json.Unmarshal(item.Document, &document); err != nil {
+			FailError(w, err)
+			return
+		}
+		OK(w, model.CanvasSummary{
+			ID: item.ID, Title: item.Title, Revision: item.Revision,
+			CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			NodeCount: len(document.Nodes), ConnectionCount: len(document.Connections),
+		})
+		return
+	}
 	OK(w, item)
 }
 

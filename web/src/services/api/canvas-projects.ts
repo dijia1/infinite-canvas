@@ -32,6 +32,8 @@ export type CanvasSummary = {
     connectionCount: number;
 };
 
+export type CanvasProjectSaveResult = CanvasProjectDetail | CanvasSummary;
+
 export type CanvasProjectList = {
     items: CanvasSummary[];
     total: number;
@@ -68,7 +70,7 @@ export type CanvasProjectsApi = {
     get: (id: string) => Promise<CanvasProjectDetail>;
     create: (input: CreateCanvasProjectInput) => Promise<CanvasProjectDetail>;
     importProjects: (projects: CreateCanvasProjectInput[]) => Promise<CanvasProjectImportResult>;
-    update: (id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) => Promise<CanvasProjectDetail>;
+    update: (id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) => Promise<CanvasProjectSaveResult>;
     delete: (id: string, revision: number, trace?: CanvasProjectWriteTrace) => Promise<void>;
 };
 
@@ -106,7 +108,7 @@ function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {
 }
 
 export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) {
-    return apiPut<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, canvasProjectWriteHeaders(trace));
+    return apiPut<CanvasProjectSaveResult>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, { ...canvasProjectWriteHeaders(trace), "X-Canvas-Save-Response": "summary" });
 }
 
 export async function deleteCanvasProject(id: string, revision: number, trace?: CanvasProjectWriteTrace) {
