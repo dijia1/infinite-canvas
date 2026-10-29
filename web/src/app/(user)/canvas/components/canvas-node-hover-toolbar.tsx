@@ -11,6 +11,7 @@ type CanvasNodeHoverToolbarProps = {
     viewport: ViewportTransform;
     imageReady: boolean;
     imageError?: string;
+    downloadBusy?: boolean;
     onKeep: (nodeId: string) => void;
     onLeave: () => void;
     onEditText: (node: CanvasNodeData) => void;
@@ -31,6 +32,7 @@ export function CanvasNodeHoverToolbar({
     viewport,
     imageReady,
     imageError,
+    downloadBusy = false,
     onKeep,
     onLeave,
     onEditText,
@@ -72,7 +74,7 @@ export function CanvasNodeHoverToolbar({
         >
             {canRetry ? <ToolbarAction title={retryingLocalUpload ? "重新上传" : "重新生成"} label="重试" icon={<RefreshCw className="size-4" />} onClick={() => onRetry(node)} /> : null}
             {canDeleteLocalUpload ? <ToolbarAction title="删除本地图片" label="删除" icon={<Trash2 className="size-4" />} onClick={() => onDelete(node)} /> : null}
-            {hasImage || hasVideo ? <ToolbarAction title={hasVideo ? "下载视频" : "下载图片"} label="下载" icon={<Download className="size-4" />} onClick={() => onDownload(node)} /> : null}
+            {hasImage || hasVideo ? <ToolbarAction disabled={isImage && downloadBusy} title={hasVideo ? "下载视频" : "下载图片"} label="下载" icon={<Download className="size-4" />} onClick={() => onDownload(node)} /> : null}
             {isText ? <ToolbarAction title="编辑文本" label="编辑文字" icon={<Pencil className="size-4" />} onClick={() => onEditText(node)} /> : null}
             {isText ? <ToolbarAction title="用文本生图" label="生图" icon={<ImageIcon className="size-4" />} onClick={() => onGenerateImage(node)} /> : null}
             {isText ? <ToolbarAction title="减小字号" label="缩小" icon={<Minus className="size-4" />} onClick={() => onDecreaseFont(node)} /> : null}

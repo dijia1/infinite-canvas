@@ -14,7 +14,8 @@ import { useWorkflowFrameGestures } from "./use-workflow-frames";
 import { EditorSyncStatus } from "@/components/editor-sync-status";
 import { useEditorNavigation } from "@/components/layout/editor-navigation";
 import { useNavigationRoute } from "@/components/layout/use-navigation-route";
-import { downloadSelectedWorkflowImages, downloadWorkflowImages } from "@/services/workflow-download";
+import { downloadWorkflowImages } from "@/services/workflow-download";
+import { ImageDownloadProgress, useImageDownloads } from "@/components/image-download-progress";
 import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
 import { CanvasEditorTopBar } from "@/components/canvas-editor-top-bar";
 import { CanvasToolbar } from "@/app/(user)/canvas/components/canvas-toolbar";
@@ -86,6 +87,8 @@ function WorkflowEditorContent() {
     const { message, modal } = App.useApp();
     const session = useQuery({ ...portalSessionQuery, refetchOnMount: "always" });
     const draftOwnerUID = session.data?.user.uid;
+    const imageDownloads = useImageDownloads(JSON.stringify([draftOwnerUID, workflowId]));
+    const downloadBusy = downloading || imageDownloads.busy;
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const aiStatus = useConfigStore((state) => state.status);
     const globalConfig = useConfigStore((state) => state.config);
@@ -709,22 +712,9 @@ function WorkflowEditorContent() {
     };
     const downloadImageSelection = async () => {
         if (!selectedImageDownload?.targets.length || imageDownloadLoading || imageDownloadFailed || downloadController.current) return;
-        const controller = new AbortController();
-        downloadController.current = controller;
-        setDownloading(true);
+        const targets = selectedImageDownload.targets;
         setImageMenu(null);
-        try {
-            const result = await downloadSelectedWorkflowImages(selectedImageDownload.targets, controller.signal);
-            if (!controller.signal.aborted) {
-                if (result.failed) message.warning(`已发起 ${result.saved} 张图片下载；${result.failed} 张下载失败`);
-                else message.success(`已开始下载 ${result.saved} 张图片`);
-            }
-        } catch (error) {
-            if (!controller.signal.aborted) message.error(error instanceof Error ? error.message : "图片下载失败");
-        } finally {
-            if (downloadController.current === controller) downloadController.current = null;
-            if (!controller.signal.aborted) setDownloading(false);
-        }
+        await imageDownloads.queue.start(targets);
     };
     const startNodeDrag = (event: ReactPointerEvent, node: WorkflowNode) => {
         if (event.button !== 0 || (event.target as Element).closest("button,input,textarea,.ant-select,[contenteditable=true],[data-canvas-no-drag]")) return;
@@ -895,7 +885,7 @@ function WorkflowEditorContent() {
     navigationRef.current = navigateAway;
     useEffect(() => editorNavigation?.register((href) => navigationRef.current(href)), [editorNavigation]);
     const downloadImages = async (runId = currentRun.data?.run.id) => {
-        if (!runId || downloadController.current) return;
+        if (!runId || downloadController.current || imageDownloads.queue.isBusy()) return;
         const controller = new AbortController();
         downloadController.current = controller;
         setDownloading(true);
@@ -993,8 +983,8 @@ function WorkflowEditorContent() {
                     actions={
                         <>
                             {graph.frames?.length ? <Dropdown trigger={["click"]} menu={{ items: latestDownloadRuns.map((run) => ({ key: run.id, label: run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程", onClick: () => void downloadImages(run.id) })) }}>
-                                <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!latestDownloadRuns.length}>下载 <ChevronDown className="size-3" /></Button>
-                            </Dropdown> : <Button type="text" icon={<Download className="size-4" />} loading={downloading} disabled={!unframedRun || (currentRun.data?.run.id === unframedRun.id && !downloadImageCount)} onClick={() => void downloadImages(unframedRun?.id)}>下载</Button>}
+                                <Button type="text" icon={<Download className="size-4" />} loading={downloadBusy} disabled={!latestDownloadRuns.length}>下载 <ChevronDown className="size-3" /></Button>
+                            </Dropdown> : <Button type="text" icon={<Download className="size-4" />} loading={downloadBusy} disabled={!unframedRun || (currentRun.data?.run.id === unframedRun.id && !downloadImageCount)} onClick={() => void downloadImages(unframedRun?.id)}>下载</Button>}
                             {anyActive ? <Dropdown trigger={["click"]} menu={{ items: (runs.overview?.activeRuns.items || []).map((run) => ({ key: run.id, label: `${run.scopeType === "frame" ? run.frameName || "包裹框" : "整个流程"} · ${workflowRunStatusText(run.status)}`, onClick: () => openRun(run.id) })).concat([{ key: "history", label: "查看全部运行记录", onClick: () => void navigateAway(appPath("/workflow-runs")) }]) }}>
                                 <Button type="text">{runs.overview?.activeRuns.total} 个运行中 <ChevronDown className="size-3" /></Button>
                             </Dropdown> : runs.selectedRun ? <Button type="text" onClick={() => openRun(runs.selectedRun!.id)}>{workflowRunStatusText(runs.selectedRun.status)}</Button> : unframedRun ? <Button type="text" onClick={() => openRun(unframedRun.id)}>{workflowRunStatusText(unframedRun.status)}</Button> : null}
@@ -1198,8 +1188,9 @@ function WorkflowEditorContent() {
                             />
                         ) : null}
                     </InfiniteCanvas>
-                    {imageMenu ? <WorkflowImageContextMenu menu={imageMenu} count={selectedImageDownload?.targets.length || 0} loading={imageDownloadLoading} failed={imageDownloadFailed} busy={downloading}
+                    {imageMenu ? <WorkflowImageContextMenu menu={imageMenu} count={selectedImageDownload?.targets.length || 0} loading={imageDownloadLoading} failed={imageDownloadFailed} busy={downloadBusy}
                         onClose={() => setImageMenu(null)} onDownload={() => void downloadImageSelection()} onRetry={() => void runs.refresh()} /> : null}
+                    <ImageDownloadProgress queue={imageDownloads.queue} />
                     {localImages.progress ? <div role="status" aria-live="polite" className="pointer-events-none absolute left-1/2 top-3 z-[70] -translate-x-1/2 rounded-md border px-3 py-1.5 text-xs" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border, color: theme.node.text }}>
                         正在导入图片 {localImages.progress.completed}/{localImages.progress.total}
                     </div> : null}

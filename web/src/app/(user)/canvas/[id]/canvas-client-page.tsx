@@ -9,7 +9,7 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import type { ChangeEvent as ReactChangeEvent, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ImageIcon, Images, List, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
-import { saveAs } from "file-saver";
+import { ImageDownloadProgress, useImageDownloads } from "@/components/image-download-progress";
 
 import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
 import { importCanvasPublicImages } from "@/services/api/canvas-projects";
@@ -45,7 +45,7 @@ import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGenerati
 import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
 import { buildConnectionPathData, getConnectionCurve } from "../utils/canvas-connection-geometry";
 import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "../utils/canvas-connection-visibility";
-import { selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
+import { canvasImageDownloadTargets, selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canvas-file-drop";
 import { createPublicImageImportController } from "../utils/canvas-public-image-import";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
@@ -237,6 +237,7 @@ function InfiniteCanvasPage() {
     const readyForCanvasMutations = useCanvasStore((state) => state.readyForCanvasMutations);
     const canonicalGeneration = useCanvasStore((state) => state.canonicalGeneration);
     const syncScope = useCanvasStore((state) => state.syncScope);
+    const imageDownloads = useImageDownloads(JSON.stringify([syncScope, projectId]));
     const createProject = useCanvasStore((state) => state.createProject);
     const projectDetail = useCanvasProjectDetail(projectId, hydrated && readyForCanvasMutations, syncScope, canonicalGeneration);
     const renameProject = useCanvasStore((state) => state.renameProject);
@@ -1793,24 +1794,14 @@ function InfiniteCanvasPage() {
                 return;
             }
             if (node.type !== CanvasNodeType.Image || !node.metadata) throw new Error("没有可下载的图片");
-            let content = node.metadata.content || "";
-            if (node.metadata.storageKey) content = (await resolveStoredImageReference(node.metadata.storageKey)) || content;
-            if (!content && node.metadata.mediaId) content = (await loadMediaImage(node.metadata.mediaId, () => resolveRemoteImage(node.metadata!.mediaId!))).url;
-            if (!content && node.metadata.publicImageId) content = (await fetchPublicImageAccess(node.metadata.publicImageId)).url;
-            if (!content) throw new Error("图片尚未加载完成");
-            saveAs(content, `canvas-image-${node.id}.${imageExtension(node.metadata.mimeType || content)}`);
+            await imageDownloads.queue.start(canvasImageDownloadTargets([node]));
         },
-        [resolveStoredImageReference, message],
+        [imageDownloads.queue, message],
     );
 
     const downloadSelectedImages = useCallback(
-        async (selectedImages: CanvasNodeData[]) => {
-            const results = await Promise.allSettled(selectedImages.map((node) => downloadNodeImage(node)));
-            const failed = results.filter((result) => result.status === "rejected").length;
-            if (failed) message.error(`${failed} 张图片下载失败`);
-            else message.success(`已开始下载 ${selectedImages.length} 张图片`);
-        },
-        [downloadNodeImage, message],
+        (selectedImages: CanvasNodeData[]) => imageDownloads.queue.start(canvasImageDownloadTargets(selectedImages)),
+        [imageDownloads.queue],
     );
 
     const cropImageNode = useCallback(async (node: CanvasNodeData, crop: CanvasImageCropRect, source: string) => {
@@ -2354,6 +2345,7 @@ function InfiniteCanvasPage() {
                         onIncreaseFont={(node) => handleFontSizeChange(node.id, Math.min(32, (node.metadata?.fontSize || 14) + 2))}
                         onGenerateImage={generateImageFromTextNode}
                         onUpload={(node) => handleUploadRequest(node.id)}
+                        downloadBusy={imageDownloads.busy}
                         onDownload={(node) => void downloadNodeImage(node).catch((error) => message.error(error instanceof Error ? error.message : "下载失败"))}
                         onCrop={(node) => setCropNodeId(node.id)}
                         onViewImage={(node) => setPreviewNodeId(node.id)}
@@ -2402,12 +2394,15 @@ function InfiniteCanvasPage() {
                             setContextMenu(null);
                         }}
                         downloadCount={contextMenuImageNodes.length}
+                        downloadBusy={imageDownloads.busy}
                         onDownloadSelected={() => {
                             void downloadSelectedImages(contextMenuImageNodes);
                             setContextMenu(null);
                         }}
                     />
                 ) : null}
+
+                <ImageDownloadProgress queue={imageDownloads.queue} />
 
                 <input ref={imageInputRef} type="file" accept="image/*,video/*" className="hidden" onChange={handleImageInputChange} />
 
@@ -2527,10 +2522,6 @@ function MenuLabel({ text, shortcut }: { text: string; shortcut: string }) {
             <span className="text-xs opacity-45">{shortcut}</span>
         </span>
     );
-}
-
-function imageExtension(dataUrl: string) {
-    return dataUrl.match(/^data:image[/]([^;]+)/)?.[1] || dataUrl.match(/image[/]([^;]+)/)?.[1] || "png";
 }
 
 function videoMetadata(video: UploadedFile): CanvasNodeMetadata {

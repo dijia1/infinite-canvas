@@ -3,6 +3,7 @@ import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { CanvasNodeType } from "../types";
+import { canvasImageDownloadTargets } from "../utils/canvas-download-utils";
 
 function callback(name: string, dependencies: Record<string, unknown>) {
     const source = ts.createSourceFile("canvas.tsx", readFileSync(new URL("./canvas-client-page.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -17,62 +18,33 @@ function callback(name: string, dependencies: Record<string, unknown>) {
     return new Function(...Object.keys(dependencies), js + ";return callback;")(...Object.values(dependencies));
 }
 
-test("downloading a remote image preserves its reference without adding content to the node", async () => {
-    const image = Object.freeze({
-        id: "remote",
-        type: CanvasNodeType.Image,
-        metadata: Object.freeze({ mediaId: "media-1", mimeType: "image/webp" }),
-    });
+test("downloading a remote image queues its stable reference without changing the node", async () => {
+    const image = Object.freeze({ id: "remote", type: CanvasNodeType.Image, title: "", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: Object.freeze({ mediaId: "media-1", mimeType: "image/webp" }) });
     const original = structuredClone(image);
-    const saved: Array<[string, string]> = [];
-    let finishAccess!: (url: string) => void;
-    const access = new Promise<string>((resolve) => { finishAccess = resolve; });
+    const queued: unknown[] = [];
+    let finish!: () => void;
+    const gate = new Promise<void>(resolve => { finish = resolve; });
     const download = callback("downloadNodeImage", {
-        CanvasNodeType,
-        loadMediaImage: async (id: string, resolve: () => Promise<string>) => {
-            assert.equal(id, "media-1");
-            assert.equal(await resolve(), "signed-original-url");
-            return { url: "blob:original-image" };
-        },
-        resolveRemoteImage: (id: string) => {
-            assert.equal(id, "media-1");
-            return access;
-        },
-        saveAs: (url: string, filename: string) => saved.push([url, filename]),
-        imageExtension: (mimeType: string) => {
-            assert.equal(mimeType, "image/webp");
-            return "webp";
-        },
+        CanvasNodeType, canvasImageDownloadTargets,
+        imageDownloads: { queue: { start: async (targets: unknown) => { queued.push(targets); await gate; } } },
     });
     const pending = download(image);
-    assert.deepEqual(saved, []);
+    assert.equal(queued.length, 1);
+    assert.deepEqual(queued[0], canvasImageDownloadTargets([image]));
     assert.deepEqual(image, original);
-    finishAccess("signed-original-url");
-    await pending;
-    assert.deepEqual(saved, [["blob:original-image", "canvas-image-remote.webp"]]);
+    finish(); await pending;
     assert.deepEqual(image, original);
     assert.equal("content" in image.metadata, false);
 });
 
-test("downloads resolve remote and public references and propagate access failures", async () => {
-    const saved: string[] = [];
-    const download = callback("downloadNodeImage", {
-        CanvasNodeType,
-        resolveStoredImageReference: async () => "",
-        loadMediaImage: async (_id: string, resolve: () => Promise<string>) => ({ url: await resolve() }),
-        resolveRemoteImage: async (id: string) => {
-            if (id === "missing") throw new Error("not found");
-            return "remote-url";
-        },
-        fetchPublicImageAccess: async () => ({ url: "public-url" }),
-        saveAs: (url: string) => saved.push(url),
-        imageExtension: () => "png",
-    });
-    await download({ id: "one", type: CanvasNodeType.Image, metadata: { mediaId: "one" } });
-    await download({ id: "two", type: CanvasNodeType.Image, metadata: { publicImageId: "two" } });
-    assert.deepEqual(saved, ["remote-url", "public-url"]);
-    await assert.rejects(download({ id: "missing", type: CanvasNodeType.Image, metadata: { mediaId: "missing" } }), /not found/);
-    assert.equal(saved.length, 2);
+test("multi-selection uses the same queue and snapshots references without starting per-image saves", async () => {
+    const nodes = [{ id: "one", type: CanvasNodeType.Image, title: "", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { mediaId: "media-1" } }];
+    const queued: unknown[] = [];
+    const download = callback("downloadSelectedImages", { canvasImageDownloadTargets, imageDownloads: { queue: { start: async (targets: unknown) => { queued.push(targets); return true; } } } });
+    await download(nodes);
+    const expected = structuredClone(queued);
+    nodes[0]!.metadata.mediaId = "new-media";
+    assert.deepEqual(queued, expected);
 });
 
 test("video download resolves stable media, prevents duplicate clicks and releases failed requests", async () => {
