@@ -32,3 +32,27 @@ test("model reconciliation keeps a removed ratio until the user explicitly chang
     assert.equal(next.size, "1:1");
     assert.equal(next.providerOptions?.size, "1:1");
 });
+
+
+test("switching to Seedream NSFW removes hidden quality and transparency settings", () => {
+    const schema = {
+        version: "v1", maxReferenceImages: 10, supportsMask: false,
+        fields: [
+            { key: "size", label: "宽高比", type: "select" as const, required: true, default: "1:1", options: [{ value: "1:1", label: "1:1" }] },
+            { key: "resolution", label: "尺寸", type: "select" as const, required: true, default: "2K", options: [{ value: "2K", label: "2K" }] },
+            { key: "outputFormat", label: "输出格式", type: "select" as const, required: false, default: "jpeg", options: [{ value: "jpeg", label: "JPEG" }, { value: "png", label: "PNG" }] },
+        ],
+    };
+    const previous = { ...defaultConfig, imageProviderId: "nsfw", imageProviderType: "maizi-image", quality: "high", outputFormat: "png", background: "transparent", providerOptions: { quality: "high", background: "transparent", nsfw_check: true } };
+    const status = { imageAvailable: true, imageEditable: true, videoAvailable: false, imageModels: [{ id: "nsfw", name: "Seedream NSFW", type: "maizi-seedream-5-pro-nsfw", imageRequestSchema: schema }] };
+    const next = reconcileProviderConfig(previous, status);
+    assert.equal(next.imageProviderId, "nsfw");
+    assert.equal(next.quality, "auto");
+    assert.equal(next.background, "opaque");
+    assert.equal(next.outputFormat, "png");
+    assert.deepEqual(next.providerOptions, { size: "1:1", resolution: "2K", outputFormat: "png" });
+    assert.equal(previous.background, "transparent");
+    const ordinary = reconcileProviderConfig(previous, { ...status, imageModels: [{ ...status.imageModels[0]!, type: "maizi-image", imageRequestSchema: { ...schema, fields: [...schema.fields, { key: "quality", label: "质量", type: "text" as const, required: false }, { key: "background", label: "背景", type: "text" as const, required: false }] } }] });
+    assert.equal(ordinary.quality, "high");
+    assert.equal(ordinary.background, "transparent");
+});

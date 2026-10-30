@@ -112,6 +112,9 @@
 
 - Portal Gateway 注入用户身份并控制应用入口；仅本地 `admin` 可访问管理后台。Portal 角色保留为展示和审计元数据，绝不参与 Infinite Canvas 授权。
 - 管理后台包含 AI 供应商与公共图片素材管理。
+- 图片供应商类型新增 `MaiziAI Seedream 5.0 Pro NSFW`（`maizi-seedream-5-pro-nsfw`），通过新增独立实例配置名称、API Key、模型名称、分辨率单价和比例；不会修改已有普通版或默认模型。
+- 该类型复用 Maizi 异步提交、轮询与错误处理，使用 `https://www.maizitech.ai/v1`，固定发送布尔值 `nsfw_check=false`；支持文生图、最多 10 张参考图及 JPEG/PNG，不支持遮罩、质量选项或透明背景。每个任务仍生成一张图片，多张输出沿用现有任务调度。
+- Seedream Pro 模型名称由管理员填写（文档示例为 `doubao-seedream-5-0-pro`），通常配置 1K、2K；关闭审核是否生效由供应商判断应用服务器出口 IP。具体限制见 [Maizi Seedream 文档](https://www.maizitech.ai/docs/image-seedream)。启用后沿用现有模型可见权限，不增加按用户授权。
 
 ## 后端能力
 

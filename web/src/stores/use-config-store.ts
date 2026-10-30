@@ -103,11 +103,11 @@ export function reconcileProviderConfig(config: AiConfig, status: AIStatus | nul
         imageProviderType: providerType,
         imageRequestSchemaVersion: schema.version,
         providerOptions: options,
-        quality: typeof options.quality === "string" ? options.quality : config.quality,
+        quality: typeof options.quality === "string" ? options.quality : schema.fields.some((field) => field.key === "quality") ? config.quality : "auto",
         size: typeof options.size === "string" ? options.size : config.size,
         resolution: typeof options.resolution === "string" ? options.resolution : config.resolution,
         outputFormat: typeof options.outputFormat === "string" ? options.outputFormat : config.outputFormat,
-        background: typeof options.background === "string" ? options.background : config.background,
+        background: typeof options.background === "string" ? options.background : schema.fields.some((field) => field.key === "background") ? config.background : "opaque",
     };
 }
 

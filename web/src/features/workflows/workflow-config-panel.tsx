@@ -136,8 +136,12 @@ export function WorkflowConfigPanel({
                         maxCount={9}
                         placement="topRight"
                         buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
-                        onConfigChange={(key, value) => (key === "count" ? onOutputCountChange(Number(value) || 1) : updateAiConfig({ ...config, [key]: value }))}
-                        onProviderOptionsChange={(providerOptions) => updateAiConfig({ ...config, providerOptions })}
+                        onConfigChange={(key, value) => {
+                            if (key === "count") onOutputCountChange(Number(value) || 1);
+                            // Schema pickers also emit complete options; a second write would restore stale options.
+                            else if (!selected?.imageRequestSchema) updateAiConfig({ ...config, [key]: value });
+                        }}
+                        onProviderOptionsChange={(providerOptions) => updateAiConfig(reconcileProviderConfig({ ...config, imageProviderType: selected?.type, providerOptions }, aiStatus))}
                     />
                 ) : (
                     <CanvasVideoSettingsPopover

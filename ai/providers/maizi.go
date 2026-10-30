@@ -22,8 +22,9 @@ type maiziConfig struct {
 }
 
 type maiziProvider struct {
-	config maiziConfig
-	client *http.Client
+	config       maiziConfig
+	client       *http.Client
+	seedreamNSFW bool
 }
 
 type maiziTaskCreateResponse struct {
@@ -76,6 +77,9 @@ func init() {
 }
 
 func (provider *maiziProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
+	if provider.seedreamNSFW {
+		return normalizeMaiziSeedreamNSFWRequest(request)
+	}
 	if len(request.References) > maiziImageRequestSchema.MaxReferenceImages {
 		return ai.ImageTaskRequest{}, maiziError{message: "MaiziAI 图像编辑最多支持 7 张参考图"}
 	}
@@ -146,13 +150,13 @@ func (provider *maiziProvider) SummarizeImageTaskRequest(request ai.ImageTaskReq
 		return ai.ImageTaskRequestSummary{}, err
 	}
 	return ai.ImageTaskRequestSummary{
-		Method: http.MethodPost, Endpoint: maiziBaseURL + "/images/generations", ContentType: "application/json", JSONBody: body,
+		Method: http.MethodPost, Endpoint: provider.imageBaseURL() + "/images/generations", ContentType: "application/json", JSONBody: body,
 	}, nil
 }
 
 func (provider *maiziProvider) GetImageTask(ctx context.Context, id string) (ai.ImageTask, error) {
 	var result maiziTaskResponse
-	if err := provider.doJSON(ctx, http.MethodGet, maiziBaseURL+"/tasks/"+id, nil, &result); err != nil {
+	if err := provider.doJSON(ctx, http.MethodGet, provider.imageBaseURL()+"/tasks/"+id, nil, &result); err != nil {
 		return ai.ImageTask{}, err
 	}
 	status, message := normalizeMaiziImageTaskStatus(result.Status, result.Error)
@@ -165,7 +169,7 @@ func (provider *maiziProvider) createAsyncTask(ctx context.Context, request ai.I
 		return ai.ImageTask{}, err
 	}
 	var result maiziTaskCreateResponse
-	submitErr := provider.doJSON(ctx, http.MethodPost, maiziBaseURL+"/images/generations", data, &result)
+	submitErr := provider.doJSON(ctx, http.MethodPost, provider.imageBaseURL()+"/images/generations", data, &result)
 	task := ai.ImageTask{}
 	if len(result.Data) > 0 {
 		task.ID = strings.TrimSpace(result.Data[0].TaskID)
@@ -230,7 +234,19 @@ func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, referenc
 	if len(masks) > 0 && masks[0] != nil {
 		body["mask_url"] = maiziImageReferenceValue(*masks[0], redacted)
 	}
+	if provider.seedreamNSFW {
+		body["nsfw_check"] = false
+		delete(body, "background")
+		delete(body, "quality")
+	}
 	return body
+}
+
+func (provider *maiziProvider) imageBaseURL() string {
+	if provider.seedreamNSFW {
+		return maiziSeedreamNSFWBaseURL
+	}
+	return maiziBaseURL
 }
 
 func maiziImageReferenceValue(reference ai.ImageReference, redacted bool) string {
