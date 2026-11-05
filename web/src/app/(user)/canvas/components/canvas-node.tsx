@@ -181,6 +181,7 @@ export const CanvasNode = React.memo(function CanvasNode({
         startHeight: 0,
         keepRatio: false,
         ratio: 1,
+        minimum: undefined as { width: number; height: number } | undefined,
     });
     const resizeFrameRef = useRef<number | null>(null);
     const pendingResizeRef = useRef<{ width: number; height: number; position: Position } | null>(null);
@@ -237,7 +238,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             const dx = (event.clientX - resizeRef.current.startX) / scale;
             const dy = (event.clientY - resizeRef.current.startY) / scale;
             const start = resizeRef.current;
-            pendingResizeRef.current = resizeCanvasNode({ x: start.startLeft, y: start.startTop, width: start.startWidth, height: start.startHeight, corner: start.corner, keepRatio: start.keepRatio, ratio: start.ratio }, { x: dx, y: dy });
+            pendingResizeRef.current = resizeCanvasNode({ x: start.startLeft, y: start.startTop, width: start.startWidth, height: start.startHeight, corner: start.corner, keepRatio: start.keepRatio, ratio: start.ratio }, { x: dx, y: dy }, start.minimum);
             if (resizeFrameRef.current) return;
             resizeFrameRef.current = requestAnimationFrame(flushPendingResize);
         },
@@ -255,6 +256,9 @@ export const CanvasNode = React.memo(function CanvasNode({
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
         event.preventDefault();
+        const fullLayout = data.type === CanvasNodeType.Config && !configCard
+            ? event.currentTarget.closest("[data-node-id]")?.querySelector<HTMLDivElement>(".canvas-config-full")
+            : null;
         resizeRef.current = {
             isResizing: true,
             corner,
@@ -264,8 +268,10 @@ export const CanvasNode = React.memo(function CanvasNode({
             startTop: data.position.y,
             startWidth: data.width,
             startHeight: data.height,
-            keepRatio: (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
-            ratio: (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
+            keepRatio: data.type === CanvasNodeType.Config || (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
+            ratio: data.type === CanvasNodeType.Config ? data.width / data.height : (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
+            // Clamp before resizing so full-layout height measurement cannot stretch the card out of ratio afterward.
+            minimum: fullLayout ? { width: 220, height: Math.max(160, fullLayout.offsetHeight + 4) } : undefined,
         };
         onResizeStart?.();
         window.addEventListener("mousemove", handleResizeMove);
@@ -326,7 +332,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            data-config-form={configCard?.form}
+            data-config-form={data.type === CanvasNodeType.Config ? configCard?.form || "full" : undefined}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : "z-10"}`}
             style={{
                 ...(configCard ? { "--config-card-design-scale": configCard.designScale } : undefined),

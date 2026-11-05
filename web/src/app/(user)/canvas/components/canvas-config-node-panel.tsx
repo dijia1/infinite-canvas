@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Settings2, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
@@ -273,11 +273,10 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
     );
 
     return (
-        <div ref={layoutRef} className="flex min-w-0 w-full shrink-0 cursor-move flex-col gap-8 px-3 py-4 text-sm" style={{ color: theme.node.text }}>
+        <div ref={layoutRef} className="canvas-config-full canvas-config-view-transition flex min-w-0 w-full shrink-0 cursor-move flex-col gap-8 px-3 py-4 text-sm" style={{ color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
             <div className="flex min-w-0 shrink-0 flex-col gap-2">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
-                        <div className="shrink-0 text-sm font-semibold">生成配置</div>
                         <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
                             <Eye className="size-3.5" />
                             预览

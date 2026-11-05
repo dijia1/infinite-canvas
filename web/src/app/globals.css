@@ -278,19 +278,10 @@
     display: flex;
     flex: none;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 6px;
     height: 26px;
     padding-inline: 3px;
-}
-
-.canvas-config-compact-title strong {
-    min-width: 0;
-    overflow: hidden;
-    font-size: 12px;
-    font-weight: 600;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }
 
 .canvas-config-compact-title .canvas-config-mode.ant-segmented .ant-segmented-item-label {
@@ -307,7 +298,7 @@
     display: none;
 }
 
-.canvas-config-compact-model .ant-select {
+.canvas-config-model .ant-select {
     height: 26px;
     background: var(--config-compact-control);
     font-size: 12px;
@@ -380,4 +371,37 @@
 
 [data-config-form="icons"] .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-settings-icon {
     display: block;
+}
+
+.canvas-config-view-transition {
+    animation: canvas-config-full-in 180ms cubic-bezier(.2, .8, .2, 1);
+    transform-origin: center;
+}
+
+/* Different names restart the same entrance treatment when a compact layout changes form in place. */
+[data-config-form="controls"] .canvas-config-view-transition {
+    animation-name: canvas-config-controls-in;
+}
+
+[data-config-form="icons"] .canvas-config-view-transition {
+    animation-name: canvas-config-icons-in;
+}
+
+@keyframes canvas-config-full-in {
+    from { opacity: 0; transform: translateY(3px) scale(.98); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes canvas-config-controls-in {
+    from { opacity: 0; transform: translateY(3px) scale(.98); }
+    to { opacity: 1; transform: none; }
+}
+
+@keyframes canvas-config-icons-in {
+    from { opacity: 0; transform: scale(.94); }
+    to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-config-form] .canvas-config-view-transition { animation: none; }
 }

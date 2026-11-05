@@ -33,9 +33,8 @@ export function CanvasConfigCompactCard({ theme, modeSwitch, modelSelect, settin
                 event.stopPropagation();
             }}
         >
-            <div className="canvas-config-compact-layout">
+            <div className="canvas-config-compact-layout canvas-config-view-transition">
                 <div className="canvas-config-compact-title">
-                    <strong>生成配置</strong>
                     {modeSwitch}
                 </div>
                 <div className="canvas-config-compact-model">{modelSelect}</div>
