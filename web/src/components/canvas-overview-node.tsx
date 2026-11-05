@@ -22,6 +22,8 @@ type CanvasOverviewNodeProps = {
     stroke: string;
     selectionStroke: string;
     dataAttributes?: Record<string, string | undefined>;
+    onMouseEnter?: MouseEventHandler<HTMLDivElement>;
+    onMouseLeave?: MouseEventHandler<HTMLDivElement>;
     onMouseDown?: MouseEventHandler<HTMLDivElement>;
     onPointerDown?: PointerEventHandler<HTMLDivElement>;
     onContextMenu?: MouseEventHandler<HTMLDivElement>;
@@ -46,6 +48,8 @@ export function CanvasOverviewNode({
     stroke,
     selectionStroke,
     dataAttributes,
+    onMouseEnter,
+    onMouseLeave,
     onMouseDown,
     onPointerDown,
     onContextMenu,
@@ -56,7 +60,9 @@ export function CanvasOverviewNode({
             {...dataAttributes}
             data-node-id={nodeId}
             className={`node-element absolute select-none rounded-3xl ${selected ? "z-50" : "z-10"}`}
-            style={{ transform: `translate(${position.x}px, ${position.y}px)`, width, height, contain: "layout paint style" }}
+            style={{ transform: `translate(${position.x}px, ${position.y}px)`, width, height, contain: "layout style" }}
+            onMouseEnter={onMouseEnter}
+            onMouseLeave={onMouseLeave}
             onPointerDown={onPointerDown}
             onContextMenu={onContextMenu}
         >

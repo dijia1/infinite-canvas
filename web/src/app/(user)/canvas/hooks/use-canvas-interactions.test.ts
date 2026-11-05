@@ -58,7 +58,7 @@ function setup(
         setDialogNodeId: () => undefined,
         pause: () => calls.push("pause"),
         resume: () => calls.push("resume"),
-        screenToCanvas: (x, y) => ({ x, y }),
+        screenToCanvas: (x, y) => ({ x: (x - viewportRef.current.x) / viewportRef.current.k, y: (y - viewportRef.current.y) / viewportRef.current.k }),
         createNode: (type, position) => ({ id: `new-${type}`, type, title: type, position, width: 100, height: 100 }),
         requestAnimationFrame: (callback) => {
             frame = callback;
@@ -78,12 +78,46 @@ function setup(
         connectionsRef,
         selectedNodeIdsRef,
         calls,
+        viewportRef,
         flushFrame: () => frame?.(0),
         flushDeferredConnectionUpdate: () => {
             if (deferredConnectionUpdate) connectionsRef.current = deferredConnectionUpdate(connectionsRef.current);
         },
     };
 }
+
+test("connection handles accept the same screen-space drop radius at every zoom", () => {
+    for (const k of [0.05, 0.14, 0.42, 1, 1.52, 5]) {
+        const config = { ...imageNode("config", 1000, 0), type: CanvasNodeType.Config };
+        const source = imageNode("source", 0, 0);
+        const { controller, connectionsRef, viewportRef } = setup([source, config]);
+        viewportRef.current = { x: 80, y: 60, k };
+        controller.handleConnectStart({ clientX: 80, clientY: 60 }, source.id, "source");
+        controller.handleGlobalMouseMove({ clientX: 80 + 1000 * k - 17, clientY: 60 + 50 * k });
+        assert.equal(controller.connectionTargetNodeId, config.id);
+        controller.handleGlobalMouseUp({ clientX: 80 + 1000 * k - 17, clientY: 60 + 50 * k });
+        assert.equal(connectionsRef.current.length, 1);
+        assert.equal(controller.pendingConnectionCreate, null);
+    }
+});
+
+test("dropping outside the handle retains the original world point for menu creation", () => {
+    const { controller, viewportRef } = setup([imageNode("source", 0, 0), { ...imageNode("config", 1000, 0), type: CanvasNodeType.Config }]);
+    viewportRef.current = { x: 80, y: 60, k: 0.42 };
+    controller.handleConnectStart({ clientX: 80, clientY: 60 }, "source", "source");
+    controller.handleGlobalMouseUp({ clientX: 80 + 1000 * 0.42 - 19, clientY: 60 + 50 * 0.42 });
+    assert.ok(controller.pendingConnectionCreate);
+    assert.equal(controller.pendingConnectionCreate.position.x, (1000 * 0.42 - 19) / 0.42);
+    assert.equal(controller.pendingConnectionCreate.position.y, 50);
+});
+
+test("reverse dragging targets the normalized source handle outside an image", () => {
+    const { controller, connectionsRef, viewportRef } = setup([imageNode("image", 0, 0), { ...imageNode("config", 1000, 0), type: CanvasNodeType.Config }]);
+    viewportRef.current = { x: 0, y: 0, k: 0.14 };
+    controller.handleConnectStart({ clientX: 140, clientY: 7 }, "config", "target");
+    controller.handleGlobalMouseUp({ clientX: 100 * 0.14 + 17, clientY: 50 * 0.14 });
+    assert.deepEqual(connectionsRef.current.map(({ fromNodeId, toNodeId }) => ({ fromNodeId, toNodeId })), [{ fromNodeId: "image", toNodeId: "config" }]);
+});
 
 test("node drag lifecycle latches Alt, starts after movement, and finishes before history resumes", () => {
     const events: string[] = [];

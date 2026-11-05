@@ -80,11 +80,12 @@ export function CanvasConnectionHandle({
         <div
             data-canvas-connection={side}
             aria-label={label}
-            className={`absolute top-1/2 z-30 flex size-12 -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${side === "left" ? "-left-6" : "-right-6"} ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+            className={`group/connection absolute top-1/2 z-30 flex -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${side === "left" ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"} ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
+            style={{ width: "calc(36px * var(--canvas-inverse-scale, 1))", height: "calc(36px * var(--canvas-inverse-scale, 1))" }}
             onMouseDown={onMouseDown}
             onPointerDown={onPointerDown}
         >
-            <div className="size-3 rounded-full border-2 transition-all hover:scale-125" style={{ background: theme.node.panel, borderColor: theme.node.muted }} />
+            <div className="rounded-full border-solid transition-transform group-hover/connection:scale-125" style={{ width: "calc(12px * var(--canvas-inverse-scale, 1))", height: "calc(12px * var(--canvas-inverse-scale, 1))", borderWidth: "calc(2px * var(--canvas-inverse-scale, 1))", background: theme.node.panel, borderColor: theme.node.text }} />
         </div>
     );
 }

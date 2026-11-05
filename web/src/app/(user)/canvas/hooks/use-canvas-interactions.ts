@@ -204,15 +204,16 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
             [...options.nodesRef.current]
                 .filter((node) => !isHiddenBatchChild(node, options.nodesRef.current))
                 .reverse()
-                .find(
-                    (node) =>
-                        node.id !== current.nodeId &&
-                        Boolean((options.normalizeConnection || normalizeConnection)(current.nodeId, node.id, options.nodesRef.current, current.handleType)) &&
-                        world.x >= node.position.x &&
-                        world.x <= node.position.x + node.width &&
-                        world.y >= node.position.y &&
-                        world.y <= node.position.y + node.height,
-                )?.id || null
+                .find((node) => {
+                    if (node.id === current.nodeId) return false;
+                    const connection = (options.normalizeConnection || normalizeConnection)(current.nodeId, node.id, options.nodesRef.current, current.handleType);
+                    if (!connection) return false;
+                    if (world.x >= node.position.x && world.x <= node.position.x + node.width && world.y >= node.position.y && world.y <= node.position.y + node.height) return true;
+                    const handleX = node.position.x + (connection.fromNodeId === node.id ? node.width : 0);
+                    const handleY = node.position.y + node.height / 2;
+                    // Match the handle's 36px screen-space hit area, including its half outside the card.
+                    return Math.hypot(world.x - handleX, world.y - handleY) * options.viewportRef.current.k <= 18;
+                })?.id || null
         );
     };
 

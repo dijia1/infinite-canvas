@@ -2335,6 +2335,8 @@ function InfiniteCanvasPage() {
                         <CanvasConnectionCreateMenu
                             title="引用该节点生成"
                             position={pendingConnectionCreate.position}
+                            containerRef={containerRef}
+                            getViewport={getLiveViewport}
                             theme={theme}
                             onClose={cancelPendingConnectionCreate}
                             options={[

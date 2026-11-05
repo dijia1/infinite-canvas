@@ -1177,6 +1177,8 @@ function WorkflowEditorContent() {
                             <CanvasConnectionCreateMenu
                                 title="连接并创建"
                                 position={interactions.pendingConnectionCreate.position}
+                                containerRef={containerRef}
+                                getViewport={() => canvasRef.current?.getViewport()}
                                 theme={theme}
                                 onClose={interactions.cancelPendingConnectionCreate}
                                 options={connectionCreateOptions.map(([type, label]) => ({

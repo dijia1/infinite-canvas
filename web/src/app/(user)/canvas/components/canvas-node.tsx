@@ -278,6 +278,20 @@ export const CanvasNode = React.memo(function CanvasNode({
         };
     }, [handleResizeMove, handleResizeUp, onResizeEnd]);
 
+    const handleMouseEnter = () => {
+        setHovered(true);
+        onHoverStart(data.id);
+    };
+    const handleMouseLeave = () => {
+        setHovered(false);
+        onHoverEnd(data.id);
+    };
+    const handlesVisible = data.type === CanvasNodeType.Image ? hovered : hovered || isSelected || isConnecting;
+    const connectionHandles = <>
+        <ConnectionHandleDot side="left" visible={handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
+        <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
+    </>;
+
     if (renderDetail === "overview") {
         return (
             <CanvasOverviewNode
@@ -295,10 +309,14 @@ export const CanvasNode = React.memo(function CanvasNode({
                 placeholderFill={theme.toolbar.activeBg}
                 stroke={theme.node.stroke}
                 selectionStroke={selectionBlue}
+                onMouseEnter={handleMouseEnter}
+                onMouseLeave={handleMouseLeave}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onContextMenu={(event) => onContextMenu(event, data.id)}
                 onImageLoaded={(storageKey) => onImageLoaded?.(data.id, storageKey)}
-            />
+            >
+                {connectionHandles}
+            </CanvasOverviewNode>
         );
     }
 
@@ -313,14 +331,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                 transition: "box-shadow 200ms ease",
                 contain: "layout style",
             }}
-            onMouseEnter={() => {
-                setHovered(true);
-                onHoverStart(data.id);
-            }}
-            onMouseLeave={() => {
-                setHovered(false);
-                onHoverEnd(data.id);
-            }}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
             <CanvasNodeFrame
@@ -399,8 +411,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
             </CanvasNodeFrame>
 
-            <ConnectionHandleDot side="left" visible={hovered || isSelected || isConnecting} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
-            <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && (hovered || isSelected || isConnecting)} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
+            {connectionHandles}
 
             {showPanel && renderPanel && data.type !== CanvasNodeType.Config ? <div className="absolute left-1/2 top-full z-[70] w-[500px] -translate-x-1/2 pt-4">{renderPanel(data)}</div> : null}
         </div>
