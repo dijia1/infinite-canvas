@@ -57,6 +57,7 @@ import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec, normalizeVideoConfigNodeSize } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
+import { CONFIG_COMPACT_MAX_SCALE, getConfigCardDisplayScale, getConfigCardFloorLimits, getConfigCardFloorScale } from "../utils/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
@@ -673,13 +674,17 @@ function InfiniteCanvasPage() {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
+    const configCardFloorLimits = useMemo(() => getConfigCardFloorLimits(nodes), [nodes]);
+    const configCardFloorLimitsRef = useRef(configCardFloorLimits);
     useLayoutEffect(() => {
         nodesRef.current = nodes;
         maskResourcesRef.current = maskResources;
         connectionsRef.current = connections;
         selectedNodeIdsRef.current = selectedNodeIds;
         viewportRef.current = viewport;
-    }, [nodes, connections, maskResources, selectedNodeIds, viewport]);
+        configCardFloorLimitsRef.current = configCardFloorLimits;
+    }, [nodes, connections, maskResources, selectedNodeIds, viewport, configCardFloorLimits]);
+    const getNodeDisplayScale = useCallback((node: CanvasNodeData) => getConfigCardDisplayScale(node, viewportRef.current.k, configCardFloorLimitsRef.current.get(node.id)), []);
 
     const navigateAway = useCallback((href: string) => {
         flushDocument(getLiveViewport());
@@ -790,6 +795,7 @@ function InfiniteCanvasPage() {
         createNode: createInteractionNode,
         createConnectionId: nanoid,
         onWarning: message.warning,
+        getNodeDisplayScale,
     });
 
     const nodeDragWasActiveRef = useRef(false);
@@ -1086,6 +1092,7 @@ function InfiniteCanvasPage() {
         return { nodeIds, connectionIds };
     }, [activeNodeId, connections]);
     const canvasRenderDetail = getCanvasRenderDetail(viewport.k);
+    const configCompact = viewport.k < CONFIG_COMPACT_MAX_SCALE;
     const overviewInteractiveConnectionIds = useMemo(() => {
         const ids = new Set(relatedHighlight.connectionIds);
         if (selectedConnectionId) ids.add(selectedConnectionId);
@@ -1990,6 +1997,7 @@ function InfiniteCanvasPage() {
                     node={contentNode}
                     inputSummary={panelMeta?.summary || getInputSummary(inputs)}
                     inputs={inputs}
+                    compact={configCompact}
                     onConfigChange={handleConfigNodeChange}
                     onTextInputChange={handleNodeContentChange}
                     onLayoutHeightChange={handleConfigNodeLayoutHeightChange}
@@ -2005,7 +2013,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigNodeLayoutHeightChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
+        [configCompact, configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigNodeLayoutHeightChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
     );
 
     const handleCanvasNodeHoverStart = useCallback(
@@ -2261,6 +2269,7 @@ function InfiniteCanvasPage() {
 
                     {visibleNodes.map((node) => {
                         const imageResource = canvasImageResources.get(node.id);
+                        const configFloorScale = configCompact ? getConfigCardFloorScale(node, viewport.k, configCardFloorLimits.get(node.id)) : 0;
                         return (
                             <CanvasNode
                                 key={node.id}
@@ -2277,7 +2286,10 @@ function InfiniteCanvasPage() {
                                 imageError={canvasImageErrors.get(node.id)}
                                 imageResultState={getImageResultState(node.id)}
                                 onRetryImage={retryCanvasImage}
-                                renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
+                                renderDetail={canvasRenderDetail === "overview" && node.type !== CanvasNodeType.Config && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
+                                configCompact={node.type === CanvasNodeType.Config && configCompact}
+                                configFloorScale={configFloorScale}
+                                configFloored={configFloorScale > viewport.k}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([

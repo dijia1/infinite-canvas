@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { canvasSettingsPanelPosition } from "@/components/canvas-settings-select";
+import { canvasSettingsPanelPosition, type CanvasSettingsTriggerProps } from "@/components/canvas-settings-select";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
@@ -22,13 +22,13 @@ type CanvasImageSettingsPopoverProps = {
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
     maxCount?: number;
-};
+} & CanvasSettingsTriggerProps;
 
-export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderOptionsChange, onOpenChange, buttonClassName, placement = "topLeft", maxCount = 15 }: CanvasImageSettingsPopoverProps) {
+export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderOptionsChange, onOpenChange, buttonClassName, placement = "topLeft", maxCount = 15, buttonIcon, panelHeader, defaultOpen = false, formatSummary = (summary) => summary }: CanvasImageSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(defaultOpen);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 	const aiStatus = useConfigStore((state) => state.status);
 	const selectedImageModel = resolveSelectedModel(aiStatus?.imageModels, config.imageProviderId, aiStatus?.defaultImageModelId);
@@ -64,7 +64,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderO
         };
     }, [onOpenChange, open]);
 
-    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} schema={schema} maxCount={maxCount} onConfigChange={onConfigChange} onProviderOptionsChange={onProviderOptionsChange} /> : null;
+    const panel = open && buttonRect ? <ImageSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} schema={schema} maxCount={maxCount} header={panelHeader} onConfigChange={onConfigChange} onProviderOptionsChange={onProviderOptionsChange} /> : null;
 
     return (
         <>
@@ -74,11 +74,11 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderO
                     type="text"
                     className={buttonClassName || "!h-8 !max-w-[180px] !justify-start !rounded-full !px-2.5"}
                     style={{ background: theme.node.fill, color: theme.node.text }}
-                    icon={<Settings2 className="size-3.5" />}
+                    icon={buttonIcon ?? <Settings2 className="size-3.5" />}
                     onClick={() => updateOpen(!open)}
                 >
                     <span className="truncate">
-						{imageSettingsSummary(config, schema, options, quality, activeSize, count)}
+						{formatSummary(imageSettingsSummary(config, schema, options, quality, activeSize, count))}
                     </span>
                 </Button>
             </span>
@@ -97,6 +97,7 @@ function ImageSettingsPortal({
     onConfigChange,
 	onProviderOptionsChange,
     maxCount,
+    header,
 }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
@@ -107,6 +108,7 @@ function ImageSettingsPortal({
     onConfigChange: (key: keyof AiConfig, value: string) => void;
 	onProviderOptionsChange?: (options: ImageRequestOptions) => void;
     maxCount: number;
+    header?: ReactNode;
 }) {
     const style = {
         position: "fixed",
@@ -132,6 +134,7 @@ function ImageSettingsPortal({
             onWheel={(event) => event.stopPropagation()}
         >
             <div style={{ maxHeight: style.maxHeight, overflowY: "auto", padding: 18, borderRadius: "inherit" }}>
+                {header}
                 <ImageSettingsPanel config={config} schema={schema} maxCount={maxCount} onConfigChange={(key, value) => onConfigChange(key, value)} onProviderOptionsChange={onProviderOptionsChange} theme={theme} className="space-y-4" />
             </div>
         </div>,

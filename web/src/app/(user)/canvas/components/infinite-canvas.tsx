@@ -167,7 +167,9 @@ export function InfiniteCanvas({ ref, containerRef, viewport, cursor, background
 
     const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
         const target = event.target instanceof Element ? event.target : null;
-        if (target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown")) return;
+        const noZoomSurface = target?.closest("[data-canvas-no-zoom],.ant-modal,.ant-popover,.ant-dropdown,.ant-select-dropdown,.ant-picker-dropdown");
+        // Compact cards fill the wide view, so their controls must not stop the wheel from zooming the canvas.
+        if (noZoomSurface && !noZoomSurface.closest("[data-canvas-wheel-zoom]")) return;
 
         const currentViewport = nextWheelViewportRef.current || viewportRef.current;
         const delta = -event.deltaY;

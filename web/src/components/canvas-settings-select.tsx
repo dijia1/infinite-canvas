@@ -1,6 +1,20 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Select, type SelectProps } from "antd";
+
+// Lets a caller reuse a settings popover from a smaller trigger that needs its own icon, summary and extra controls.
+export type CanvasSettingsTriggerProps = {
+    buttonIcon?: ReactNode;
+    panelHeader?: ReactNode;
+    defaultOpen?: boolean;
+    formatSummary?: (summary: string) => string;
+};
+
+export function shortSettingsSummary(summary: string) {
+    const parts = summary.split(" · ");
+    return parts.length > 2 ? `${parts[0]} · ${parts[parts.length - 1]}` : summary;
+}
 
 // Menus belong to the panel's non-scrolling outer shell, so outside-click
 // detection includes them and the scrolling content cannot clip them.

@@ -78,6 +78,7 @@ export type CanvasInteractionControllerOptions = {
     onNodeDragStart?: (event: CanvasNodeDragLifecycleEvent) => void;
     onNodeDragEnd?: (event: CanvasNodeDragEndEvent) => void;
     constrainNodeDrag?: (event: CanvasNodeDragConstraintEvent) => Position;
+    getNodeDisplayScale?: (node: CanvasNodeData) => number;
 };
 
 export type CanvasInteractionController = {
@@ -200,17 +201,25 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
 
     const getConnectableNodeAtPoint = (clientX: number, clientY: number, current: ConnectionHandle) => {
         const world = options.screenToCanvas(clientX, clientY);
+        const displayScale = (node: CanvasNodeData) => options.getNodeDisplayScale?.(node) ?? 1;
         return (
             [...options.nodesRef.current]
                 .filter((node) => !isHiddenBatchChild(node, options.nodesRef.current))
                 .reverse()
+                // A card rendered above its world size paints over its neighbors, so it also wins the hit test.
+                .sort((a, b) => Number(displayScale(b) > 1) - Number(displayScale(a) > 1))
                 .find((node) => {
                     if (node.id === current.nodeId) return false;
                     const connection = (options.normalizeConnection || normalizeConnection)(current.nodeId, node.id, options.nodesRef.current, current.handleType);
                     if (!connection) return false;
-                    if (world.x >= node.position.x && world.x <= node.position.x + node.width && world.y >= node.position.y && world.y <= node.position.y + node.height) return true;
-                    const handleX = node.position.x + (connection.fromNodeId === node.id ? node.width : 0);
-                    const handleY = node.position.y + node.height / 2;
+                    const scale = displayScale(node);
+                    const width = node.width * scale;
+                    const height = node.height * scale;
+                    const left = node.position.x + (node.width - width) / 2;
+                    const top = node.position.y + (node.height - height) / 2;
+                    if (world.x >= left && world.x <= left + width && world.y >= top && world.y <= top + height) return true;
+                    const handleX = left + (connection.fromNodeId === node.id ? width : 0);
+                    const handleY = top + height / 2;
                     // Match the handle's 36px screen-space hit area, including its half outside the card.
                     return Math.hypot(world.x - handleX, world.y - handleY) * options.viewportRef.current.k <= 18;
                 })?.id || null

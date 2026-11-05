@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Video } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Settings2, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
 import { resolveImageUrl } from "@/services/image-storage";
@@ -10,12 +10,14 @@ import type { CanvasImageResource } from "../media/canvas-image-resource-control
 import { defaultConfig, reconcileProviderConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import { CanvasConfigModelSelect } from "@/components/canvas-config-model-select";
 import { CanvasInputChip as InputChip } from "@/components/canvas-node-primitives";
+import { shortSettingsSummary, type CanvasSettingsTriggerProps } from "@/components/canvas-settings-select";
 import { reconcileVideoConfig } from "@/lib/video-config";
 import { resolveSelectedModel } from "@/lib/model-selection";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { hasImageMask } from "../image-mask/mask-utils";
 import { buildGenerationConfig } from "../utils/canvas-generation-utils";
+import { CanvasConfigCompactCard } from "./canvas-config-compact-card";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { NodeGenerationInput } from "./canvas-node-generation";
@@ -34,12 +36,14 @@ type CanvasConfigNodePanelProps = {
     onRetryImage?: (nodeId: string) => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
     onLayoutHeightChange?: (nodeId: string, height: number) => void;
+    compact?: boolean;
 };
 
-export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate, onLayoutHeightChange, onPreviewImagesChange, imageResources, imageErrors, onRetryImage, onImageLoaded }: CanvasConfigNodePanelProps) {
+export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate, onLayoutHeightChange, onPreviewImagesChange, imageResources, imageErrors, onRetryImage, onImageLoaded, compact = false }: CanvasConfigNodePanelProps) {
     const { message } = App.useApp();
     const previewContentRef = useRef<HTMLDivElement>(null);
     const layoutRef = useRef<HTMLDivElement>(null);
+    // Only the full layout measures the node, so the compact card keeps the height it would need when zoomed back in.
     useLayoutEffect(() => {
         const layout = layoutRef.current;
         if (!layout || !onLayoutHeightChange) return;
@@ -48,7 +52,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         const observer = new ResizeObserver(syncHeight);
         observer.observe(layout);
         return () => observer.disconnect();
-    }, [node.id, onLayoutHeightChange]);
+    }, [compact, node.id, onLayoutHeightChange]);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [editingTextId, setEditingTextId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState("");
@@ -131,139 +135,206 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         };
     }, [previewOpen]);
 
+    // Switching mode swaps the popover component, so reopen it to let the compact card keep adjusting in one place.
+    const reopenSettingsRef = useRef(false);
+    useEffect(() => {
+        reopenSettingsRef.current = false;
+    }, [mode]);
+
+    const generateDisabled = (!inputSummary.textCount && !inputSummary.imageCount) || (mode === "video" && (!aiStatus || !config.vquality));
+    const previewButton = (
+        <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
+            <Eye className="size-3.5" />
+            预览
+        </button>
+    );
+    const modeSwitch = (
+        <div className="shrink-0 cursor-default" onMouseDown={(event) => event.stopPropagation()}>
+            <Segmented
+                size="small"
+                className="canvas-config-mode !rounded-md !p-0.5"
+                value={mode}
+                onChange={(value) => {
+                    reopenSettingsRef.current = compact;
+                    onConfigChange(node.id, { generationMode: value as CanvasGenerationMode });
+                }}
+                options={[
+                    {
+                        value: "image",
+                        label: (
+                            <span className="inline-flex items-center gap-1">
+                                <ImageIcon className="size-3.5" />
+                                生图
+                            </span>
+                        ),
+                    },
+                    {
+                        value: "video",
+                        label: (
+                            <span className="inline-flex items-center gap-1">
+                                <Video className="size-3.5" />
+                                视频
+                            </span>
+                        ),
+                    },
+                ]}
+            />
+        </div>
+    );
+    const inputChips = (
+        <div className="flex shrink-0 flex-wrap gap-1.5">
+            <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
+            <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
+            {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
+        </div>
+    );
+    const modelSelect = (
+        <>
+            {mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
+            {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio }); }} /> : null}
+        </>
+    );
+    const renderSettings = (buttonClassName: string, triggerProps?: CanvasSettingsTriggerProps) =>
+        mode === "video" ? (
+            <CanvasVideoSettingsPopover
+                {...triggerProps}
+                config={config}
+                placement="topRight"
+                buttonClassName={buttonClassName}
+                onConfigChange={(key, value) => onConfigChange(node.id, key === "videoSeconds" ? { seconds: value } : { [key]: value })}
+            />
+        ) : mode === "image" ? (
+            <CanvasImageSettingsPopover
+                {...triggerProps}
+                config={config}
+                placement="topRight"
+                buttonClassName={buttonClassName}
+                onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
+                onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
+            />
+        ) : null;
+    const previewModal = (
+        <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} zIndex={1300} centered destroyOnHidden>
+            <div ref={previewContentRef} className="min-h-0 flex-1 overflow-hidden" data-canvas-no-zoom onWheelCapture={(event) => event.stopPropagation()}>
+                {inputs.length ? (
+                    <div className="flex h-[min(66vh,580px)] flex-col gap-3 overflow-hidden">
+                        <div className="shrink-0">
+                            <PreviewSection title="图片提示词" count={imageInputs.length} empty="暂无图片提示词">
+                                <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
+                                    {imageInputs.map((input, index) => (
+                                        <ImageSortCard key={input.nodeId} input={input} resource={imageResources?.get(input.nodeId)} error={imageErrors?.get(input.nodeId)} onRetry={onRetryImage} onLoaded={onImageLoaded} imageIndex={index} imageTotal={imageInputs.length} theme={theme} onMove={moveInput} />
+                                    ))}
+                                </div>
+                            </PreviewSection>
+                        </div>
+                        <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden">
+                            <div className="thin-scrollbar min-h-0 overflow-y-auto pr-1.5">
+                                <PreviewSection title="文本提示词" count={textInputs.length} empty="暂无文本提示词">
+                                    <div className="space-y-1.5">
+                                        {textInputs.map((input, index) => (
+                                            <TextSortCard key={input.nodeId} input={input} textIndex={index} textTotal={textInputs.length} theme={theme} onMove={moveInput} onEdit={startTextEdit} />
+                                        ))}
+                                    </div>
+                                </PreviewSection>
+                            </div>
+                            <div className="flex min-h-0 flex-col rounded-xl border p-2.5" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
+                                {editingTextId ? (
+                                    <>
+                                        <div className="mb-2 flex items-center justify-between">
+                                            <div className="text-sm font-semibold">编辑文本提示词</div>
+                                            <Button size="small" type="text" onClick={() => setEditingTextId(null)}>
+                                                收起
+                                            </Button>
+                                        </div>
+                                        <Input.TextArea className="thin-scrollbar !flex-1 !resize-none !text-xs !leading-5" value={editingText} onChange={(event) => setEditingText(event.target.value)} />
+                                        <div className="mt-2 flex justify-end gap-2">
+                                            <Button size="small" onClick={() => setEditingTextId(null)}>
+                                                取消
+                                            </Button>
+                                            <Button size="small" type="primary" onClick={saveTextEdit}>
+                                                保存
+                                            </Button>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="flex h-full flex-col justify-center rounded-xl border border-dashed px-4 text-center text-xs leading-5 opacity-45" style={{ borderColor: theme.node.stroke }}>
+                                        <Edit3 className="mx-auto mb-2 size-5" />
+                                        选择一条文本后在这里编辑
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词或参考图" className="py-8" />
+                )}
+            </div>
+        </Modal>
+    );
+
+    if (compact) {
+        const ModeIcon = mode === "video" ? Video : ImageIcon;
+        return (
+            <>
+                <CanvasConfigCompactCard
+                    theme={theme}
+                    inputLabel={[inputSummary.textCount ? `提示词 ${inputSummary.textCount}` : "", inputSummary.imageCount ? `参考图 ${inputSummary.imageCount}` : ""].filter(Boolean).join(" · ")}
+                    modelSelect={modelSelect}
+                    generateDisabled={generateDisabled}
+                    onGenerate={() => onGenerate(node.id)}
+                    settings={renderSettings("canvas-config-compact-settings", {
+                        defaultOpen: reopenSettingsRef.current,
+                        formatSummary: shortSettingsSummary,
+                        buttonIcon: (
+                            <>
+                                <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
+                                <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
+                            </>
+                        ),
+                        panelHeader: (
+                            <div className="mb-4 grid gap-3">
+                                <div className="flex items-center justify-between gap-2">
+                                    {modeSwitch}
+                                    {previewButton}
+                                </div>
+                                {inputChips}
+                                {modelSelect}
+                            </div>
+                        ),
+                    })}
+                />
+                {previewModal}
+            </>
+        );
+    }
+
     return (
         <div ref={layoutRef} className="flex min-w-0 w-full shrink-0 cursor-move flex-col gap-8 px-3 py-4 text-sm" style={{ color: theme.node.text }}>
             <div className="flex min-w-0 shrink-0 flex-col gap-2">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                         <div className="shrink-0 text-sm font-semibold">生成配置</div>
-                        <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
-                            <Eye className="size-3.5" />
-                            预览
-                        </button>
+                        {previewButton}
                     </div>
-                    <div className="shrink-0 cursor-default" onMouseDown={(event) => event.stopPropagation()}>
-                        <Segmented
-                            size="small"
-                            className="canvas-config-mode !rounded-md !p-0.5"
-                            value={mode}
-                            onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode })}
-                            options={[
-                                {
-                                    value: "image",
-                                    label: (
-                                        <span className="inline-flex items-center gap-1">
-                                            <ImageIcon className="size-3.5" />
-                                            生图
-                                        </span>
-                                    ),
-                                },
-                                {
-                                    value: "video",
-                                    label: (
-                                        <span className="inline-flex items-center gap-1">
-                                            <Video className="size-3.5" />
-                                            视频
-                                        </span>
-                                    ),
-                                },
-                            ]}
-                        />
-                    </div>
+                    {modeSwitch}
                 </div>
-
-                <div className="flex shrink-0 flex-wrap gap-1.5">
-                    <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
-                    <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
-                    {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
-                </div>
+                {inputChips}
             </div>
 
             <div className="grid min-w-0 shrink-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
-                {mode === "video" ? (
-                    <CanvasVideoSettingsPopover
-                        config={config}
-                        placement="topRight"
-                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
-                        onConfigChange={(key, value) => onConfigChange(node.id, key === "videoSeconds" ? { seconds: value } : { [key]: value })}
-                    />
-                ) : mode === "image" ? (
-                    <CanvasImageSettingsPopover
-                        config={config}
-                        placement="topRight"
-                        buttonClassName="canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"
-                        onConfigChange={(key, value) => onConfigChange(node.id, key === "count" ? { count: Number(value) || 1 } : { [key]: value })}
-                        onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
-                    />
-                ) : null}
+                {renderSettings("canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2")}
             </div>
 
             <div className="grid min-w-0 shrink-0 gap-2">
-                <Button type="primary" className="!h-9 !w-full !cursor-pointer !rounded-lg" disabled={(!inputSummary.textCount && !inputSummary.imageCount) || (mode === "video" && (!aiStatus || !config.vquality))} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
+                <Button type="primary" className="!h-9 !w-full !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
                     <span className="inline-flex items-center gap-1.5">
                         <Play className="size-4" />
                         <span>开始生成</span>
                     </span>
                 </Button>
-                {mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
-                {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio }); }} /> : null}
+                {modelSelect}
             </div>
-            <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} centered destroyOnHidden>
-                <div ref={previewContentRef} className="min-h-0 flex-1 overflow-hidden" data-canvas-no-zoom onWheelCapture={(event) => event.stopPropagation()}>
-                    {inputs.length ? (
-                        <div className="flex h-[min(66vh,580px)] flex-col gap-3 overflow-hidden">
-                            <div className="shrink-0">
-                                <PreviewSection title="图片提示词" count={imageInputs.length} empty="暂无图片提示词">
-                                    <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
-                                        {imageInputs.map((input, index) => (
-                                            <ImageSortCard key={input.nodeId} input={input} resource={imageResources?.get(input.nodeId)} error={imageErrors?.get(input.nodeId)} onRetry={onRetryImage} onLoaded={onImageLoaded} imageIndex={index} imageTotal={imageInputs.length} theme={theme} onMove={moveInput} />
-                                        ))}
-                                    </div>
-                                </PreviewSection>
-                            </div>
-                            <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden">
-                                <div className="thin-scrollbar min-h-0 overflow-y-auto pr-1.5">
-                                    <PreviewSection title="文本提示词" count={textInputs.length} empty="暂无文本提示词">
-                                        <div className="space-y-1.5">
-                                            {textInputs.map((input, index) => (
-                                                <TextSortCard key={input.nodeId} input={input} textIndex={index} textTotal={textInputs.length} theme={theme} onMove={moveInput} onEdit={startTextEdit} />
-                                            ))}
-                                        </div>
-                                    </PreviewSection>
-                                </div>
-                                <div className="flex min-h-0 flex-col rounded-xl border p-2.5" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
-                                    {editingTextId ? (
-                                        <>
-                                            <div className="mb-2 flex items-center justify-between">
-                                                <div className="text-sm font-semibold">编辑文本提示词</div>
-                                                <Button size="small" type="text" onClick={() => setEditingTextId(null)}>
-                                                    收起
-                                                </Button>
-                                            </div>
-                                            <Input.TextArea className="thin-scrollbar !flex-1 !resize-none !text-xs !leading-5" value={editingText} onChange={(event) => setEditingText(event.target.value)} />
-                                            <div className="mt-2 flex justify-end gap-2">
-                                                <Button size="small" onClick={() => setEditingTextId(null)}>
-                                                    取消
-                                                </Button>
-                                                <Button size="small" type="primary" onClick={saveTextEdit}>
-                                                    保存
-                                                </Button>
-                                            </div>
-                                        </>
-                                    ) : (
-                                        <div className="flex h-full flex-col justify-center rounded-xl border border-dashed px-4 text-center text-xs leading-5 opacity-45" style={{ borderColor: theme.node.stroke }}>
-                                            <Edit3 className="mx-auto mb-2 size-5" />
-                                            选择一条文本后在这里编辑
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    ) : (
-                        <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无提示词或参考图" className="py-8" />
-                    )}
-                </div>
-            </Modal>
+            {previewModal}
         </div>
     );
 }

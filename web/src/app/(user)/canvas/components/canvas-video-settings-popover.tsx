@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { CanvasSettingsSelect, canvasSettingsPanelPosition } from "@/components/canvas-settings-select";
+import { CanvasSettingsSelect, canvasSettingsPanelPosition, type CanvasSettingsTriggerProps } from "@/components/canvas-settings-select";
 import { Settings2 } from "lucide-react";
 import { Button } from "antd";
 
@@ -18,13 +18,13 @@ type CanvasVideoSettingsPopoverProps = {
     onConfigChange: (key: keyof AiConfig, value: string) => void;
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
-};
+} & CanvasSettingsTriggerProps;
 
-export function CanvasVideoSettingsPopover({ config, onConfigChange, outputCount, onOutputCountChange, buttonClassName, placement = "topLeft" }: CanvasVideoSettingsPopoverProps) {
+export function CanvasVideoSettingsPopover({ config, onConfigChange, outputCount, onOutputCountChange, buttonClassName, placement = "topLeft", buttonIcon, panelHeader, defaultOpen = false, formatSummary = (summary) => summary }: CanvasVideoSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
-    const [open, setOpen] = useState(false);
+    const [open, setOpen] = useState(defaultOpen);
     const [buttonRect, setButtonRect] = useState<DOMRect | null>(null);
 
     useEffect(() => {
@@ -50,7 +50,7 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, outputCount
 
     const panel =
         open && buttonRect ? (
-            <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} onConfigChange={onConfigChange} outputCount={outputCount} onOutputCountChange={onOutputCountChange} />
+            <VideoSettingsPortal buttonRect={buttonRect} panelRef={panelRef} placement={placement} theme={theme} config={config} header={panelHeader} onConfigChange={onConfigChange} outputCount={outputCount} onOutputCountChange={onOutputCountChange} />
         ) : null;
 
     return (
@@ -61,12 +61,11 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, outputCount
                     type="text"
                     className={buttonClassName || "!h-8 !max-w-[170px] !justify-start !rounded-full !px-2.5"}
                     style={{ background: theme.node.fill, color: theme.node.text }}
-                    icon={<Settings2 className="size-3.5" />}
+                    icon={buttonIcon ?? <Settings2 className="size-3.5" />}
                     onClick={() => setOpen((current) => !current)}
                 >
                     <span className="truncate">
-                        {videoResolutionLabel(config.vquality)} · {videoSizeLabel(config.videoSize || "")} · {videoSecondsLabel(config.videoSeconds)}
-                        {outputCount !== undefined ? ` · ${outputCount} 个` : ""}
+                        {formatSummary(`${videoResolutionLabel(config.vquality)} · ${videoSizeLabel(config.videoSize || "")} · ${videoSecondsLabel(config.videoSeconds)}${outputCount !== undefined ? ` · ${outputCount} 个` : ""}`)}
                     </span>
                 </Button>
             </span>
@@ -84,6 +83,7 @@ function VideoSettingsPortal({
     onConfigChange,
     outputCount,
     onOutputCountChange,
+    header,
 }: {
     buttonRect: DOMRect;
     panelRef: RefObject<HTMLDivElement | null>;
@@ -93,6 +93,7 @@ function VideoSettingsPortal({
     outputCount?: number;
     onOutputCountChange?: (count: number) => void;
     onConfigChange: (key: keyof AiConfig, value: string) => void;
+    header?: ReactNode;
 }) {
     const style = {
         position: "fixed",
@@ -118,6 +119,7 @@ function VideoSettingsPortal({
             onWheel={(event) => event.stopPropagation()}
         >
             <div style={{ maxHeight: style.maxHeight, overflowY: "auto", padding: 18, borderRadius: "inherit" }}>
+                {header}
                 <VideoSettingsPanel config={config} onConfigChange={(key, value) => onConfigChange(key, value)} theme={theme} className="space-y-4" />
                 {outputCount !== undefined && onOutputCountChange ? (
                     <div className="mt-4 space-y-2">
