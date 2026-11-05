@@ -7,9 +7,9 @@ import { Button } from "antd";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
 // The layout tiers (title, three rows, two icons, hidden) follow the card's on-screen size through container queries in globals.css.
-export function CanvasConfigCompactCard({ theme, inputLabel, modelSelect, settings, generateDisabled, onGenerate }: {
+export function CanvasConfigCompactCard({ theme, modeSwitch, modelSelect, settings, generateDisabled, onGenerate }: {
     theme: CanvasTheme;
-    inputLabel: string;
+    modeSwitch: ReactNode;
     modelSelect: ReactNode;
     settings: ReactNode;
     generateDisabled: boolean;
@@ -36,7 +36,7 @@ export function CanvasConfigCompactCard({ theme, inputLabel, modelSelect, settin
             <div className="canvas-config-compact-layout">
                 <div className="canvas-config-compact-title">
                     <strong>生成配置</strong>
-                    <span>{inputLabel}</span>
+                    {modeSwitch}
                 </div>
                 <div className="canvas-config-compact-model">{modelSelect}</div>
                 {settings}

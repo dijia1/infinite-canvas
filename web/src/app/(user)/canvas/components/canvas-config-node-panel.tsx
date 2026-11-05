@@ -135,7 +135,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         };
     }, [previewOpen]);
 
-    // Switching mode swaps the popover component, so reopen it to let the compact card keep adjusting in one place.
+    // Switching mode swaps the popover component, so a switch inside the popover reopens it to keep adjusting in one place.
     const reopenSettingsRef = useRef(false);
     useEffect(() => {
         reopenSettingsRef.current = false;
@@ -148,14 +148,14 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
             预览
         </button>
     );
-    const modeSwitch = (
+    const renderModeSwitch = (keepSettingsOpen = false) => (
         <div className="shrink-0 cursor-default" onMouseDown={(event) => event.stopPropagation()}>
             <Segmented
                 size="small"
                 className="canvas-config-mode !rounded-md !p-0.5"
                 value={mode}
                 onChange={(value) => {
-                    reopenSettingsRef.current = compact;
+                    reopenSettingsRef.current = keepSettingsOpen;
                     onConfigChange(node.id, { generationMode: value as CanvasGenerationMode });
                 }}
                 options={[
@@ -278,7 +278,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
             <>
                 <CanvasConfigCompactCard
                     theme={theme}
-                    inputLabel={[inputSummary.textCount ? `提示词 ${inputSummary.textCount}` : "", inputSummary.imageCount ? `参考图 ${inputSummary.imageCount}` : ""].filter(Boolean).join(" · ")}
+                    modeSwitch={renderModeSwitch()}
                     modelSelect={modelSelect}
                     generateDisabled={generateDisabled}
                     onGenerate={() => onGenerate(node.id)}
@@ -294,7 +294,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                         panelHeader: (
                             <div className="mb-4 grid gap-3">
                                 <div className="flex items-center justify-between gap-2">
-                                    {modeSwitch}
+                                    {renderModeSwitch(true)}
                                     {previewButton}
                                 </div>
                                 {inputChips}
@@ -316,7 +316,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                         <div className="shrink-0 text-sm font-semibold">生成配置</div>
                         {previewButton}
                     </div>
-                    {modeSwitch}
+                    {renderModeSwitch()}
                 </div>
                 {inputChips}
             </div>

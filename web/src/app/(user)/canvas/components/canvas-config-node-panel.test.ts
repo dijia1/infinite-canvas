@@ -114,7 +114,7 @@ test("changing generation mode updates the node used by generation configuration
     const reopenSettingsRef = { current: false };
     const source = sourceBehavior(sourceURL, {
         node,
-        compact: true,
+        keepSettingsOpen: true,
         reopenSettingsRef,
         onConfigChange: (id: string, patch: object) => {
             assert.equal(id, node.id);
