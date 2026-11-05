@@ -3,11 +3,9 @@
 import type { ReactNode } from "react";
 import { Select, type SelectProps } from "antd";
 
-// Lets a caller reuse a settings popover from a smaller trigger that needs its own icon, summary and extra controls.
+// Lets a caller reuse a settings popover from a smaller trigger that needs its own icon and summary.
 export type CanvasSettingsTriggerProps = {
     buttonIcon?: ReactNode;
-    panelHeader?: ReactNode;
-    defaultOpen?: boolean;
     formatSummary?: (summary: string) => string;
 };
 

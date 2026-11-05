@@ -111,11 +111,8 @@ test("preview editing isolates wheel and outside pointer events and removes list
 
 test("changing generation mode updates the node used by generation configuration", () => {
     const node: CanvasNodeData = { id: "config", type: CanvasNodeType.Config, title: "Config", position: { x: 0, y: 0 }, width: 100, height: 100, metadata: { generationMode: "image" } };
-    const reopenSettingsRef = { current: false };
     const source = sourceBehavior(sourceURL, {
         node,
-        keepSettingsOpen: true,
-        reopenSettingsRef,
         onConfigChange: (id: string, patch: object) => {
             assert.equal(id, node.id);
             node.metadata = { ...node.metadata, ...patch };
@@ -124,7 +121,6 @@ test("changing generation mode updates the node used by generation configuration
     const change = source.select((node) => ts.isArrowFunction(node) && ts.isJsxExpression(node.parent) && ts.isJsxAttribute(node.parent.parent) && node.parent.parent.name.getText() === "onChange" && node.getText().includes("generationMode:"));
     change("video");
     assert.equal(node.metadata?.generationMode, "video");
-    assert.equal(reopenSettingsRef.current, true);
     const config = { ...defaultConfig, imageProviderId: "old" };
     sourceBehavior(sourceURL, {
         node, config, reconcileProviderConfig,

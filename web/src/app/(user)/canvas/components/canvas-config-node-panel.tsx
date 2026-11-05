@@ -135,29 +135,14 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         };
     }, [previewOpen]);
 
-    // Switching mode swaps the popover component, so a switch inside the popover reopens it to keep adjusting in one place.
-    const reopenSettingsRef = useRef(false);
-    useEffect(() => {
-        reopenSettingsRef.current = false;
-    }, [mode]);
-
     const generateDisabled = (!inputSummary.textCount && !inputSummary.imageCount) || (mode === "video" && (!aiStatus || !config.vquality));
-    const previewButton = (
-        <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
-            <Eye className="size-3.5" />
-            预览
-        </button>
-    );
-    const renderModeSwitch = (keepSettingsOpen = false) => (
+    const modeSwitch = (
         <div className="shrink-0 cursor-default" onMouseDown={(event) => event.stopPropagation()}>
             <Segmented
                 size="small"
                 className="canvas-config-mode !rounded-md !p-0.5"
                 value={mode}
-                onChange={(value) => {
-                    reopenSettingsRef.current = keepSettingsOpen;
-                    onConfigChange(node.id, { generationMode: value as CanvasGenerationMode });
-                }}
+                onChange={(value) => onConfigChange(node.id, { generationMode: value as CanvasGenerationMode })}
                 options={[
                     {
                         value: "image",
@@ -179,13 +164,6 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                     },
                 ]}
             />
-        </div>
-    );
-    const inputChips = (
-        <div className="flex shrink-0 flex-wrap gap-1.5">
-            <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
-            <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
-            {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
         </div>
     );
     const modelSelect = (
@@ -213,8 +191,30 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
             />
         ) : null;
+    if (compact) {
+        const ModeIcon = mode === "video" ? Video : ImageIcon;
+        return (
+            <CanvasConfigCompactCard
+                theme={theme}
+                modeSwitch={modeSwitch}
+                modelSelect={modelSelect}
+                generateDisabled={generateDisabled}
+                onGenerate={() => onGenerate(node.id)}
+                settings={renderSettings("canvas-config-compact-settings", {
+                    formatSummary: shortSettingsSummary,
+                    buttonIcon: (
+                        <>
+                            <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
+                            <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
+                        </>
+                    ),
+                })}
+            />
+        );
+    }
+
     const previewModal = (
-        <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} zIndex={1300} centered destroyOnHidden>
+        <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} centered destroyOnHidden>
             <div ref={previewContentRef} className="min-h-0 flex-1 overflow-hidden" data-canvas-no-zoom onWheelCapture={(event) => event.stopPropagation()}>
                 {inputs.length ? (
                     <div className="flex h-[min(66vh,580px)] flex-col gap-3 overflow-hidden">
@@ -272,53 +272,25 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         </Modal>
     );
 
-    if (compact) {
-        const ModeIcon = mode === "video" ? Video : ImageIcon;
-        return (
-            <>
-                <CanvasConfigCompactCard
-                    theme={theme}
-                    modeSwitch={renderModeSwitch()}
-                    modelSelect={modelSelect}
-                    generateDisabled={generateDisabled}
-                    onGenerate={() => onGenerate(node.id)}
-                    settings={renderSettings("canvas-config-compact-settings", {
-                        defaultOpen: reopenSettingsRef.current,
-                        formatSummary: shortSettingsSummary,
-                        buttonIcon: (
-                            <>
-                                <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
-                                <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
-                            </>
-                        ),
-                        panelHeader: (
-                            <div className="mb-4 grid gap-3">
-                                <div className="flex items-center justify-between gap-2">
-                                    {renderModeSwitch(true)}
-                                    {previewButton}
-                                </div>
-                                {inputChips}
-                                {modelSelect}
-                            </div>
-                        ),
-                    })}
-                />
-                {previewModal}
-            </>
-        );
-    }
-
     return (
         <div ref={layoutRef} className="flex min-w-0 w-full shrink-0 cursor-move flex-col gap-8 px-3 py-4 text-sm" style={{ color: theme.node.text }}>
             <div className="flex min-w-0 shrink-0 flex-col gap-2">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
                         <div className="shrink-0 text-sm font-semibold">生成配置</div>
-                        {previewButton}
+                        <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
+                            <Eye className="size-3.5" />
+                            预览
+                        </button>
                     </div>
-                    {renderModeSwitch()}
+                    {modeSwitch}
                 </div>
-                {inputChips}
+
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                    <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
+                    <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
+                    {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
+                </div>
             </div>
 
             <div className="grid min-w-0 shrink-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
