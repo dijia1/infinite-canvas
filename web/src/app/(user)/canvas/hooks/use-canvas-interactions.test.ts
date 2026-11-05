@@ -22,7 +22,6 @@ function setup(
         onNodeDragStart?: (event: { nodeIds: ReadonlySet<string>; altKey: boolean }) => void;
         onNodeDragEnd?: (event: { nodeIds: ReadonlySet<string>; altKey: boolean; cancelled: boolean }) => void;
         constrainNodeDrag?: (event: { delta: { x: number; y: number }; altKey: boolean }) => { x: number; y: number };
-        getNodeDisplayScale?: (node: CanvasNodeData) => number;
     } = {},
 ) {
     const nodesRef = ref(initialNodes);
@@ -71,7 +70,6 @@ function setup(
         onNodeDragStart: options.onNodeDragStart,
         onNodeDragEnd: options.onNodeDragEnd,
         constrainNodeDrag: options.constrainNodeDrag,
-        getNodeDisplayScale: options.getNodeDisplayScale,
     });
 
     return {
@@ -111,29 +109,6 @@ test("dropping outside the handle retains the original world point for menu crea
     assert.ok(controller.pendingConnectionCreate);
     assert.equal(controller.pendingConnectionCreate.position.x, (1000 * 0.42 - 19) / 0.42);
     assert.equal(controller.pendingConnectionCreate.position.y, 50);
-});
-
-test("a card rendered above its world size accepts drops across its visible area and beats nodes under it", () => {
-    const config = { ...imageNode("config", 1000, 0), type: CanvasNodeType.Config };
-    const covered = imageNode("covered", 1100, 0);
-    const source = imageNode("source", 0, 0);
-    const { controller, connectionsRef, viewportRef } = setup([config, source, covered], [], { getNodeDisplayScale: (node) => (node.id === "config" ? 3 : 1) });
-    viewportRef.current = { x: 0, y: 0, k: 0.1 };
-    controller.handleConnectStart({ clientX: 0, clientY: 0 }, source.id, "source");
-    // 120 world units right of the card's world edge: outside its world rect, inside the visible card and over the covered node.
-    controller.handleGlobalMouseUp({ clientX: 1120 * 0.1, clientY: 50 * 0.1 });
-    assert.deepEqual(connectionsRef.current.map(({ toNodeId }) => toNodeId), ["config"]);
-});
-
-test("a card rendered above its world size moves its handle hit area to the visible edge", () => {
-    const config = { ...imageNode("config", 1000, 0), type: CanvasNodeType.Config };
-    const source = imageNode("source", 0, 0);
-    const { controller, connectionsRef, viewportRef } = setup([source, config], [], { getNodeDisplayScale: (node) => (node.id === "config" ? 3 : 1) });
-    viewportRef.current = { x: 0, y: 0, k: 0.1 };
-    controller.handleConnectStart({ clientX: 0, clientY: 0 }, source.id, "source");
-    // The visible left edge sits at world x 900, or 90 px on screen. 17 px left of it is still inside the 18 px handle radius.
-    controller.handleGlobalMouseUp({ clientX: 73, clientY: 5 });
-    assert.equal(connectionsRef.current.length, 1);
 });
 
 test("reverse dragging targets the normalized source handle outside an image", () => {

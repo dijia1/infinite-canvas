@@ -246,7 +246,7 @@
     justify-content: center;
 }
 
-/* Laid out once at its form's minimum screen size and scaled with the node, so controls and text keep their place in the card at every zoom. */
+/* Laid out once at its form's design size and scaled with the node, so controls and text keep their place in the card at every zoom. */
 .canvas-config-compact {
     /* The scene changes these inherited variables on every zoom frame. Nothing in here reads them, so pinning them keeps the controls out of that style recalculation. */
     --canvas-scale: 1;

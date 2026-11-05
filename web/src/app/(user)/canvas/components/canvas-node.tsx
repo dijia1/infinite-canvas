@@ -323,20 +323,14 @@ export const CanvasNode = React.memo(function CanvasNode({
         );
     }
 
-    // Stop shrinking at the floor in the same frame as the scene transform, and let children read the card's real screen scale.
-    const floorScale = configCard?.floorScale || 0;
-    const floorStyle = floorScale ? { "--canvas-inverse-scale": `min(calc(1 / var(--canvas-scale, 1)), ${1 / floorScale})` } : undefined;
-    const floorTransform = floorScale ? ` scale(max(1, calc(${floorScale} / var(--canvas-scale, 1))))` : "";
-
     return (
         <div
             data-node-id={data.id}
             data-config-form={configCard?.form}
-            className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : configCard ? "z-20" : "z-10"}`}
+            className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : "z-10"}`}
             style={{
-                ...floorStyle,
                 ...(configCard ? { "--config-card-design-scale": configCard.designScale } : undefined),
-                transform: `translate(${data.position.x}px, ${data.position.y}px)${floorTransform}`,
+                transform: `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
                 height: data.height,
                 transition: "box-shadow 200ms ease",
@@ -351,7 +345,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 style={{
                     background: hasImageContent || hasVideoContent ? "transparent" : theme.node.fill,
                     borderColor: hasImageContent ? imageBorderColor : isActive ? selectionBlue : isRelated ? theme.node.muted : theme.node.stroke,
-                    boxShadow: isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : configCard ? "0 calc(4px * var(--canvas-inverse-scale, 1)) calc(14px * var(--canvas-inverse-scale, 1)) rgba(0,0,0,.45)" : undefined,
+                    boxShadow: isActive ? `0 0 0 1px ${selectionBlue}55` : isRelated && !isBatchChild ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)` : undefined,
                 }}
                 onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
@@ -416,14 +410,10 @@ export const CanvasNode = React.memo(function CanvasNode({
 
                 {data.type !== CanvasNodeType.Config && !hasImageContent && !hasVideoContent ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} /> : null}
 
-                {configCard ? null : (
-                    <>
-                        <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
-                        <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
-                    </>
-                )}
+                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
             </CanvasNodeFrame>
 
             {connectionHandles}
@@ -468,8 +458,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
         prev.batchMotion?.y === next.batchMotion?.y &&
         prev.batchMotion?.index === next.batchMotion?.index &&
         prev.configCard?.form === next.configCard?.form &&
-        prev.configCard?.designScale === next.configCard?.designScale &&
-        prev.configCard?.floorScale === next.configCard?.floorScale
+        prev.configCard?.designScale === next.configCard?.designScale
     );
 }
 

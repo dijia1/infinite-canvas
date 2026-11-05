@@ -57,7 +57,7 @@ import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec, normalizeVideoConfigNodeSize } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
-import { CONFIG_COMPACT_MAX_SCALE, getConfigCardDisplayScale, getConfigCardFloorLimits, getConfigCardView } from "../utils/canvas-config-card";
+import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "../utils/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
@@ -674,17 +674,13 @@ function InfiniteCanvasPage() {
         if (!dialogNodeId) setNodeImageSettingsOpen(false);
     }, [dialogNodeId]);
 
-    const configCardFloorLimits = useMemo(() => getConfigCardFloorLimits(nodes), [nodes]);
-    const configCardFloorLimitsRef = useRef(configCardFloorLimits);
     useLayoutEffect(() => {
         nodesRef.current = nodes;
         maskResourcesRef.current = maskResources;
         connectionsRef.current = connections;
         selectedNodeIdsRef.current = selectedNodeIds;
         viewportRef.current = viewport;
-        configCardFloorLimitsRef.current = configCardFloorLimits;
-    }, [nodes, connections, maskResources, selectedNodeIds, viewport, configCardFloorLimits]);
-    const getNodeDisplayScale = useCallback((node: CanvasNodeData) => getConfigCardDisplayScale(node, viewportRef.current.k, configCardFloorLimitsRef.current.get(node.id)), []);
+    }, [nodes, connections, maskResources, selectedNodeIds, viewport]);
 
     const navigateAway = useCallback((href: string) => {
         flushDocument(getLiveViewport());
@@ -795,7 +791,6 @@ function InfiniteCanvasPage() {
         createNode: createInteractionNode,
         createConnectionId: nanoid,
         onWarning: message.warning,
-        getNodeDisplayScale,
     });
 
     const nodeDragWasActiveRef = useRef(false);
@@ -2286,7 +2281,7 @@ function InfiniteCanvasPage() {
                                 imageResultState={getImageResultState(node.id)}
                                 onRetryImage={retryCanvasImage}
                                 renderDetail={canvasRenderDetail === "overview" && node.type !== CanvasNodeType.Config && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
-                                configCard={configCompact ? getConfigCardView(node, viewport.k, configCardFloorLimits.get(node.id)) : undefined}
+                                configCard={node.type === CanvasNodeType.Config && configCompact ? getConfigCardView(node, viewport.k) : undefined}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([
