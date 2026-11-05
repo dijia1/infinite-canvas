@@ -1,4 +1,6 @@
 "use client";
+import { uploadVideoMedia } from "@/services/api/video-media";
+import { createCanvasLocalVideoUploadController, videoUploadSourceIdentity, type LocalVideoUploadView } from "../media/canvas-local-video-upload-controller";
 
 import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
 import { CanvasEditorTopBar } from "@/components/canvas-editor-top-bar";
@@ -304,6 +306,33 @@ function InfiniteCanvasPage() {
         }),
         [],
     );
+    const [localVideoUploads, setLocalVideoUploads] = useState<Map<string, LocalVideoUploadView>>(() => new Map());
+    const videoCanEditRef = useRef(false);
+    useLayoutEffect(() => {
+        videoCanEditRef.current = documentReady && !isProjectReadonly;
+    }, [documentReady, isProjectReadonly]);
+    const localVideoUploadController = useMemo(
+        () => createCanvasLocalVideoUploadController({
+            upload: uploadVideoMedia,
+            canEdit: () => videoCanEditRef.current,
+            getNode: (id) => nodesRef.current.find((node) => node.id === id),
+            onChange: setLocalVideoUploads,
+            onCompleted: (id, file, remote, source) => {
+                const size = fitNodeSize(remote.width, remote.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+                const metadata = videoMetadata({ url: remote.url, storageKey: "", mediaId: remote.mediaId, duration: remote.duration, bytes: remote.bytes, mimeType: remote.contentType, width: remote.width, height: remote.height });
+                setNodes((current) => current.map((node) => node.id === id && videoUploadSourceIdentity(node) === videoUploadSourceIdentity(source) ? replaceNodeWithUploadedVideo(node, file.name, metadata, size) : node));
+            },
+        }),
+        [canonicalGeneration, projectId, syncScope],
+    );
+    useLayoutEffect(() => () => localVideoUploadController.dispose(), [localVideoUploadController]);
+    useEffect(() => {
+        localVideoUploadController.reconcile(nodes);
+    }, [nodes, isProjectReadonly, localVideoUploadController]);
+    const retryVideoUpload = useCallback((id: string) => {
+        void localVideoUploadController.retry(id);
+    }, [localVideoUploadController]);
+    const cancelVideoUpload = useCallback((id: string) => localVideoUploadController.cancel(id), [localVideoUploadController]);
     const canonicalRestore = useMemo(() => createCanvasCanonicalRestore(), []);
     const readCanonicalIdentity = useCallback(() => {
         const state = useCanvasStore.getState();
@@ -809,6 +838,8 @@ function InfiniteCanvasPage() {
         uploadMediaFile,
         hydrateGenerationContext: async (nodeId, prompt) => {
             const scope = getVideoSessionScope();
+            const inputs = buildNodeGenerationInputs(nodeId, nodesRef.current, connectionsRef.current, maskResourcesRef.current);
+            if ([nodeId, ...inputs.map((input) => input.nodeId)].some((id) => localVideoUploadController.isPending(id))) throw new Error("参考视频尚未上传或校验完成，请等待完成或重试上传");
             const context = await hydrateNodeGenerationContext(buildNodeGenerationContext(nodeId, nodesRef.current, connectionsRef.current, prompt, maskResourcesRef.current), (mediaId) => loadMediaImage(mediaId, () => resolveRemoteImage(mediaId)));
             if (scope !== getVideoSessionScope()) throw new Error("画布用户已切换");
             const source = nodesRef.current.find((node) => node.id === nodeId);
@@ -1550,27 +1581,15 @@ function InfiniteCanvasPage() {
     );
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
-        const scope = getVideoSessionScope();
-        const video = await uploadMediaFile(file, "video");
-        if (scope !== getVideoSessionScope()) return;
-        const size = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-        const id = `video-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-        setNodes((prev) => [
-            ...prev,
-            {
-                id,
-                type: CanvasNodeType.Video,
-                title: file.name,
-                position: { x: position.x - size.width / 2, y: position.y - size.height / 2 },
-                width: size.width,
-                height: size.height,
-                metadata: videoMetadata(video),
-            },
-        ]);
-        setSelectedNodeIds(new Set([id]));
+        if (!videoCanEditRef.current) return;
+        const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { status: "success" }), title: file.name };
+        node.position = { x: position.x - node.width / 2, y: position.y - node.height / 2 };
+        setNodes((prev) => [...prev, node]);
+        setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
-        setDialogNodeId(id);
-    }, []);
+        setDialogNodeId(node.id);
+        void localVideoUploadController.start(node, file);
+    }, [localVideoUploadController]);
 
     const createTextNodeFromClipboard = useCallback(
         (text: string) => {
@@ -1846,16 +1865,10 @@ function InfiniteCanvasPage() {
 
             if (target?.nodeId) {
                 if (file.type.startsWith("video/")) {
-                    const scope = getVideoSessionScope();
-                    const video = await uploadMediaFile(file, "video");
-                    if (scope !== getVideoSessionScope()) return;
-                    const nextSize = fitNodeSize(video.width || 1280, video.height || 720, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
-                    const replacedNode = nodesRef.current.find((node) => node.id === target.nodeId);
-                    if (replacedNode) discardLocalImageUploads([replacedNode]);
-                    setNodes((prev) => prev.map((node) => (node.id === target.nodeId ? replaceNodeWithUploadedVideo(node, file.name, videoMetadata(video), nextSize) : node)));
-                    setSelectedNodeIds(new Set([target.nodeId]));
-                    setSelectedConnectionId(null);
-                    setDialogNodeId(target.nodeId);
+                    try {
+                        const node = nodesRef.current.find((node) => node.id === target.nodeId);
+                        if (node && videoCanEditRef.current) void localVideoUploadController.start(node, file);
+                    } catch (error) { message.error(error instanceof Error ? error.message : "视频上传失败"); }
                     uploadTargetRef.current = null;
                     event.target.value = "";
                     return;
@@ -1919,7 +1932,7 @@ function InfiniteCanvasPage() {
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createImageFileNode, createVideoFileNode, discardLocalImageUploads, message, screenToCanvas, size.height, size.width, startLocalImageUpload],
+        [createImageFileNode, createVideoFileNode, discardLocalImageUploads, localVideoUploadController, message, screenToCanvas, size.height, size.width, startLocalImageUpload],
     );
 
     const startTitleEditing = useCallback(() => {
@@ -2253,6 +2266,9 @@ function InfiniteCanvasPage() {
                                 key={node.id}
                                 data={node}
                                 videoVisible={onScreenNodeIds.has(node.id)}
+                                videoUpload={localVideoUploads.get(node.id)}
+                                onRetryVideoUpload={retryVideoUpload}
+                                onCancelVideoUpload={cancelVideoUpload}
                                 getScale={getCanvasScale}
                                 imageSource={canvasImageSource(node)}
                                 imageMask={node.metadata?.sourceNodeId ? undefined : resolveCanvasNodeMask(node, maskResources)}
@@ -2261,7 +2277,7 @@ function InfiniteCanvasPage() {
                                 imageError={canvasImageErrors.get(node.id)}
                                 imageResultState={getImageResultState(node.id)}
                                 onRetryImage={retryCanvasImage}
-                                renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id ? "overview" : "full"}
+                                renderDetail={canvasRenderDetail === "overview" && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([

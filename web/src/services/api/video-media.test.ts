@@ -66,3 +66,65 @@ test("video access forwards cancellation and rejects failed API envelope", async
         axios.get = original;
     }
 });
+
+test("video upload reports progress and retries confirmation without reupload", async () => {
+    const originalPost = axios.post,
+        originalXHR = globalThis.XMLHttpRequest;
+    const stages: string[] = [],
+        progress: number[] = [];
+    let puts = 0,
+        intents = 0,
+        completes = 0,
+        uploadedIntent = "";
+    class UploadXHR {
+        upload = { onprogress: undefined as undefined | ((event: object) => void) };
+        status = 200;
+        onload?: () => void;
+        open() {}
+        setRequestHeader() {}
+        send() {
+            puts++;
+            this.upload.onprogress?.({ lengthComputable: true, total: 100, loaded: 37 });
+            this.onload?.();
+        }
+        abort() {}
+    }
+    globalThis.XMLHttpRequest = UploadXHR as unknown as typeof XMLHttpRequest;
+    axios.post = (async (url: string) => {
+        if (url.endsWith("/complete")) {
+            completes++;
+            if (completes === 1) throw new Error("confirmation interrupted");
+            return { data: { code: 0, data: { mediaId: "confirmed" } } };
+        }
+        intents++;
+        return { data: { code: 0, data: { mode: "direct", id: "uploaded-once", uploadUrl: "https://oss.example/upload" } } };
+    }) as typeof axios.post;
+    try {
+        const file = new File(["video"], "v.mp4", { type: "video/mp4" });
+        await assert.rejects(uploadVideoMedia(file, { onProgress: (p) => progress.push(p), onStage: (s) => stages.push(s), onUploaded: (id) => (uploadedIntent = id) }), /confirmation interrupted/);
+        assert.equal(uploadedIntent, "uploaded-once");
+        assert.deepEqual(progress, [37]);
+        assert.deepEqual(stages, ["uploading", "verifying"]);
+        assert.equal((await uploadVideoMedia(file, { uploadedIntentId: uploadedIntent })).mediaId, "confirmed");
+        assert.equal(puts, 1);
+        assert.equal(intents, 1);
+        assert.equal(completes, 2);
+    } finally {
+        axios.post = originalPost;
+        globalThis.XMLHttpRequest = originalXHR;
+    }
+});
+
+test("oversized video is rejected before requesting an upload", async () => {
+    const original = axios.post;
+    axios.post = (async () => {
+        throw Error("unexpected request");
+    }) as typeof axios.post;
+    try {
+        const file = new File(["x"], "large.mp4", { type: "video/mp4" });
+        Object.defineProperty(file, "size", { value: 100 * 1024 * 1024 });
+        await assert.rejects(uploadVideoMedia(file), /50 MB/);
+    } finally {
+        axios.post = original;
+    }
+});

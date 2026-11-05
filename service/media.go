@@ -243,10 +243,14 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 		item.ObjectKey = intent.FinalObjectKey
 		expiry := time.Now().UTC().Add(24 * time.Hour)
 		item.ExpiresAt = &expiry
-		if err := putVideoFile(ctx, store, item.ObjectKey, file); err != nil {
-			return MediaAccess{}, false, err
+		// Publish exactly the version just validated, without uploading the
+		// downloaded video again. The browser can still overwrite its upload key.
+		versioned, ok := store.(versionedImageStore)
+		if !ok {
+			return MediaAccess{}, false, safeMessageError{message: "视频上传需要支持版本的 OSS 存储"}
 		}
-		if metadata, err = store.Head(ctx, item.ObjectKey); err != nil {
+		metadata, err = versioned.CopyVersion(ctx, intent.ObjectKey, item.ObjectVersionID, item.ObjectETag, item.ObjectKey)
+		if err != nil {
 			return MediaAccess{}, false, err
 		}
 		item.ObjectVersionID, item.ObjectETag = metadata.VersionID, metadata.ETag

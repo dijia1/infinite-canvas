@@ -1,6 +1,8 @@
 "use client";
 
 import { resizeCanvasNode } from "@/lib/canvas-resize";
+import { CanvasVideoUploadContent } from "./canvas-video-upload-content";
+import type { LocalVideoUploadView } from "../media/canvas-local-video-upload-controller";
 import { CanvasVideoContent } from "./canvas-video-content";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -22,6 +24,9 @@ import { CanvasReadyImage } from "@/components/canvas-ready-image";
 type CanvasNodeProps = {
     data: CanvasNodeData;
     videoVisible?: boolean;
+    videoUpload?: LocalVideoUploadView;
+    onRetryVideoUpload?: (nodeId: string) => void;
+    onCancelVideoUpload?: (nodeId: string) => void;
     getScale: () => number;
     imageSource?: string;
     imageStorageKey?: string;
@@ -68,6 +73,9 @@ type CanvasNodeProps = {
 
 type NodeContentRendererProps = {
     videoVisible?: boolean;
+    videoUpload?: LocalVideoUploadView;
+    onRetryVideoUpload?: (nodeId: string) => void;
+    onCancelVideoUpload?: (nodeId: string) => void;
     node: CanvasNodeData;
     theme: (typeof canvasThemes)[keyof typeof canvasThemes];
     imageSource?: string;
@@ -97,6 +105,9 @@ type NodeContentRendererProps = {
 export const CanvasNode = React.memo(function CanvasNode({
     data,
     videoVisible,
+    videoUpload,
+    onRetryVideoUpload,
+    onCancelVideoUpload,
     getScale,
     imageSource,
     imageStorageKey,
@@ -346,6 +357,9 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     <NodeContent
                         videoVisible={videoVisible}
+                        videoUpload={videoUpload}
+                        onRetryVideoUpload={onRetryVideoUpload}
+                        onCancelVideoUpload={onCancelVideoUpload}
                         node={data}
                         theme={theme}
                         isEditingContent={isEditingContent}
@@ -397,6 +411,9 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         prev.data === next.data &&
         prev.videoVisible === next.videoVisible &&
+        prev.videoUpload === next.videoUpload &&
+        prev.onRetryVideoUpload === next.onRetryVideoUpload &&
+        prev.onCancelVideoUpload === next.onCancelVideoUpload &&
         prev.imageSource === next.imageSource &&
         prev.imageStorageKey === next.imageStorageKey &&
         prev.imageSourceManaged === next.imageSourceManaged &&
@@ -444,6 +461,7 @@ function InputBadge({ label, node }: { label: string; node: CanvasNodeData }) {
 }
 
 function NodeContent(props: NodeContentRendererProps) {
+    if (props.videoUpload) return <CanvasVideoUploadContent nodeId={props.node.id} upload={props.videoUpload} visible={props.videoVisible} onRetry={() => props.onRetryVideoUpload?.(props.node.id)} onCancel={() => props.onCancelVideoUpload?.(props.node.id)} />;
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} label={props.imageResultState === "loading" ? "图片加载中" : "生成中"} />;

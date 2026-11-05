@@ -490,7 +490,13 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             options.openConfigDialog(true);
             return;
         }
-        const generationContext = await options.hydrateGenerationContext(nodeId, prompt);
+        let generationContext: NodeGenerationContext;
+        try {
+            generationContext = await options.hydrateGenerationContext(nodeId, prompt);
+        } catch (error) {
+            if (scopeValid()) options.message.error(error instanceof Error ? error.message : "参考素材无法读取");
+            return;
+        }
         if (!scopeValid()) return;
         const effectivePrompt = generationContext.prompt.trim();
         const markSourceStatus = sourceNode?.type !== CanvasNodeType.Image;

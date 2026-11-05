@@ -1099,3 +1099,15 @@ test("video submission snapshots the model and parameters before async completio
     assert.equal(recovery.nodesRef.current[0].metadata?.seconds, "8");
     assert.equal(recovery.nodesRef.current[0].metadata?.status, "success");
 });
+
+test("pending video input reports an error without submitting or changing the graph", async () => {
+    const source = node("config-pending-video", CanvasNodeType.Config);
+    const { controller, calls, nodesRef } = setup([source], [], {
+        hydrateGenerationContext: async () => { throw Error("参考视频尚未上传或校验完成，请等待完成或重试上传"); },
+    });
+    await controller.generateNode(source.id, "video", "test");
+    assert.equal(calls.video, 0);
+    assert.equal(calls.generation, 0);
+    assert.deepEqual(calls.errors, ["参考视频尚未上传或校验完成，请等待完成或重试上传"]);
+    assert.deepEqual(nodesRef.current, [source]);
+});

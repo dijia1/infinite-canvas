@@ -233,7 +233,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
                     src={source}
                     controls
                     poster={poster}
-                    preload="none"
+                    preload={legacyURL?.startsWith("blob:") ? "metadata" : "none"}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                     playsInline
