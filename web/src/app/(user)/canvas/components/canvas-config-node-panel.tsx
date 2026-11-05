@@ -293,19 +293,19 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 </div>
             </div>
 
-            <div className="grid min-w-0 shrink-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
-                {renderSettings("canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2")}
+            <div className="grid min-w-0 shrink-0 gap-2">
+                {modelSelect}
+                <div className="grid min-w-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
+                    {renderSettings("canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2")}
+                </div>
             </div>
 
-            <div className="grid min-w-0 shrink-0 gap-2">
-                <Button type="primary" className="!h-9 !w-full !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
-                    <span className="inline-flex items-center gap-1.5">
-                        <Play className="size-4" />
-                        <span>开始生成</span>
-                    </span>
-                </Button>
-                {modelSelect}
-            </div>
+            <Button type="primary" className="!h-9 !w-full shrink-0 !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
+                <span className="inline-flex items-center gap-1.5">
+                    <Play className="size-4" />
+                    <span>开始生成</span>
+                </span>
+            </Button>
             {previewModal}
         </div>
     );

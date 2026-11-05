@@ -6,7 +6,7 @@ import { Button } from "antd";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
-// The layout tiers (title, three rows, two icons, hidden) follow the card's on-screen size through container queries in globals.css.
+// CanvasNode picks the form (controls or icons) through data-config-form, and globals.css lays each one out.
 export function CanvasConfigCompactCard({ theme, modeSwitch, modelSelect, settings, generateDisabled, onGenerate }: {
     theme: CanvasTheme;
     modeSwitch: ReactNode;

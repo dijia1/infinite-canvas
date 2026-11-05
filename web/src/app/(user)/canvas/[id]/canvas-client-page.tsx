@@ -57,7 +57,7 @@ import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec, normalizeVideoConfigNodeSize } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
-import { CONFIG_COMPACT_MAX_SCALE, getConfigCardDisplayScale, getConfigCardFloorLimits, getConfigCardFloorScale } from "../utils/canvas-config-card";
+import { CONFIG_COMPACT_MAX_SCALE, getConfigCardDisplayScale, getConfigCardFloorLimits, getConfigCardView } from "../utils/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
@@ -2269,7 +2269,6 @@ function InfiniteCanvasPage() {
 
                     {visibleNodes.map((node) => {
                         const imageResource = canvasImageResources.get(node.id);
-                        const configFloorScale = configCompact ? getConfigCardFloorScale(node, viewport.k, configCardFloorLimits.get(node.id)) : 0;
                         return (
                             <CanvasNode
                                 key={node.id}
@@ -2287,9 +2286,7 @@ function InfiniteCanvasPage() {
                                 imageResultState={getImageResultState(node.id)}
                                 onRetryImage={retryCanvasImage}
                                 renderDetail={canvasRenderDetail === "overview" && node.type !== CanvasNodeType.Config && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
-                                configCompact={node.type === CanvasNodeType.Config && configCompact}
-                                configFloorScale={configFloorScale}
-                                configFloored={configFloorScale > viewport.k}
+                                configCard={configCompact ? getConfigCardView(node, viewport.k, configCardFloorLimits.get(node.id)) : undefined}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([

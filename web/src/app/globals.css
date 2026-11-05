@@ -246,15 +246,17 @@
     justify-content: center;
 }
 
-/* Sized in screen pixels, then scaled back into the node, so its controls stay the same size at every zoom. */
+/* Laid out once at its form's minimum screen size and scaled with the node, so controls and text keep their place in the card at every zoom. */
 .canvas-config-compact {
+    /* The scene changes these inherited variables on every zoom frame. Nothing in here reads them, so pinning them keeps the controls out of that style recalculation. */
+    --canvas-scale: 1;
+    --canvas-inverse-scale: 1;
     position: absolute;
     top: 0;
     left: 0;
-    width: calc(100% / var(--canvas-inverse-scale, 1));
-    height: calc(100% / var(--canvas-inverse-scale, 1));
-    container-type: size;
-    transform: scale(var(--canvas-inverse-scale, 1));
+    width: calc(100% * var(--config-card-design-scale, 1));
+    height: calc(100% * var(--config-card-design-scale, 1));
+    transform: scale(calc(1 / var(--config-card-design-scale, 1)));
     transform-origin: 0 0;
     cursor: move;
 }
@@ -266,27 +268,32 @@
     gap: 4px;
     width: 100%;
     height: 100%;
-    padding: 5px;
+    padding: 4px;
     font-size: 12px;
 }
 
 .canvas-config-compact-title {
-    display: none;
+    display: flex;
     flex: none;
     align-items: center;
     justify-content: space-between;
     gap: 6px;
-    height: 28px;
+    height: 26px;
     padding-inline: 3px;
 }
 
 .canvas-config-compact-title strong {
     min-width: 0;
     overflow: hidden;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.canvas-config-compact-title .canvas-config-mode.ant-segmented .ant-segmented-item-label {
+    padding-inline: 4px;
+    font-size: 12px;
 }
 
 .canvas-config-compact-model {
@@ -329,7 +336,7 @@
     flex: none;
     width: 100%;
     min-width: 0;
-    height: 32px;
+    height: 30px;
     padding-inline: 6px;
     border-radius: 7px;
     font-size: 12px;
@@ -340,67 +347,35 @@
     pointer-events: none;
 }
 
-/* The scene changes these inherited variables on every zoom frame. A floored card's size is constant, so pinning them keeps its controls out of that style recalculation. */
-[data-config-floored] .canvas-config-compact {
-    --canvas-scale: 1;
-    --canvas-inverse-scale: var(--config-card-inverse-scale);
+[data-config-form="icons"] .canvas-config-compact-layout {
+    flex-direction: row;
+    gap: 3px;
+    padding: 3px;
 }
 
-@container (min-height: 154px) {
-    .canvas-config-compact-layout {
-        gap: 6px;
-    }
-
-    .canvas-config-compact-title {
-        display: flex;
-    }
-
-    .canvas-config-compact-model .ant-select,
-    .canvas-config-compact-settings.ant-btn {
-        height: 30px;
-    }
-
-    .canvas-config-compact-run.ant-btn {
-        height: 36px;
-    }
+[data-config-form="icons"] .canvas-config-compact-title,
+[data-config-form="icons"] .canvas-config-compact-model {
+    display: none;
 }
 
-@container (width < 96px) or (height < 66px) {
-    .canvas-config-compact-layout {
-        flex-direction: row;
-        gap: 3px;
-        padding: 3px;
-    }
-
-    .canvas-config-compact-model {
-        display: none;
-    }
-
-    .canvas-config-compact-layout > span {
-        flex: 1 1 0;
-    }
-
-    .canvas-config-compact-settings.ant-btn,
-    .canvas-config-compact-run.ant-btn {
-        flex: 1 1 0;
-        justify-content: center;
-        height: 100%;
-        padding: 0;
-    }
-
-    .canvas-config-compact-settings.ant-btn > :not(.ant-btn-icon),
-    .canvas-config-compact-run.ant-btn > :not(.ant-btn-icon),
-    .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-mode-icon {
-        display: none;
-    }
-
-    .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-settings-icon {
-        display: block;
-    }
+[data-config-form="icons"] .canvas-config-compact-layout > span {
+    flex: 1 1 0;
 }
 
-@container (width < 36px) {
-    .canvas-config-compact-layout {
-        display: none;
-    }
+[data-config-form="icons"] .canvas-config-compact-settings.ant-btn,
+[data-config-form="icons"] .canvas-config-compact-run.ant-btn {
+    flex: 1 1 0;
+    justify-content: center;
+    height: 100%;
+    padding: 0;
+}
+
+[data-config-form="icons"] .canvas-config-compact-settings.ant-btn > :not(.ant-btn-icon),
+[data-config-form="icons"] .canvas-config-compact-run.ant-btn > :not(.ant-btn-icon),
+[data-config-form="icons"] .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-mode-icon {
+    display: none;
+}
+
+[data-config-form="icons"] .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-settings-icon {
+    display: block;
 }
