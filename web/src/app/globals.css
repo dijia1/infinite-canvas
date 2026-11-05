@@ -252,6 +252,8 @@
     --canvas-scale: 1;
     --canvas-inverse-scale: 1;
     position: absolute;
+    /* Keep controls above the screen-sized connection hit area inside a small card. */
+    z-index: 40;
     top: 0;
     left: 0;
     width: calc(100% * var(--config-card-design-scale, 1));

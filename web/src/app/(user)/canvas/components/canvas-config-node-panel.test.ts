@@ -160,6 +160,24 @@ test("layout height follows content wrapping without using scaled screen dimensi
     assert.equal(disconnected, true);
 });
 
+test("returning to the full card preserves a user-resized height and still grows for larger content", () => {
+    const config: CanvasNodeData = { id: "config", type: CanvasNodeType.Config, title: "Config", position: { x: 40, y: 80 }, width: 500, height: 414 };
+    const other: CanvasNodeData = { ...config, id: "other" };
+    let nodes = [config, other];
+    const original = nodes;
+    const updateHeight = sourceBehavior(new URL("../[id]/canvas-client-page.tsx", import.meta.url), {
+        useCallback: (callback: unknown) => callback,
+        setNodes: (update: (current: CanvasNodeData[]) => CanvasNodeData[]) => { nodes = update(nodes); },
+    }).named("handleConfigNodeLayoutHeightChange");
+    updateHeight(config.id, 274);
+    assert.equal(nodes, original);
+    updateHeight(config.id, 450);
+    assert.equal(nodes[0]!.height, 450);
+    assert.equal(nodes[0]!.width, 500);
+    assert.deepEqual(nodes[0]!.position, { x: 40, y: 80 });
+    assert.equal(nodes[1], other);
+});
+
 test("opening input preview registers media targets and closing releases them", () => {
     const targets: unknown[] = [];
     const source = sourceBehavior(sourceURL, {

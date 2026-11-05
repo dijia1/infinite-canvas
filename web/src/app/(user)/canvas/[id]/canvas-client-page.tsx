@@ -1978,7 +1978,8 @@ function InfiniteCanvasPage() {
     const handleConfigNodeLayoutHeightChange = useCallback((nodeId: string, height: number) => {
         setNodes((current) => {
             const target = current.find((item) => item.id === nodeId);
-            if (!target || target.height === height) return current;
+            // Returning to the full layout must not shrink a height the user set with the resize handles.
+            if (!target || target.height >= height) return current;
             return current.map((item) => item.id === nodeId ? { ...item, height } : item);
         });
     }, []);
