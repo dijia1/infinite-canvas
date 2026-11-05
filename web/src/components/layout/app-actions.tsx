@@ -6,7 +6,6 @@ import { useEditorNavigation } from "./editor-navigation";
 import { Clock3, Keyboard, Settings2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 
-import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { appPath } from "@/lib/app-path";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -19,7 +18,6 @@ type AppActionsProps = {
 
 export function AppActions({ variant = "default", onOpenShortcuts, onOpenSettings }: AppActionsProps) {
     const theme = useThemeStore((state) => state.theme);
-    const setTheme = useThemeStore((state) => state.setTheme);
     const router = useRouter();
     const editorNavigation = useEditorNavigation();
     const navigate = (href: string) => void (editorNavigation ? editorNavigation.navigate(href) : router.push(href));
@@ -37,7 +35,6 @@ export function AppActions({ variant = "default", onOpenShortcuts, onOpenSetting
                     <Settings2 className="size-4" />
                 </button>
             </Dropdown>
-            <AnimatedThemeToggler theme={theme} onThemeChange={setTheme} className={className} style={style} aria-label={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} title={theme === "dark" ? "切换到浅色主题" : "切换到深色主题"} />
             {onOpenShortcuts ? (
                 <button type="button" className={className} style={style} onClick={onOpenShortcuts} aria-label="快捷键" title="快捷键">
                     <Keyboard className="size-4" />
