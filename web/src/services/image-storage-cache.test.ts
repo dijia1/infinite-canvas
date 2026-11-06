@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { createVideoResourceManager } from "@/app/(user)/canvas/media/video-resource-manager";
+import { VideoMediaRequestError } from "./api/video-media";
 import { createImagePreview, createImageStorageOperations, imageStorageKeyForMedia, imageThumbnailStorageKey, imageToDataUrl, mediaIdFromImageStorageKey, type ImageCacheStore } from "./image-storage.ts";
 
 class MemoryStore implements ImageCacheStore {
@@ -86,6 +88,77 @@ function deferred<T>() {
 test("original and thumbnail variants use versioned stable cache keys", () => {
     assert.equal(imageStorageKeyForMedia("media-1"), "media:media-1:v1:original");
     assert.equal(imageThumbnailStorageKey("media-1"), "media:media-1:v1:thumbnail");
+});
+
+test("video posters survive resource-manager recreation and signed URL changes using the image thumbnail cache", async () => {
+    const store = new MemoryStore();
+    const poster = new Blob(["first-frame"], { type: "image/jpeg" });
+    let downloads = 0, accessRequests = 0, urls = 0;
+    const revoked: string[] = [];
+    const createManager = () => {
+        const { operations } = createTestOperations({ store });
+        return createVideoResourceManager({
+            cachePoster: operations.loadMediaThumbnailBlob,
+            loadAccess: async () => ({ mediaId: "video", url: "https://oss.example/video.mp4", previewUrl: `https://oss.example/video.mp4?signature=${++accessRequests}&x-oss-process=video/snapshot,t_0,f_jpg,w_480`, expiresAt: new Date(Date.now() + 3600000).toISOString(), bytes: 100, contentType: "video/mp4", width: 480, height: 854, duration: 5 }),
+            loadPoster: async () => { downloads++; return poster; },
+            createURL: () => `blob:video-poster-${++urls}`,
+            revokeURL: (url) => revoked.push(url),
+        });
+    };
+    const first = createManager();
+    assert.equal(await first.acquire("video").getPoster(), "blob:video-poster-1");
+    first.dispose();
+    assert.deepEqual(revoked, ["blob:video-poster-1"]);
+    assert.equal(await store.getItem(imageThumbnailStorageKey("video")), poster);
+    assert.equal((await store.getItem<{ variant: string }>(`cache-meta:${imageThumbnailStorageKey("video")}`))?.variant, "thumbnail");
+    const second = createManager();
+    assert.equal(await second.acquire("video").getPoster(), "blob:video-poster-2");
+    assert.equal(accessRequests, 2);
+    assert.equal(downloads, 1);
+    second.dispose();
+    const { operations } = createTestOperations({ store });
+    await operations.deleteStoredImages([imageThumbnailStorageKey("video")]);
+    const afterDeletion = createManager();
+    assert.equal(await afterDeletion.acquire("video").getPoster(), "blob:video-poster-3");
+    assert.equal(downloads, 2);
+    afterDeletion.dispose();
+});
+
+test("a cached video poster still requires current media access", async () => {
+    const { operations } = createTestOperations({});
+    await operations.loadMediaThumbnailBlob("private-video", async () => new Blob(["private-poster"]));
+    let reads = 0;
+    const manager = createVideoResourceManager({
+        loadAccess: async () => { throw new VideoMediaRequestError("不可访问"); },
+        cachePoster: async (...args) => { reads++; return operations.loadMediaThumbnailBlob(...args); },
+    });
+    assert.equal(await manager.acquire("private-video").getPoster(), undefined);
+    assert.equal(reads, 0);
+    manager.dispose();
+});
+
+test("video poster loads coalesce without creating image-owned URLs and aborted downloads are not cached", async () => {
+    const store = new MemoryStore();
+    let imageURLs = 0, downloads = 0;
+    const { operations } = createTestOperations({ store, createObjectURL: () => { imageURLs++; return "blob:unused"; } });
+    const response = deferred<Blob>();
+    const load = () => { downloads++; return response.promise; };
+    const first = operations.loadMediaThumbnailBlob("shared-video", load);
+    const second = operations.loadMediaThumbnailBlob("shared-video", load);
+    const poster = new Blob(["poster"]);
+    response.resolve(poster);
+    assert.equal(await first, poster);
+    assert.equal(await second, poster);
+    assert.equal(downloads, 1);
+    assert.equal(imageURLs, 0);
+    const cancelled = deferred<Blob>();
+    const controller = new AbortController();
+    const pending = operations.loadMediaThumbnailBlob("cancelled-video", () => cancelled.promise, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    controller.abort();
+    cancelled.resolve(poster);
+    await assert.rejects(pending, { name: "AbortError" });
+    assert.equal(await store.getItem(imageThumbnailStorageKey("cancelled-video")), null);
 });
 
 test("extracts only persistent media IDs from image storage keys", () => {

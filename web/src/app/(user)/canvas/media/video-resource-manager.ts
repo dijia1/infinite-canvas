@@ -1,5 +1,6 @@
 import axios from "axios";
 import { getVideoMediaAccess, VideoMediaRequestError, type VideoMediaAccess } from "@/services/api/video-media";
+import { loadMediaThumbnailBlob } from "@/services/image-storage";
 import { createCanvasMediaLoadQueue } from "./canvas-media-load-queue";
 
 const aborted = () => new DOMException("视频资源加载已取消", "AbortError");
@@ -21,6 +22,7 @@ type Entry = {
 type Options = {
     loadAccess?: (id: string, signal: AbortSignal) => Promise<VideoMediaAccess>;
     loadPoster?: (url: string, signal: AbortSignal) => Promise<Blob>;
+    cachePoster?: typeof loadMediaThumbnailBlob;
     createURL?: (blob: Blob) => string;
     revokeURL?: (url: string) => void;
     graceMs?: number;
@@ -177,30 +179,28 @@ export function createVideoResourceManager(options: Options = {}) {
                     const pending = (async () => {
                         try {
                             const value = await access(current);
-                            const url = value.previewUrl;
-                            if (!url || url === value.url || !new URL(url, "http://localhost").searchParams.get("x-oss-process")?.startsWith("video/snapshot")) {
-                                current.failedUntil = Date.now() + (options.failureMs ?? 60000);
-                                return undefined;
-                            }
-                            const job = queue.request({
-                                key: current.id,
-                                priority: "visible-thumbnail",
-                                signal: controller.signal,
-                                load: async (signal) => {
-                                    const timeout = setTimeout(() => controller.abort(), 15000);
-                                    try {
-                                        return await (options.loadPoster || downloadPoster)(url, signal);
-                                    } finally {
-                                        clearTimeout(timeout);
-                                    }
-                                },
-                            });
-                            let blob: Blob;
-                            try {
-                                blob = await job.promise;
-                            } finally {
-                                job.release();
-                            }
+                            const blob = await (options.cachePoster || loadMediaThumbnailBlob)(current.id, async () => {
+                                const url = value.previewUrl;
+                                if (!url || url === value.url || !new URL(url, "http://localhost").searchParams.get("x-oss-process")?.startsWith("video/snapshot")) throw new Error("视频封面不可用");
+                                const job = queue.request({
+                                    key: current.id,
+                                    priority: "visible-thumbnail",
+                                    signal: controller.signal,
+                                    load: async (signal) => {
+                                        const timeout = setTimeout(() => controller.abort(), 15000);
+                                        try {
+                                            return await (options.loadPoster || downloadPoster)(url, signal);
+                                        } finally {
+                                            clearTimeout(timeout);
+                                        }
+                                    },
+                                });
+                                try {
+                                    return await job.promise;
+                                } finally {
+                                    job.release();
+                                }
+                            }, { signal: controller.signal });
                             if (!valid(current) || controller.signal.aborted) throw aborted();
                             trim(blob.size);
                             if (blob.size > 2 * 1024 * 1024 || totalBytes + blob.size > maxBytes || [...entries.values()].filter((e) => e.poster).length >= maxEntries) return undefined;

@@ -598,6 +598,26 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         revokeObjectURL(url);
     };
     const getImageBlob = async (storageKey: string) => (await readBlob(storageKey)) || null;
+    // Video resources own their Blob URLs; share thumbnail bytes and storage policy without creating another image URL.
+    const loadMediaThumbnailBlob = (mediaId: string, load: () => Promise<Blob>, { signal }: Pick<MediaLoadOptions, "signal"> = {}) => {
+        const storageKey = imageThumbnailStorageKey(mediaId);
+        const generation = currentGeneration(storageKey);
+        return coalesceMediaLoad(`${scopedLoadKey(options, storageKey)}#${generation}:blob`, async () => {
+            const finish = markInFlight([storageKey]);
+            try {
+                throwIfImageLoadAborted(signal);
+                const cached = await readBlob(storageKey, generation);
+                if (cached) return cached;
+                const blob = await load();
+                throwIfImageLoadAborted(signal);
+                await writeBlob(storageKey, blob, generation);
+                return blob;
+            } finally {
+                finish();
+                scheduleCacheBudgetEnforcement();
+            }
+        }, { signal });
+    };
     const setImageBlob = async (storageKey: string, blob: Blob) => {
         const generation = currentGeneration(storageKey);
         const finish = markInFlight([storageKey]);
@@ -744,7 +764,7 @@ export function createImageStorageOperations(options: ImageStorageOperationsOpti
         await enforceCacheBudget();
     };
 
-    return { loadMediaImage, loadMediaThumbnail, storeImage, resolveImageUrl, releaseObjectURL, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforceCacheBudget };
+    return { loadMediaImage, loadMediaThumbnail, loadMediaThumbnailBlob, storeImage, resolveImageUrl, releaseObjectURL, getImageBlob, setImageBlob, promoteImageStorageKey, deleteStoredImages, cleanupUnusedImages, enforceCacheBudget };
 }
 
 export async function createImagePreview(blob: Blob) {
@@ -797,6 +817,10 @@ export async function loadMediaImage(mediaId: string, remoteURL: RemoteMediaURL,
 
 export async function loadMediaThumbnail(mediaId: string, remoteThumbnailURL: RemoteMediaURL, loadOptions?: MediaLoadOptions): Promise<UploadedImage> {
     return currentOperations().loadMediaThumbnail(mediaId, remoteThumbnailURL, loadOptions);
+}
+
+export async function loadMediaThumbnailBlob(mediaId: string, load: () => Promise<Blob>, loadOptions?: Pick<MediaLoadOptions, "signal">): Promise<Blob> {
+    return currentOperations().loadMediaThumbnailBlob(mediaId, load, loadOptions);
 }
 
 export async function promoteImageStorageKey(image: UploadedImage, mediaId: string, options?: { retainSource?: boolean }): Promise<UploadedImage> {

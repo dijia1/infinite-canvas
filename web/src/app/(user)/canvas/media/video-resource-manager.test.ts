@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createVideoResourceManager } from "./video-resource-manager";
+const createManager = (options: Parameters<typeof createVideoResourceManager>[0]) => createVideoResourceManager({ cachePoster: (_id, load) => load(), ...options });
 const access = (url = "video") => ({ mediaId: "m", url, previewUrl: "https://oss.test/v?x-oss-process=video%2Fsnapshot", expiresAt: new Date(Date.now() + 3600000).toISOString(), bytes: 1, contentType: "video/mp4", width: 10, height: 10, duration: 2 });
 test("shares concurrent access and one consumer release does not abort another", async () => {
     let calls = 0;
     let finish!: (value: ReturnType<typeof access>) => void;
     let signal!: AbortSignal;
-    const manager = createVideoResourceManager({
+    const manager = createManager({
         loadAccess: (_id, s) => {
             calls++;
             signal = s;
@@ -31,7 +32,7 @@ test("shares concurrent access and one consumer release does not abort another",
 test("session reset prevents stale results and aborts outstanding requests", async () => {
     let finish!: (value: ReturnType<typeof access>) => void;
     let signal!: AbortSignal;
-    const manager = createVideoResourceManager({
+    const manager = createManager({
         loadAccess: (_id, s) => {
             signal = s;
             return new Promise((r) => (finish = r));
@@ -48,7 +49,7 @@ test("session reset prevents stale results and aborts outstanding requests", asy
 });
 test("deduplicates recovery and reuses newly refreshed URL for old failures", async () => {
     let calls = 0;
-    const manager = createVideoResourceManager({ loadAccess: async () => access(`video-${++calls}`) });
+    const manager = createManager({ loadAccess: async () => access(`video-${++calls}`) });
     const a = manager.acquire("m"),
         b = manager.acquire("m");
     await a.getAccess();
@@ -61,7 +62,7 @@ test("deduplicates recovery and reuses newly refreshed URL for old failures", as
 test("poster bytes are shared, failures negatively cached and released on disposal", async () => {
     let downloads = 0,
         revoked = 0;
-    const manager = createVideoResourceManager({
+    const manager = createManager({
         loadAccess: async () => access(),
         loadPoster: async () => {
             downloads++;
@@ -78,7 +79,7 @@ test("poster bytes are shared, failures negatively cached and released on dispos
     manager.dispose();
     assert.equal(revoked, 1);
     let failures = 0;
-    const failed = createVideoResourceManager({
+    const failed = createManager({
         loadAccess: async () => access(),
         loadPoster: async () => {
             failures++;
@@ -93,7 +94,7 @@ test("poster bytes are shared, failures negatively cached and released on dispos
 });
 test("last consumer aborts pending request after grace period", async () => {
     let signal!: AbortSignal;
-    const manager = createVideoResourceManager({
+    const manager = createManager({
         loadAccess: (_id, s) => {
             signal = s;
             return new Promise((_r, reject) => s.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError"))));
@@ -111,7 +112,7 @@ test("last consumer aborts pending request after grace period", async () => {
 
 test("expired access refreshes without changing a valid shared address", async () => {
     let calls = 0;
-    const manager = createVideoResourceManager({ loadAccess: async () => ({ ...access(`url-${++calls}`), expiresAt: new Date(Date.now() + (calls === 1 ? 1000 : 3600000)).toISOString() }) });
+    const manager = createManager({ loadAccess: async () => ({ ...access(`url-${++calls}`), expiresAt: new Date(Date.now() + (calls === 1 ? 1000 : 3600000)).toISOString() }) });
     const lease = manager.acquire("m");
     assert.equal((await lease.getAccess()).url, "url-1");
     assert.equal((await lease.getAccess()).url, "url-2");
@@ -123,7 +124,7 @@ test("expired access refreshes without changing a valid shared address", async (
 test("poster budget evicts idle resources but preserves active resources", async () => {
     const revoked: string[] = [];
     let next = 0;
-    const manager = createVideoResourceManager({ maxBytes: 3, loadAccess: async () => access(), loadPoster: async () => new Blob(["jpg"]), createURL: () => `blob:${++next}`, revokeURL: (url) => revoked.push(url) });
+    const manager = createManager({ maxBytes: 3, loadAccess: async () => access(), loadPoster: async () => new Blob(["jpg"]), createURL: () => `blob:${++next}`, revokeURL: (url) => revoked.push(url) });
     const first = manager.acquire("a");
     assert.equal(await first.getPoster(), "blob:1");
     const second = manager.acquire("b");
@@ -138,7 +139,7 @@ test("poster budget evicts idle resources but preserves active resources", async
 test("poster failures expire and idle resources are eventually released", async () => {
     let calls = 0;
     let revoked = 0;
-    const manager = createVideoResourceManager({
+    const manager = createManager({
         failureMs: 1,
         idleMs: 5,
         loadAccess: async () => access(),
