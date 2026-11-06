@@ -31,4 +31,3 @@ export function useWorkflowDraft({ ownerUID, workflowId, enabled, dirty, revisio
         else writer.clear();
     }, [dirty, editorDocument, enabled, revision, writer]);
 }
-

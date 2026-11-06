@@ -50,6 +50,6 @@ func cleanupReservedMediaObject(ctx context.Context, store imageStore, key strin
 		err = cleanupMediaUploadIntent(cleanupCtx, store, id, current)
 	}
 	if err != nil {
-		log.Printf("unpublished media cleanup deferred reservation_id=%s: %v", id, err)
+		log.Printf("unpublished media cleanup deferred reservation_id=%s category=%s", id, TaskErrorCategory(err))
 	}
 }

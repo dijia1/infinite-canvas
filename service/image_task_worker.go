@@ -469,10 +469,10 @@ func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTas
 		return
 	}
 	if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-		log.Printf("image task %s input cleanup failed: %v", item.ID, err)
+		log.Printf("image task %s input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 	}
 	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-		log.Printf("image task %s snapshot cleanup failed: %v", item.ID, err)
+		log.Printf("image task %s snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 	}
 }
 
@@ -499,11 +499,11 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 	inputs, inputErr := imageTaskInputs(item)
 	if inputErr == nil {
 		if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-			log.Printf("image task %s input cleanup failed: %v", item.ID, err)
+			log.Printf("image task %s input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 		}
 	}
 	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-		log.Printf("image task %s snapshot cleanup failed: %v", item.ID, err)
+		log.Printf("image task %s snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 	}
 	updateImageTaskOperationLog(item, model.OperationStatusFailure, nil, message)
 }
@@ -628,7 +628,7 @@ func cleanupImageTasks(ctx context.Context, current time.Time) {
 				return
 			}
 			if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-				log.Printf("image task %s periodic snapshot cleanup failed: %v", item.ID, err)
+				log.Printf("image task %s periodic snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 			}
 		}
 	}
@@ -642,13 +642,13 @@ func cleanupImageTasks(ctx context.Context, current time.Time) {
 			return
 		}
 		if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-			log.Printf("image task %s retention snapshot cleanup failed: %v", item.ID, err)
+			log.Printf("image task %s retention snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 			continue
 		}
 		inputs, inputErr := imageTaskInputs(item)
 		if inputErr == nil {
 			if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-				log.Printf("image task %s retention input cleanup failed: %v", item.ID, err)
+				log.Printf("image task %s retention input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 				continue
 			}
 		}

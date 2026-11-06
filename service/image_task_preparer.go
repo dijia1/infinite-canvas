@@ -94,7 +94,7 @@ func prepareImageGenerationTask(ctx context.Context, task model.ImageGenerationT
 			failImageTaskPreparation(task.ID, permanentImagePreparationError{message: err.Error()})
 			return
 		}
-		log.Printf("image task %s prepare versioning check failed: %v", task.ID, err)
+		log.Printf("image task %s prepare versioning check failed category=%s", task.ID, TaskErrorCategory(err))
 		return
 	}
 	inputs, err := repository.ListImageGenerationTaskInputs(task.ID)
@@ -112,7 +112,7 @@ func prepareImageGenerationTask(ctx context.Context, task model.ImageGenerationT
 			if errors.As(err, &permanent) {
 				failImageTaskPreparation(task.ID, err)
 			} else if ctx.Err() == nil {
-				log.Printf("image task %s input %d prepare deferred: %v", task.ID, inputs[index].Position, err)
+				log.Printf("image task %s input %d prepare deferred category=%s", task.ID, inputs[index].Position, TaskErrorCategory(err))
 			}
 			return
 		}
@@ -279,7 +279,7 @@ func failImageTaskPreparation(taskID string, err error) {
 		return
 	}
 	if cleanupErr := cleanupImageTaskSnapshotPrefix(context.Background(), taskID); cleanupErr != nil {
-		log.Printf("image task %s failed preparation cleanup deferred: %v", taskID, cleanupErr)
+		log.Printf("image task %s failed preparation cleanup deferred category=%s", taskID, TaskErrorCategory(cleanupErr))
 	}
 }
 
