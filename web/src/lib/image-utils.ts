@@ -14,15 +14,6 @@ export function formatBytes(bytes: number) {
     return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
-export function getDataUrlByteSize(dataUrl: string) {
-    const base64 = dataUrl.split(",", 2)[1];
-    if (!base64) {
-        return 0;
-    }
-    const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-    return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
-}
-
 export function readImageMeta(dataUrl: string) {
     return new Promise<{ width: number; height: number; mimeType: string }>((resolve) => {
         const image = new Image();

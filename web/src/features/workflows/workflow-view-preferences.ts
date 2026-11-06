@@ -1,5 +1,5 @@
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { ViewportTransform } from "@/app/(user)/canvas/types";
+import type { ViewportTransform } from "@/features/canvas/types";
 
 export type WorkflowViewPreferences = { viewport: ViewportTransform; backgroundMode: CanvasBackgroundMode; showImageInfo: boolean };
 export const defaultWorkflowView: WorkflowViewPreferences = { viewport: { x: 80, y: 80, k: 0.8 }, backgroundMode: "lines", showImageInfo: false };

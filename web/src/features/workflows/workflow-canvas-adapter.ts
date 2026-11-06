@@ -1,7 +1,7 @@
 import { canvasFrameRectsOverlap, MAX_CANVAS_FRAMES } from "@/lib/canvas-frame";
 import { nanoid } from "nanoid";
 
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/app/(user)/canvas/types";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle } from "@/features/canvas/types";
 
 import { addWorkflowConnection, removeWorkflowConnection, removeWorkflowNode, removeWorkflowOutput, validateWorkflowConnection, workflowConnectionKey, type WorkflowConnectionInput } from "./workflow-graph";
 import type { WorkflowGraph, WorkflowPosition } from "./types";

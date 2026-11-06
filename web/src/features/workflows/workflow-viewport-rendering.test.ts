@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/app/(user)/canvas/types";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/features/canvas/types";
 import { workflowVisualNodeId, workflowVisualOutputId } from "./workflow-canvas-adapter";
 import { buildWorkflowPathData, selectWorkflowViewportScene, workflowConnectionPathCache, workflowOutputLinks, workflowOutputPathCache, workflowSelectedImageResourceIds, workflowVisualRenderDetail } from "./workflow-viewport-rendering";
 import { workflowOutputKey, workflowOutputResourceNodeId } from "./workflow-run-state";

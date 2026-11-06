@@ -1,6 +1,6 @@
 import type { CanvasProjectDocument } from "./api/canvas-projects";
-import { migrateCanvasMaskResources } from "@/app/(user)/canvas/image-mask/mask-resources";
-import { excludeLocalUploadNodes } from "@/app/(user)/canvas/utils/canvas-local-image-upload";
+import { migrateCanvasMaskResources } from "@/features/canvas/image-mask/mask-resources";
+import { excludeLocalUploadNodes } from "@/features/canvas/utils/canvas-local-image-upload";
 
 function isTransientCanvasUrl(value: string) {
     const normalized = value.trim();

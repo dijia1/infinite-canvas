@@ -1,4 +1,4 @@
-import { hasImageMask } from "@/app/(user)/canvas/image-mask/mask-utils";
+import { hasImageMask } from "@/lib/image-mask/mask-utils";
 import type { ReferenceImage } from "@/types/image";
 
 export function imageEditReferenceError(references: ReferenceImage[]) {

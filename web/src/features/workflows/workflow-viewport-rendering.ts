@@ -1,8 +1,8 @@
-import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/app/(user)/canvas/types";
-import type { CanvasRenderDetail } from "@/app/(user)/canvas/media/canvas-media-policy";
-import { getConnectionCurve } from "@/app/(user)/canvas/utils/canvas-connection-geometry";
-import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "@/app/(user)/canvas/utils/canvas-connection-visibility";
-import { isCanvasNodeNearViewport } from "@/app/(user)/canvas/utils/canvas-node-visibility";
+import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/features/canvas/types";
+import type { CanvasRenderDetail } from "@/features/canvas/media/canvas-media-policy";
+import { getConnectionCurve } from "@/features/canvas/utils/canvas-connection-geometry";
+import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "@/features/canvas/utils/canvas-connection-visibility";
+import { isCanvasNodeNearViewport } from "@/features/canvas/utils/canvas-node-visibility";
 
 import { parseWorkflowVisualId, workflowVisualNodeId, workflowVisualOutputId } from "./workflow-canvas-adapter";
 import { workflowOutputKey, workflowOutputResourceNodeId } from "./workflow-run-state";

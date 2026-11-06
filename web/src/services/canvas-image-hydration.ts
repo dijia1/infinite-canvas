@@ -1,5 +1,5 @@
 import { recoverPersistedImage } from "./image-recovery.ts";
-import type { CanvasNodeData, CanvasNodeMetadata } from "@/app/(user)/canvas/types";
+import type { CanvasNodeData, CanvasNodeMetadata } from "@/features/canvas/types";
 
 export const missingPublicImageMessage = "原公共图片已失效，请替换或删除此节点";
 

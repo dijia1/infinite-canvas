@@ -15,7 +15,7 @@ import { reconcileVideoConfig } from "@/lib/video-config";
 import { resolveSelectedModel } from "@/lib/model-selection";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { hasImageMask } from "../image-mask/mask-utils";
+import { hasImageMask } from "@/lib/image-mask/mask-utils";
 import { buildGenerationConfig } from "../utils/canvas-generation-utils";
 import { CONFIG_NODE_MIN_SIZE } from "../utils/canvas-config-card";
 import { CanvasConfigCompactCard } from "./canvas-config-compact-card";

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("canvas accepts private and public material drag payloads", async () => {
-    const source = await readFile(new URL("../[id]/canvas-client-page.tsx", import.meta.url), "utf8");
+    const source = await readFile(new URL("../editor/canvas-client-page.tsx", import.meta.url), "utf8");
 
     assert.match(source, /PRIVATE_IMAGE_DRAG_TYPE/);
     assert.match(source, /PUBLIC_IMAGE_DRAG_TYPE/);

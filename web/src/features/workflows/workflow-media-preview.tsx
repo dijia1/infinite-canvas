@@ -2,7 +2,7 @@
 
 import { Image as ImageIcon, Video } from "lucide-react";
 
-import { CanvasVideoContent } from "@/app/(user)/canvas/components/canvas-video-content";
+import { CanvasVideoContent } from "@/features/canvas/components/canvas-video-content";
 import { CanvasReadyImage } from "@/components/canvas-ready-image";
 
 export function WorkflowMediaPreview({

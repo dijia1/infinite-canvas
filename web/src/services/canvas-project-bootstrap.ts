@@ -1,5 +1,5 @@
-import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
-import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
+import { CanvasNodeType, type CanvasNodeData } from "@/features/canvas/types";
+import type { CanvasProject } from "@/features/canvas/stores/use-canvas-store";
 import { uploadUserImage } from "@/services/api/image";
 import { canvasProjectsApi, type CanvasProjectDetail, type CanvasSummary, type CanvasProjectsApi, type CreateCanvasProjectInput } from "@/services/api/canvas-projects";
 import { getImageBlob, imageStorageKeyForMedia, uploadImage } from "@/services/image-storage";

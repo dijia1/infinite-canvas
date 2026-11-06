@@ -1,7 +1,7 @@
 import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config";
-import { imageOutputSettings, normalizeImageBackground, normalizeImageOutputFormat } from "../../../../lib/image-output-config.ts";
-import { normalizePersistedAiConfig, type AiConfig } from "../../../../lib/ai-config";
-import type { ReferenceImage } from "../../../../types/image";
+import { imageOutputSettings, normalizeImageBackground, normalizeImageOutputFormat } from "@/lib/image-output-config.ts";
+import { normalizePersistedAiConfig, type AiConfig } from "@/lib/ai-config";
+import type { ReferenceImage } from "@/types/image";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasImageGenerationType, type CanvasNodeData, type CanvasNodeMetadata } from "../types.ts";
 

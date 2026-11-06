@@ -157,7 +157,7 @@ test("full-layout measurement updates only local fit height and disconnects on u
 });
 
 test("configuration edits preserve legacy and user-resized geometry across image and video modes", () => {
-    const apply = sourceBehavior(new URL("../[id]/canvas-client-page.tsx", import.meta.url), {
+    const apply = sourceBehavior(new URL("../editor/canvas-client-page.tsx", import.meta.url), {
         CanvasNodeType, NODE_DEFAULT_SIZE: { image: { width: 340, height: 240 } },
     }).named("applyNodeConfigPatch");
     for (const size of [{ width: 220, height: 167 }, { width: 400, height: 500 }, { width: 720, height: 548 }]) {

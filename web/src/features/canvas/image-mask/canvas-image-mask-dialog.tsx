@@ -9,7 +9,7 @@ import { MASK_PREVIEW_OPACITY, useMaskPreferencesStore } from "@/stores/use-mask
 import type { ImageMask, ImageMaskPoint, ImageMaskStroke } from "@/types/image";
 
 import { adjustMaskBrushSize, DEFAULT_BRUSH_SIZE, maskBrushKeyDelta, maskBrushRadius, MAX_BRUSH_SIZE, MIN_BRUSH_SIZE } from "./mask-brush";
-import { appendMaskStroke, drawImageMask, normalizeImageMask } from "./mask-utils";
+import { appendMaskStroke, drawImageMask, normalizeImageMask } from "@/lib/image-mask/mask-utils";
 
 type MaskTool = "paint" | "erase";
 type CanvasImageMaskDialogProps = {

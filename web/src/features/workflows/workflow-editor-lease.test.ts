@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { claimCanvasProjectEditorLease } from "@/app/(user)/canvas/sync/canvas-project-editor-lease";
+import { claimCanvasProjectEditorLease } from "@/features/canvas/sync/canvas-project-editor-lease";
 import { workflowEditorLeaseKey } from "./workflow-editor-lease";
 
 test("workflow lease keys isolate users and avoid delimiter collisions", () => {

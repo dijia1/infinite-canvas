@@ -107,7 +107,7 @@ test("failed session request rejects instead of populating a stale session", asy
 });
 
 test("a changed UID reloads before an initialized Canvas store can bootstrap under another user", async () => {
-    const { createCanvasStore } = await import("../../app/(user)/canvas/stores/use-canvas-store");
+    const { createCanvasStore } = await import("../../features/canvas/stores/use-canvas-store");
     for (const [previousUID, nextUID] of [["A", "B"], ["A", "guest"], ["guest", "A"], ["A", "A"]]) {
         const store = createCanvasStore();
         await store.getState().hydrate(previousUID);

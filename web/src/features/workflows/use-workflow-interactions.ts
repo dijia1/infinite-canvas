@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
-import { useCanvasInteractions } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
-import type { CanvasNodeData, CanvasConnection, Position, ViewportTransform } from "@/app/(user)/canvas/types";
+import { useCanvasInteractions } from "@/features/canvas/hooks/use-canvas-interactions";
+import type { CanvasNodeData, CanvasConnection, Position, ViewportTransform } from "@/features/canvas/types";
 import { addWorkflowConnection, createWorkflowNode } from "./workflow-graph";
 import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, copyWorkflowFrameSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowConnectionInput, workflowVisualNodeId, type WorkflowConnectionValidator } from "./workflow-canvas-adapter";
 import { autoAssignWorkflowFrameMembers, constrainWorkflowMemberMove, detachWorkflowFrameMembersInPlace, expandWorkflowFrames, restoreWorkflowFrameGeometries, restoreWorkflowFrameMembersInsideOriginalFrames, workflowFrameOptionDragVisualIds } from "./workflow-frames";

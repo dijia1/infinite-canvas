@@ -72,7 +72,7 @@ test("workflow adapter reuses visual arrays across viewport rerenders and refres
     const { useWorkflowInteractions: useHook } = sourceModule<{ useWorkflowInteractions: typeof useWorkflowInteractions }>(interactionsURL, {
         react: harness.hooks,
         nanoid: { nanoid: () => "new-id" },
-        "@/app/(user)/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: () => interactions },
+        "@/features/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: () => interactions },
         "./workflow-graph": workflowGraph,
         "./workflow-canvas-adapter": {
             ...adapter,
@@ -113,7 +113,7 @@ test("workflow member drag expands its Frame before pointer release and never sh
     const { useWorkflowInteractions: useHook } = sourceModule<{ useWorkflowInteractions: typeof useWorkflowInteractions }>(interactionsURL, {
         react: harness.hooks,
         nanoid: { nanoid: () => "new-id" },
-        "@/app/(user)/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: (options: Record<string, any>) => {
+        "@/features/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: (options: Record<string, any>) => {
             sharedOptions = options;
             return { resetInteractionState() {} };
         } },
@@ -156,7 +156,7 @@ test("Option drag prepares a generated media result as its complete logical visu
     const { useWorkflowInteractions: useHook } = sourceModule<{ useWorkflowInteractions: typeof useWorkflowInteractions }>(interactionsURL, {
         react: harness.hooks,
         nanoid: { nanoid: () => "new-id" },
-        "@/app/(user)/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: (options: Record<string, any>) => ({
+        "@/features/canvas/hooks/use-canvas-interactions": { useCanvasInteractions: (options: Record<string, any>) => ({
             resetInteractionState() {},
             handleNodeMouseDown(_event: unknown, nodeId: string) {
                 dragged = { nodeId, selected: [...options.selectedNodeIdsRef.current] };

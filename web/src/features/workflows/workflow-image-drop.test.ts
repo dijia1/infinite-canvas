@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { prepareWorkflowDroppedImages, appendWorkflowDroppedImages } from "./workflow-image-drop";
-import { layoutDroppedImageGrid } from "@/app/(user)/canvas/utils/canvas-file-drop";
+import { layoutDroppedImageGrid } from "@/features/canvas/utils/canvas-file-drop";
 import type { WorkflowGraph } from "./types";
 
 const image = (name: string, type = "image/png") => new File([name], name, { type });

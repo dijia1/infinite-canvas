@@ -1,6 +1,6 @@
 import type { CanvasBackgroundMode } from "@/lib/canvas-theme";
-import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/app/(user)/canvas/types";
-import type { CanvasMaskResources } from "@/app/(user)/canvas/image-mask/mask-resources";
+import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "@/features/canvas/types";
+import type { CanvasMaskResources } from "@/features/canvas/image-mask/mask-resources";
 import { apiDelete, apiGet, apiPost, apiPut } from "./request";
 import { sanitizeCanvasProjectDocument } from "../canvas-project-document";
 
@@ -83,7 +83,7 @@ export function fetchCanvasProject(id: string) {
 }
 
 export function importCanvasPublicImages(id: string, revision: number) {
-    return apiPost<{ project: CanvasProjectDetail; replacements: import("@/app/(user)/canvas/utils/canvas-public-image-migration").PublicImageReplacement[]; missingNodeIds: string[]; pendingNodeIds: string[] }>(
+    return apiPost<{ project: CanvasProjectDetail; replacements: import("@/features/canvas/utils/canvas-public-image-migration").PublicImageReplacement[]; missingNodeIds: string[]; pendingNodeIds: string[] }>(
         `/api/v1/canvas/projects/${encodeURIComponent(id)}/public-images/import`,
         { revision },
     );

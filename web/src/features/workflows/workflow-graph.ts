@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { fitNodeSize } from "@/app/(user)/canvas/utils/canvas-node-size";
+import { fitNodeSize } from "@/features/canvas/utils/canvas-node-size";
 
 import type { WorkflowConnection, WorkflowGraph, WorkflowMediaType, WorkflowNode, WorkflowNodeType, WorkflowPosition } from "./types";
 

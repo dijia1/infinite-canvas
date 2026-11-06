@@ -5,7 +5,7 @@ import { useEffect, useRef } from "react";
 import { MASK_PREVIEW_OPACITY, useMaskPreferencesStore } from "@/stores/use-mask-preferences-store";
 import type { ImageMask } from "@/types/image";
 
-import { drawImageMask } from "./mask-utils";
+import { drawImageMask } from "@/lib/image-mask/mask-utils";
 
 export function CanvasImageMaskOverlay({ mask }: { mask: ImageMask | undefined }) {
     const overlayColor = useMaskPreferencesStore((state) => state.previewColor);

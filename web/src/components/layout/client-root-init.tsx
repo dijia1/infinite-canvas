@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import { portalSessionQuery } from "@/services/api/session";
 
-import { useCanvasStore } from "@/app/(user)/canvas/stores/use-canvas-store";
+import { useCanvasStore } from "@/features/canvas/stores/use-canvas-store";
 import { useConfigStore } from "@/stores/use-config-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { setImageStorageScope } from "@/services/image-storage";

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createVideoResourceManager } from "@/app/(user)/canvas/media/video-resource-manager";
+import { createVideoResourceManager } from "@/features/canvas/media/video-resource-manager";
 import { VideoMediaRequestError } from "./api/video-media";
 import { createImagePreview, createImageStorageOperations, imageStorageKeyForMedia, imageThumbnailStorageKey, imageToDataUrl, mediaIdFromImageStorageKey, type ImageCacheStore } from "./image-storage.ts";
 

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createCanvasInteractionController } from "@/app/(user)/canvas/hooks/use-canvas-interactions";
-import { CanvasNodeType, type CanvasNodeData, type CanvasConnection } from "@/app/(user)/canvas/types";
+import { createCanvasInteractionController } from "@/features/canvas/hooks/use-canvas-interactions";
+import { CanvasNodeType, type CanvasNodeData, type CanvasConnection } from "@/features/canvas/types";
 import { canvasFrameRectsOverlap } from "@/lib/canvas-frame";
 import { addWorkflowConnection, appendWorkflowOutput, createWorkflowNode, emptyWorkflowGraph } from "./workflow-graph";
 import { applyWorkflowVisualConnections, applyWorkflowVisualNodes, copyWorkflowSelection, copyWorkflowFrameSelection, deleteWorkflowVisualSelection, normalizeWorkflowCanvasConnection, parseWorkflowVisualId, pasteWorkflowSelection, toWorkflowCanvasConnections, toWorkflowCanvasNodes, workflowVisualNodeId, workflowVisualOutputId } from "./workflow-canvas-adapter";

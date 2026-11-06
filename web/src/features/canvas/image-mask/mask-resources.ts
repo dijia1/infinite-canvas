@@ -1,6 +1,6 @@
 import type { ImageMask } from "@/types/image";
 
-import { normalizeImageMask } from "./mask-utils";
+import { normalizeImageMask } from "@/lib/image-mask/mask-utils";
 import type { CanvasNodeData } from "../types";
 
 export type CanvasMaskResources = Record<string, ImageMask>;

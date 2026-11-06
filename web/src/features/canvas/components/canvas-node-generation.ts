@@ -1,6 +1,6 @@
 import { imageToDataUrl, type UploadedImage } from "@/services/image-storage";
 import type { ReferenceImage } from "@/types/image";
-import { normalizeImageMask } from "../image-mask/mask-utils";
+import { normalizeImageMask } from "@/lib/image-mask/mask-utils";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 

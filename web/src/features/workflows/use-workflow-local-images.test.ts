@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { hookHarness, sourceModule, deferred } from "@/test-utils/source-component";
-import * as queue from "@/app/(user)/canvas/media/canvas-local-image-upload-controller";
-import * as files from "@/app/(user)/canvas/utils/canvas-file-drop";
+import * as queue from "@/features/canvas/media/canvas-local-image-upload-controller";
+import * as files from "@/features/canvas/utils/canvas-file-drop";
 import * as retention from "@/services/image-cache-retention";
 import * as scope from "@/lib/portal-storage-scope";
 import * as adapter from "./workflow-canvas-adapter";
@@ -27,8 +27,8 @@ function fixture(sharedStorage = storage(), blobs = new Map<string, Blob>()) {
     let key = 0, failPromotion = false;
     const { useWorkflowLocalImages: useHook } = sourceModule<{ useWorkflowLocalImages: typeof useWorkflowLocalImages }>(new URL("./use-workflow-local-images.ts", import.meta.url), {
         react: h.hooks, nanoid: { nanoid: () => `op-${++key}` },
-        "@/app/(user)/canvas/media/canvas-local-image-upload-controller": queue,
-        "@/app/(user)/canvas/utils/canvas-file-drop": files,
+        "@/features/canvas/media/canvas-local-image-upload-controller": queue,
+        "@/features/canvas/utils/canvas-file-drop": files,
         "@/services/api/image": { uploadUserImage: async (file: File, intent: string) => { assert.equal(intent, "library"); const gate = deferred<{ mediaId: string; url: string }>(); calls.push({ file, gate }); return gate.promise; } },
         "@/services/image-storage": {
             uploadImage: async (file: File): Promise<UploadedImage> => { const storageKey = `image:${file.name}:${++key}`; blobs.set(storageKey, file); return { url: `blob:${storageKey}`, storageKey, width: 800, height: 400, bytes: file.size, mimeType: file.type }; },

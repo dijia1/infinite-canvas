@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CanvasNodeType } from "@/app/(user)/canvas/types";
-import type { CanvasProject } from "@/app/(user)/canvas/stores/use-canvas-store";
+import { CanvasNodeType } from "@/features/canvas/types";
+import type { CanvasProject } from "@/features/canvas/stores/use-canvas-store";
 import type { CanvasProjectDetail, CanvasProjectsApi, CreateCanvasProjectInput } from "./api/canvas-projects";
 import { bootstrapCanvasProjects, mergeNormalizedLegacyNodes, normalizeLegacyCanvasProject, retryCanvasBootstrapOnOnline } from "./canvas-project-bootstrap.ts";
 

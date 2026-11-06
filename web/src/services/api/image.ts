@@ -9,7 +9,7 @@ import { aiApiPath, apiDelete, apiRequestError, debugApiRequest } from "@/servic
 import type { ReferenceImage } from "@/types/image";
 import { imageOutputSettings } from "@/lib/image-output-config";
 import { imageEditReferenceError } from "@/lib/image-edit-validation";
-import { createImageMaskFile } from "@/app/(user)/canvas/image-mask/mask-raster";
+import { createImageMaskFile } from "@/lib/image-mask/mask-raster";
 
 type ImageApiResponse = {
     data?: Record<string, unknown> | Array<Record<string, unknown>>;
@@ -168,7 +168,6 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
         output_format: output.outputFormat,
         background: output.background,
         providerOptions: config.providerOptions || {},
-        response_format: "b64_json",
     };
     debugApiRequest("image generation", {
         url: aiApiPath("/images/generations"),

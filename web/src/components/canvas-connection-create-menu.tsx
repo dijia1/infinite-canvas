@@ -2,7 +2,7 @@
 
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { Position, ViewportTransform } from "@/app/(user)/canvas/types";
+import type { Position, ViewportTransform } from "@/features/canvas/types";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
 type ConnectionCreateOption = {

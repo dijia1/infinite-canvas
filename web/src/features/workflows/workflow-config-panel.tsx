@@ -8,8 +8,8 @@ import { CanvasConfigModelSelect } from "@/components/canvas-config-model-select
 import { CanvasInputChip } from "@/components/canvas-node-primitives";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
-import { CanvasImageSettingsPopover } from "@/app/(user)/canvas/components/canvas-image-settings-popover";
-import { CanvasVideoSettingsPopover } from "@/app/(user)/canvas/components/canvas-video-settings-popover";
+import { CanvasImageSettingsPopover } from "@/features/canvas/components/canvas-image-settings-popover";
+import { CanvasVideoSettingsPopover } from "@/features/canvas/components/canvas-video-settings-popover";
 import { defaultConfig, reconcileProviderConfig, useConfigStore } from "@/stores/use-config-store";
 import { reconcileVideoConfig } from "@/lib/video-config";
 import { aiConfigForWorkflowNode, workflowConfigFromAiConfig, workflowModelInputError } from "./workflow-config";

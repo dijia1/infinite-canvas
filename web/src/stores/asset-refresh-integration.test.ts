@@ -3,7 +3,7 @@ import test from "node:test";
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import { useAssetStore } from "./use-asset-store.ts";
-import { createCanvasLocalImageUploadController } from "../app/(user)/canvas/media/canvas-local-image-upload-controller.ts";
+import { createCanvasLocalImageUploadController } from "../features/canvas/media/canvas-local-image-upload-controller.ts";
 
 function deferred<T>() {
     let resolve!: (value: T) => void;

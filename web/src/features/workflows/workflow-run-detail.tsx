@@ -4,9 +4,9 @@ import { Button, Empty, Modal, Spin } from "antd";
 import { CircleAlert, Image as ImageIcon, RefreshCw, Square, Trash2, Video } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 
-import { ScopedVideoResourceProvider } from "@/app/(user)/canvas/components/canvas-video-content";
-import { useCanvasImageResources } from "@/app/(user)/canvas/media/use-canvas-image-resources";
-import { CanvasNodeType, type CanvasNodeData } from "@/app/(user)/canvas/types";
+import { ScopedVideoResourceProvider } from "@/features/canvas/components/canvas-video-content";
+import { useCanvasImageResources } from "@/features/canvas/media/use-canvas-image-resources";
+import { CanvasNodeType, type CanvasNodeData } from "@/features/canvas/types";
 import { getRemoteImageAccess } from "@/services/image-storage";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
 import { workflowConnectionKey } from "./workflow-graph";

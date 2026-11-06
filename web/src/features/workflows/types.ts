@@ -156,12 +156,6 @@ export type WorkflowRunScope =
     | { type: "workflow" }
     | { type: "frame"; frameId: string };
 
-export type CreateWorkflowRunInput = {
-    requestId: string;
-    revision: number;
-    scope: WorkflowRunScope;
-};
-
 export type WorkflowRunScopeState = {
     scope: WorkflowRunScope;
     latestRun: WorkflowRun | null;

@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState, type SetStateAction } from "react";
 import { nanoid } from "nanoid";
-import { createCanvasLocalImageUploadController } from "@/app/(user)/canvas/media/canvas-local-image-upload-controller";
-import { collectDroppedImageFiles } from "@/app/(user)/canvas/utils/canvas-file-drop";
+import { createCanvasLocalImageUploadController } from "@/features/canvas/media/canvas-local-image-upload-controller";
+import { collectDroppedImageFiles } from "@/features/canvas/utils/canvas-file-drop";
 import { uploadUserImage } from "@/services/api/image";
 import { getImageBlob, imageStorageKeyForMedia, promoteImageStorageKey, releaseImageObjectURL, resolveImageUrl, uploadImage, type UploadedImage } from "@/services/image-storage";
 import { retainImageCache } from "@/services/image-cache-retention";

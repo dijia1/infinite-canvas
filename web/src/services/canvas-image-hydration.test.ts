@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { CanvasNodeType, type CanvasNodeData } from "../app/(user)/canvas/types";
+import { CanvasNodeType, type CanvasNodeData } from "../features/canvas/types";
 import { hydrateCanvasImages, type CanvasImageMetadata } from "./canvas-image-hydration.ts";
 import { sanitizeCanvasProjectDocument } from "./canvas-project-document.ts";
 import type { CanvasProjectDocument } from "./api/canvas-projects";

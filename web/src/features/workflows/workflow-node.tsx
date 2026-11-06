@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { CanvasConnectionHandle, CanvasNodeFrame, CanvasResizeHandle, canvasNodeSelectionColor, canvasResizeCorners, type CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
 import { CanvasNodeToolbarAction, CanvasNodeToolbarIconAction, CanvasNodeToolbarShell } from "@/components/canvas-node-toolbar-shell";
-import type { CanvasRenderDetail } from "@/app/(user)/canvas/media/canvas-media-policy";
+import type { CanvasRenderDetail } from "@/features/canvas/media/canvas-media-policy";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { WorkflowGenerationConfig, WorkflowNode, WorkflowOutputExecution, WorkflowOutputSlot } from "./types";

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { claimCanvasProjectEditorLease, readCanvasProjectEditorLease } from "@/app/(user)/canvas/sync/canvas-project-editor-lease";
+import { claimCanvasProjectEditorLease, readCanvasProjectEditorLease } from "@/features/canvas/sync/canvas-project-editor-lease";
 
 export function workflowEditorLeaseKey(ownerUID: string, workflowId: string) {
     return `infinite-canvas:workflow-editor:${JSON.stringify([ownerUID, workflowId])}`;

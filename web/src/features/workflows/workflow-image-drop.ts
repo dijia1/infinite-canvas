@@ -1,4 +1,4 @@
-import { collectDroppedImageFiles, importDroppedImageFiles } from "@/app/(user)/canvas/utils/canvas-file-drop";
+import { collectDroppedImageFiles, importDroppedImageFiles } from "@/features/canvas/utils/canvas-file-drop";
 import { autoAssignWorkflowFrameMembers } from "./workflow-frames";
 import { workflowVisualNodeId } from "./workflow-canvas-adapter";
 import { createWorkflowNode, fitWorkflowImage } from "./workflow-graph";

@@ -3,7 +3,7 @@
 import { ImageOff, RefreshCw } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { useMaterialMediaPreview } from "@/app/(user)/canvas/components/use-material-media-preview";
+import { useMaterialMediaPreview } from "@/features/canvas/components/use-material-media-preview";
 import { getRemoteImageAccess } from "@/services/image-storage";
 
 type Props = { mediaId: string; title: string; onSelect: () => void };

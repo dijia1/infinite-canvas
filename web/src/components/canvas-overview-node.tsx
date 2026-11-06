@@ -1,6 +1,6 @@
 import type { MouseEventHandler, PointerEventHandler, ReactNode } from "react";
 
-import type { Position } from "@/app/(user)/canvas/types";
+import type { Position } from "@/features/canvas/types";
 import { CanvasNodeSelectionOutline } from "./canvas-node-primitives";
 import { CanvasReadyImage } from "./canvas-ready-image";
 

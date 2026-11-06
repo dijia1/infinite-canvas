@@ -7,7 +7,7 @@ import { collectDroppedImageFiles, importDroppedImageFiles } from "./canvas-file
 // Execute the actual page callback with UI dependencies supplied, without mounting
 // the entire canvas/WebGL editor. This catches a refresh reintroduced in handleDrop.
 test("batch local node completion selects nodes without requesting a remote catalog", async () => {
-    const source = ts.createSourceFile("canvas.tsx", readFileSync(new URL("../[id]/canvas-client-page.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const source = ts.createSourceFile("canvas.tsx", readFileSync(new URL("../editor/canvas-client-page.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
     let callback: ts.Node | undefined;
     function visit(node: ts.Node) {
         if (ts.isVariableDeclaration(node) && node.name.getText(source) === "handleDrop" && node.initializer && ts.isCallExpression(node.initializer)) callback = node.initializer.arguments[0];
