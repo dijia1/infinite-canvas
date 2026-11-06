@@ -126,10 +126,7 @@ func readImageTaskMediaReferences(ctx context.Context, user PortalUser, mediaIDs
 		if totalBytes > maxMediaBytes {
 			return nil, safeMessageError{message: "参考图总大小无效"}
 		}
-		contentType, extension, err := normalizeImage(data, item.ContentType)
-		if err != nil {
-			return nil, safeMessageError{message: "参考图片无效"}
-		}
+		contentType, extension := imageFormat(data, item.ContentType)
 		name := filepath.Base(strings.TrimSpace(item.Filename))
 		if name == "." || name == "" {
 			name = "reference." + extension

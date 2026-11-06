@@ -18,6 +18,17 @@ type fakeImageStore struct {
 	deleted string
 }
 
+func TestImageFormatUsesMetadataWithoutRejectingFileContents(t *testing.T) {
+	contentType, extension := imageFormat([]byte("not a decodable image"), "image/webp")
+	if contentType != "image/webp" || extension != "webp" {
+		t.Fatalf("declared image metadata changed: %s %s", contentType, extension)
+	}
+	contentType, extension = imageFormat(tinyPNG, "")
+	if contentType != "image/png" || extension != "png" {
+		t.Fatalf("missing image metadata not inferred: %s %s", contentType, extension)
+	}
+}
+
 func (store *fakeImageStore) Put(_ context.Context, key string, _ []byte, _ string) error {
 	store.key = key
 	return nil

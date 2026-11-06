@@ -402,18 +402,8 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 			w.Header().Set("Content-Length", fmt.Sprint(len(item.body)))
 			w.WriteHeader(http.StatusOK)
 		case http.MethodGet:
-			if r.URL.Query().Get("versionId") != "upload-v1" || r.Header.Get("If-Match") != "upload-etag" {
-				t.Errorf("upload content read not bound to validated version")
-			}
-			item, found := objects[key]
-			if !found {
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			w.Header().Set("x-oss-version-id", "upload-v1")
-			w.Header().Set("ETag", "upload-etag")
-			w.Header().Set("Content-Type", item.contentType)
-			_, _ = w.Write(item.body)
+			t.Error("upload completion read image contents")
+			http.Error(w, "image content reads are forbidden", http.StatusBadRequest)
 		case http.MethodDelete:
 			delete(objects, key)
 			w.WriteHeader(http.StatusNoContent)
@@ -529,8 +519,8 @@ func TestMediaUploadIntentCompletesOneDirectOSSUploadExactlyOnce(t *testing.T) {
 	invalidCompleteRequest.Header.Set("X-Portal-User-Uid", owner)
 	invalidCompleteResponse := httptest.NewRecorder()
 	servePortalRequest(invalidCompleteResponse, invalidCompleteRequest)
-	if invalidCompleteResponse.Code == http.StatusOK && strings.Contains(invalidCompleteResponse.Body.String(), `"code":0`) {
-		t.Fatalf("invalid image completion unexpectedly succeeded: %s", invalidCompleteResponse.Body.String())
+	if invalidCompleteResponse.Code != http.StatusOK || !strings.Contains(invalidCompleteResponse.Body.String(), `"code":0`) {
+		t.Fatalf("image content was unexpectedly validated: %s", invalidCompleteResponse.Body.String())
 	}
 }
 

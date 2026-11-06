@@ -72,10 +72,7 @@ func saveImageTaskInput(ctx context.Context, store imageStore, taskID string, in
 	if len(reference.Data) == 0 || len(reference.Data) > maxMediaBytes {
 		return ImageTaskInput{}, errors.New("参考图大小无效")
 	}
-	contentType, extension, err := normalizeImage(reference.Data, reference.ContentType)
-	if err != nil {
-		return ImageTaskInput{}, err
-	}
+	contentType, extension := imageFormat(reference.Data, reference.ContentType)
 	key := taskInputObjectKey(taskID, index, extension)
 	if err := store.Put(ctx, key, reference.Data, contentType); err != nil {
 		return ImageTaskInput{}, err

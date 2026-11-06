@@ -13,7 +13,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -201,6 +200,10 @@ var videoDownloadClient = &http.Client{Timeout: 75 * time.Second, Transport: &ht
 }}
 
 func saveVideoTaskResults(ctx context.Context, item model.VideoGenerationTask) (result []model.Media, err error) {
+	var generationRequest CreateVideoTaskRequest
+	if err := json.Unmarshal([]byte(item.RequestJSON), &generationRequest); err != nil {
+		return nil, err
+	}
 	var urls []string
 	if err = json.Unmarshal([]byte(item.ResultURLsJSON), &urls); err != nil {
 		return nil, err
@@ -230,19 +233,8 @@ func saveVideoTaskResults(ctx context.Context, item model.VideoGenerationTask) (
 	for index, address := range urls {
 		// OSS may already contain this reserved result after a lost DB commit
 		// or process exit. Recover it without depending on an expired CDN URL.
-		if _, headErr := store.Head(ctx, outputs[index].ObjectKey); headErr == nil {
-			reader, e := store.Get(ctx, outputs[index].ObjectKey)
-			if e != nil {
-				return result, e
-			}
-			file, e := spoolVideo(reader)
-			reader.Close()
-			if e != nil {
-				return result, e
-			}
-			media, e := persistGeneratedVideoFile(ctx, store, item, outputs[index], file, false)
-			file.Close()
-			os.Remove(file.Name())
+		if metadata, headErr := store.Head(ctx, outputs[index].ObjectKey); headErr == nil {
+			media, e := videoResultMedia(item, outputs[index], metadata, generationRequest.Seconds)
 			if e != nil {
 				return result, e
 			}
@@ -267,14 +259,12 @@ func saveVideoTaskResults(ctx context.Context, item model.VideoGenerationTask) (
 			response.Body.Close()
 			return result, errors.New("视频结果下载失败")
 		}
-		file, e := spoolVideo(response.Body)
+		metadata, e := putVideoStream(ctx, store, outputs[index].ObjectKey, response.Body, response.ContentLength)
 		response.Body.Close()
 		if e != nil {
 			return result, e
 		}
-		m, e := persistGeneratedVideoFile(ctx, store, item, outputs[index], file, true)
-		file.Close()
-		os.Remove(file.Name())
+		m, e := videoResultMedia(item, outputs[index], metadata, generationRequest.Seconds)
 		if e != nil {
 			return result, e
 		}
@@ -291,27 +281,14 @@ type videoOutputReservation struct {
 	ObjectKey string `json:"objectKey"`
 }
 
-func persistGeneratedVideoFile(ctx context.Context, store imageStore, item model.VideoGenerationTask, output videoOutputReservation, file *os.File, upload bool) (model.Media, error) {
-	duration, width, height, err := probeVideoFile(ctx, file.Name())
-	if err != nil {
-		return model.Media{}, err
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return model.Media{}, err
+func videoResultMedia(item model.VideoGenerationTask, output videoOutputReservation, metadata imageObjectMetadata, seconds int) (model.Media, error) {
+	if metadata.Bytes <= 0 || metadata.Bytes > maxVideoBytes {
+		return model.Media{}, safeMessageError{message: "视频大小无效，最大 100 MB"}
 	}
 	current := time.Now().UTC()
 	expiry := current.Add(24 * time.Hour)
-	media := model.Media{ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ContentType: "video/mp4", Bytes: info.Size(), Width: width, Height: height, Duration: duration, Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), ExpiresAt: &expiry, CleanupStatus: model.MediaCleanupActive}
-	if upload {
-		if err := putVideoFile(ctx, store, media.ObjectKey, file); err != nil {
-			return model.Media{}, err
-		}
-	}
-	metadata, err := store.Head(ctx, media.ObjectKey)
-	if err != nil {
-		return model.Media{}, err
-	}
-	media.ObjectVersionID, media.ObjectETag = metadata.VersionID, metadata.ETag
+	// Duration follows the generation request. Actual pixel dimensions remain
+	// unknown; the canvas already retains the selected generation aspect ratio.
+	media := model.Media{ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: "video/mp4", Bytes: metadata.Bytes, Duration: float64(seconds), Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), ExpiresAt: &expiry, CleanupStatus: model.MediaCleanupActive}
 	return media, nil
 }

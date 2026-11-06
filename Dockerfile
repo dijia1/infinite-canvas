@@ -45,7 +45,7 @@ ENV NEXT_PUBLIC_BASE_PATH=$NEXT_PUBLIC_BASE_PATH
 COPY --from=api-build /server /app/server
 COPY --from=api-build /migrate /app/migrate
 COPY --from=web-build /app/web /app/web
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
 
 COPY scripts/check-gateway-health.mjs ./scripts/check-gateway-health.mjs
 COPY scripts/start-app.mjs /app/start-app.mjs

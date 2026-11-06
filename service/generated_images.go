@@ -45,11 +45,7 @@ func prepareImageTaskResultMedia(ctx context.Context, images []ai.ImageResult) (
 			prepared.cleanup(ctx)
 			return preparedImageTaskResults{}, errors.New("图片大小无效")
 		}
-		contentType, extension, err := normalizeImage(data, contentType)
-		if err != nil {
-			prepared.cleanup(ctx)
-			return preparedImageTaskResults{}, err
-		}
+		contentType, extension := imageFormat(data, contentType)
 		createdAt := time.Now().UTC()
 		key := privateImageObjectKey(user.UID, model.MediaSourceGenerated, extension, createdAt)
 		if err := reserveMediaObject(ctx, user.UID, key); err != nil {

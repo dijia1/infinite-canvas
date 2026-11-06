@@ -11,9 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -425,8 +422,9 @@ func TestVideoOutputReservationSurvivesInterruptedSave(t *testing.T) {
 	calls := 0
 	item, current := seedWorkerVideo(t, "saving", workerVideoProvider{calls: &calls})
 	item.ResultURLsJSON = `["http://invalid.example/video.mp4"]`
+	item.RequestJSON = `{"seconds":5,"size":"16:9","resolution":"720p"}`
 	db, _ := repository.DB()
-	if err := db.Model(&item).Update("result_urls_json", item.ResultURLsJSON).Error; err != nil {
+	if err := db.Model(&item).Updates(map[string]any{"result_urls_json": item.ResultURLsJSON, "request_json": item.RequestJSON}).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := processVideoTaskStep(context.Background(), item, current); err != nil {
@@ -446,49 +444,5 @@ func TestVideoOutputReservationSurvivesInterruptedSave(t *testing.T) {
 	second := readWorkerVideo(t, item)
 	if first.PendingOutputsJSON != second.PendingOutputsJSON {
 		t.Fatal("retry allocated new untracked output")
-	}
-}
-
-func TestVideoProbeRealMP4(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not installed; exercised in runtime container")
-	}
-	if _, err := exec.LookPath("ffprobe"); err != nil {
-		t.Skip("ffprobe not installed")
-	}
-	path := filepath.Join(t.TempDir(), "sample.mp4")
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	if output, err := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=160x90:r=10", "-t", "4", "-c:v", "mpeg4", path).CombinedOutput(); err != nil {
-		t.Fatalf("create fixture: %v %s", err, output)
-	}
-	duration, width, height, err := probeVideoFile(ctx, path)
-	if err != nil || duration != 4 || width != 160 || height != 90 {
-		t.Fatalf("probe=%f,%d,%d,%v", duration, width, height, err)
-	}
-	store, err := newImageStore()
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := "video-probe-result.mp4"
-	fixture, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put(ctx, key, fixture, "video/mp4"); err != nil {
-		t.Fatal(err)
-	}
-	defer store.Delete(ctx, key)
-	outputs, _ := json.Marshal([]videoOutputReservation{{ID: "probe-result", ObjectKey: key}})
-	results, err := saveVideoTaskResults(ctx, model.VideoGenerationTask{OwnerUID: "probe", ResultURLsJSON: `["https://expired.invalid/video.mp4"]`, PendingOutputsJSON: string(outputs)})
-	if err != nil || len(results) != 1 || results[0].ID != "probe-result" {
-		t.Fatalf("reserved result recovery: %+v %v", results, err)
-	}
-	invalid := filepath.Join(t.TempDir(), "invalid.mp4")
-	if err := os.WriteFile(invalid, []byte("not a video"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, _, err := probeVideoFile(ctx, invalid); err == nil {
-		t.Fatal("invalid MP4 accepted")
 	}
 }

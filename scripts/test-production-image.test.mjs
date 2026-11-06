@@ -55,7 +55,6 @@ test("actual Node24/non-root Go+Next image drains writes, detached work and rele
   assert.match(meta.node,/^24\./);assert.equal(meta.uid,1000);assert.equal(meta.gid,1000);
   assert.equal(docker("inspect","--format","{{.HostConfig.Init}} {{.Config.StopTimeout}}",app),"true 30");
   assert.equal(docker("exec",app,"stat","-c","%u:%g/%a","/app/data/media"),"0:0/755");
-  docker("exec",app,"ffmpeg","-version");
   return {app,front,api};
  };
  const request=async(url,body,method="POST")=>{

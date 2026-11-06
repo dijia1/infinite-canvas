@@ -95,10 +95,7 @@ func imageTaskRequestHashForVersion(request CreateImageTaskRequest, version int)
 }
 
 func imageTaskReferenceIdentity(reference ai.ImageReference) (imageTaskInputIdentity, error) {
-	contentType, extension, err := normalizeImage(reference.Data, reference.ContentType)
-	if err != nil {
-		return imageTaskInputIdentity{}, err
-	}
+	contentType, extension := imageFormat(reference.Data, reference.ContentType)
 	name := filepath.Base(strings.TrimSpace(reference.Name))
 	if name == "" || name == "." {
 		name = "reference." + extension

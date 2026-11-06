@@ -27,6 +27,7 @@ type versionedTaskInputStore struct {
 	objects        map[string][]versionedTestObject
 	copyCalls      int
 	headVersionErr error
+	readPrefixErr  error
 }
 
 func (store *versionedTaskInputStore) current(key string) (versionedTestObject, error) {
@@ -97,6 +98,9 @@ func (store *versionedTaskInputStore) HeadVersion(_ context.Context, key, versio
 	return testObjectMetadata(object), nil
 }
 func (store *versionedTaskInputStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, limit int64) ([]byte, error) {
+	if store.readPrefixErr != nil {
+		return nil, store.readPrefixErr
+	}
 	if _, err := store.HeadVersion(ctx, key, versionID, etag); err != nil {
 		return nil, err
 	}
@@ -161,6 +165,7 @@ func TestImageTaskPreparationCopiesTheValidatedSourceVersion(t *testing.T) {
 	taskInputStoreFactory = func() (imageStore, error) { return store, nil }
 	t.Cleanup(func() { taskInputStoreFactory = previousFactory })
 	task := model.ImageGenerationTask{ID: taskID, OwnerUID: newID("owner"), ClientRequestID: newID("request"), Status: model.ImageTaskPreparing, ReferencesJSON: "[]", CreatedAt: now(), UpdatedAt: now()}
+	store.readPrefixErr = errors.New("reading image contents for validation is forbidden")
 	input := model.ImageGenerationTaskInput{ID: inputID, TaskID: taskID, Position: 0, Purpose: "image", Name: "source.png", SourceMediaID: newID("media"), SourceObjectKey: "source", SourceVersionID: "null", SourceETag: "old-etag", ContentType: "image/png", Bytes: int64(len(tinyPNG)), PreparationStatus: "pending", CleanupKeysJSON: "[]", CreatedAt: now(), UpdatedAt: now()}
 	if err := database.Create(&task).Error; err != nil {
 		t.Fatal(err)

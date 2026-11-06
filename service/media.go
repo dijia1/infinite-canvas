@@ -190,17 +190,6 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string, 
 	if metadata.Bytes != intent.ExpectedBytes || normalizedImageContentType(metadata.ContentType) != intent.ContentType {
 		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
 	}
-	if intent.ContentType != "video/mp4" {
-		var prefix []byte
-		if versioned, ok := store.(versionedImageStore); ok && metadata.VersionID != "" && metadata.ETag != "" {
-			prefix, err = versioned.ReadPrefixVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag, 512)
-		} else {
-			prefix, err = store.ReadPrefix(ctx, intent.ObjectKey, 512)
-		}
-		if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
-			return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
-		}
-	}
 	source, err := uploadMediaSource([]string{intent.Intent})
 	if err != nil {
 		return MediaAccess{}, false, err
@@ -332,10 +321,7 @@ func saveImage(ctx context.Context, user PortalUser, source model.MediaSource, f
 	if len(data) == 0 || len(data) > maxMediaBytes {
 		return MediaAccess{}, errors.New("图片大小无效")
 	}
-	contentType, extension, err := normalizeImage(data, contentType)
-	if err != nil {
-		return MediaAccess{}, err
-	}
+	contentType, extension := imageFormat(data, contentType)
 	if source == model.MediaSourceMask && contentType != "image/png" {
 		return MediaAccess{}, safeMessageError{message: "遮罩必须为 PNG 图片"}
 	}
@@ -596,21 +582,22 @@ func OpenLocalMedia(ctx context.Context, user PortalUser, id string) (result io.
 	return file, item.ContentType, err
 }
 
-func normalizeImage(data []byte, claimed string) (string, string, error) {
+// Infer missing image metadata from bytes already in memory, without rejecting
+// the payload or fetching the object again to inspect its contents.
+func imageFormat(data []byte, claimed string) (string, string) {
 	contentType, _, _ := mime.ParseMediaType(claimed)
-	detected := http.DetectContentType(data)
-	if !strings.HasPrefix(detected, "image/") {
-		return "", "", errors.New("图片格式无效")
-	}
 	if !strings.HasPrefix(contentType, "image/") {
-		contentType = detected
+		contentType = http.DetectContentType(data)
+		if !strings.HasPrefix(contentType, "image/") {
+			contentType = "image/png"
+		}
 	}
 	extensions, _ := mime.ExtensionsByType(contentType)
 	extension := "png"
 	if len(extensions) > 0 {
 		extension = strings.TrimPrefix(extensions[0], ".")
 	}
-	return contentType, extension, nil
+	return contentType, extension
 }
 
 func imageDimensions(data []byte) (int, int) {

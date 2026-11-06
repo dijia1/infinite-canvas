@@ -184,19 +184,9 @@ func prepareImageGenerationTaskInput(ctx context.Context, store versionedImageSt
 	if sourceMetadata.VersionID == "" || sourceMetadata.ETag == "" || sourceMetadata.Bytes <= 0 || sourceMetadata.Bytes > maxMediaBytes || (input.Bytes > 0 && sourceMetadata.Bytes != input.Bytes) {
 		return permanentImagePreparationError{message: "参考图片版本信息无效"}
 	}
-	prefix, err := store.ReadPrefixVersion(ctx, input.SourceObjectKey, input.SourceVersionID, input.SourceETag, 512)
-	if err != nil {
-		if imageObjectMissing(err) || imageObjectPreconditionFailed(err) {
-			return permanentImagePreparationError{message: "参考图片版本校验失败"}
-		}
-		return err
-	}
-	contentType, _, err := normalizeImage(prefix, sourceMetadata.ContentType)
-	if err != nil {
-		return permanentImagePreparationError{message: "参考图片格式无效"}
-	}
+	contentType := normalizedImageContentType(sourceMetadata.ContentType)
 	if input.ContentType != "" && !strings.EqualFold(strings.TrimSpace(input.ContentType), contentType) {
-		return permanentImagePreparationError{message: "参考图片类型与已校验媒体不一致"}
+		return permanentImagePreparationError{message: "参考图片类型与已保存媒体不一致"}
 	}
 	if input.Purpose == "mask" && contentType != "image/png" {
 		return permanentImagePreparationError{message: "遮罩必须为 PNG 图片"}

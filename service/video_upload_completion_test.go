@@ -144,3 +144,34 @@ func TestVideoUploadCompletionRejectsInvalidBrowserMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestImageUploadCompletionDoesNotReadFileContents(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodHead {
+			t.Errorf("image contents were requested: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "image downloads are forbidden", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Length", "1024")
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("x-oss-version-id", "image-version")
+		w.Header().Set("ETag", "image-etag")
+	}))
+	defer server.Close()
+	previous := config.Cfg
+	t.Cleanup(func() { config.Cfg = previous })
+	config.Cfg.MediaStorage = "oss"
+	config.Cfg.OSSRegion, config.Cfg.OSSBucket = "cn-test", "test"
+	config.Cfg.OSSInternalEndpoint, config.Cfg.OSSPublicEndpoint = server.URL, server.URL
+	config.Cfg.OSSAccessKeyID, config.Cfg.OSSAccessKeySecret = "fake", "fake"
+	config.Cfg.OSSSignedURLTTL = "15m"
+	user := PortalUser{UID: newID("image-owner")}
+	intent := model.MediaUploadIntent{ID: newID("image-upload"), OwnerUID: user.UID, ObjectKey: newID("image-source") + ".png", Filename: "input.png", ContentType: "image/png", ExpectedBytes: 1024, Intent: "canvas", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
+	if err := repository.SaveMediaUploadIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	access, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, MediaUploadCompletionInput{})
+	if err != nil || !created || access.Bytes != 1024 || access.ContentType != "image/png" {
+		t.Fatalf("image upload completion: %+v %v", access, err)
+	}
+}
