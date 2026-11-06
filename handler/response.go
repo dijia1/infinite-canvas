@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/basketikun/infinite-canvas/model"
+	"github.com/basketikun/infinite-canvas/service"
 )
 
 type response struct {
@@ -34,9 +35,9 @@ func FailDataStatus(w http.ResponseWriter, status int, msg string, data any) {
 }
 
 func FailError(w http.ResponseWriter, err error) {
-	log.Printf("request failed: %v", err)
-	if safe, ok := err.(interface{ SafeMessage() string }); ok {
-		Fail(w, safe.SafeMessage())
+	log.Printf("request failed: category=%s", service.TaskErrorCategory(err))
+	if message, ok := service.SafeMessage(err); ok {
+		Fail(w, message)
 		return
 	}
 	Fail(w, "操作失败")

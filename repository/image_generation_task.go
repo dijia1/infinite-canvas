@@ -449,24 +449,24 @@ func RenewImageGenerationTaskLease(item model.ImageGenerationTask, current time.
 	return result.RowsAffected > 0, nil
 }
 
-func ListExpiredTerminalImageGenerationTasks(before string) ([]model.ImageGenerationTask, error) {
+func ListExpiredTerminalImageGenerationTasks(before time.Time) ([]model.ImageGenerationTask, error) {
 	database, err := DB()
 	if err != nil {
 		return nil, err
 	}
 	items := make([]model.ImageGenerationTask, 0)
-	err = database.Where("status IN ? AND finished_at <> '' AND finished_at < ?", []model.ImageGenerationTaskStatus{model.ImageTaskSucceeded, model.ImageTaskFailed}, before).Find(&items).Error
+	err = database.Where("status IN ? AND NULLIF(finished_at, '')::timestamptz < ?", []model.ImageGenerationTaskStatus{model.ImageTaskSucceeded, model.ImageTaskFailed}, before).Find(&items).Error
 	return items, err
 }
 
-func ListSucceededImageGenerationTasksFinishedBetween(start, end string) ([]model.ImageGenerationTask, error) {
+func ListSucceededImageGenerationTasksFinishedBetween(start, end time.Time) ([]model.ImageGenerationTask, error) {
 	database, err := DB()
 	if err != nil {
 		return nil, err
 	}
 	items := make([]model.ImageGenerationTask, 0)
 	err = database.Select("owner_uid", "provider_id", "provider_name", "resolution", "result_media_ids_json", "amount", "amount_recorded").
-		Where("status = ? AND finished_at >= ? AND finished_at < ?", model.ImageTaskSucceeded, start, end).Find(&items).Error
+		Where("status = ? AND NULLIF(finished_at, '')::timestamptz >= ? AND NULLIF(finished_at, '')::timestamptz < ?", model.ImageTaskSucceeded, start, end).Find(&items).Error
 	return items, err
 }
 

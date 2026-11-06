@@ -69,7 +69,7 @@ func Statistics(startDate, endDate string, reference time.Time) (ImageStatistics
 	if err != nil {
 		return ImageStatistics{}, err
 	}
-	tasks, err := repository.ListSucceededImageGenerationTasksFinishedBetween(period.StartUTC.Format(time.RFC3339), period.EndUTC.Format(time.RFC3339))
+	tasks, err := repository.ListSucceededImageGenerationTasksFinishedBetween(period.StartUTC, period.EndUTC)
 	if err != nil {
 		return ImageStatistics{}, err
 	}

@@ -8,8 +8,16 @@ import (
 	"net"
 )
 
-// Do not log raw SDK errors: they can include signed URLs and credentials.
-func taskErrorCategory(err error) string {
+func SafeMessage(err error) (string, bool) {
+	var safe interface{ SafeMessage() string }
+	if errors.As(err, &safe) {
+		return safe.SafeMessage(), true
+	}
+	return "", false
+}
+
+// TaskErrorCategory omits raw SDK errors, signed URLs and credentials.
+func TaskErrorCategory(err error) string {
 	var remote *oss.ServiceError
 	if errors.As(err, &remote) {
 		return fmt.Sprintf("oss:%s http:%d request:%s", remote.Code, remote.StatusCode, remote.RequestID)
@@ -27,9 +35,8 @@ func taskErrorCategory(err error) string {
 		}
 		return "network"
 	}
-	var safe interface{ SafeMessage() string }
-	if errors.As(err, &safe) {
-		return safe.SafeMessage()
+	if message, ok := SafeMessage(err); ok {
+		return message
 	}
 	return fmt.Sprintf("internal:%T", err)
 }

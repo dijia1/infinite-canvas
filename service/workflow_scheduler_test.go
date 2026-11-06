@@ -15,6 +15,53 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestBlockedWorkflowEvaluationDoesNotWriteUnchangedState(t *testing.T) {
+	clearWorkflowRuntimeTables(t)
+	nodes := []model.WorkflowNode{}
+	for _, id := range []string{"failed", "blocked", "active"} {
+		nodes = append(nodes, model.WorkflowNode{ID: id, Type: model.WorkflowNodeImageGeneration, Outputs: []model.WorkflowOutputSlot{{ID: "out", Type: model.WorkflowPortImage}}})
+	}
+	graph := model.WorkflowGraph{Version: 1, Nodes: nodes, Connections: []model.WorkflowConnection{{SourceNodeID: "failed", SourceSlotID: "out", TargetNodeID: "blocked", TargetPortID: "image"}}}
+	run := seedWorkflowRunGraph(t, "blocked-evaluation", "owner", graph)
+	db, _ := repository.DB()
+	for id, status := range map[string]string{"failed": "failed", "blocked": "blocked", "active": "running"} {
+		values := map[string]any{"status": status}
+		if status == "blocked" {
+			values["error"] = "上游输出失败"
+		}
+		if err := db.Model(&model.WorkflowOutputExecution{}).Where("run_id = ? AND node_id = ?", run.ID, id).Updates(values).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := reevaluateWorkflowRun(run.OwnerUID, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	before, _, err := repository.GetWorkflowRun(run.OwnerUID, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 6; pass++ {
+		if err := reevaluateWorkflowRun(run.OwnerUID, run.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	after, _, err := repository.GetWorkflowRun(run.OwnerUID, run.ID)
+	if err != nil || after.Run.StateVersion != before.Run.StateVersion || !after.Run.UpdatedAt.Equal(before.Run.UpdatedAt) {
+		t.Fatalf("unchanged evaluations wrote state: before=%+v after=%+v err=%v", before.Run, after.Run, err)
+	}
+	// A changed error with the same status still needs to be persisted.
+	if err := db.Model(&model.WorkflowOutputExecution{}).Where("run_id = ? AND node_id = ?", run.ID, "blocked").Update("error", "旧提示").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := reevaluateWorkflowRun(run.OwnerUID, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	after, _, err = repository.GetWorkflowRun(run.OwnerUID, run.ID)
+	if err != nil || after.Run.StateVersion != before.Run.StateVersion+1 {
+		t.Fatalf("changed error not persisted: %+v err=%v", after.Run, err)
+	}
+}
+
 func TestWorkflowSchedulerRecoversTheSameImageTaskWithoutResubmission(t *testing.T) {
 	clearWorkflowRuntimeTables(t)
 	previousConfig := config.Cfg

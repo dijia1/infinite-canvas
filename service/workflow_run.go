@@ -561,8 +561,8 @@ func workflowRunValidationError(err error, fallback string) error {
 	if err == nil {
 		return nil
 	}
-	if safe, ok := err.(interface{ SafeMessage() string }); ok && strings.TrimSpace(safe.SafeMessage()) != "" {
-		return workflowValidationError{message: safe.SafeMessage()}
+	if message, ok := SafeMessage(err); ok && strings.TrimSpace(message) != "" {
+		return workflowValidationError{message: message}
 	}
 	return workflowValidationError{message: fallback}
 }

@@ -17,8 +17,8 @@ func auditMediaAccessFailure(item model.Media, actor string, err error) {
 		return
 	}
 	reason := "access_failed"
-	if safe, ok := err.(interface{ SafeMessage() string }); ok {
-		switch safe.SafeMessage() {
+	if message, ok := SafeMessage(err); ok {
+		switch message {
 		case "图片不存在", "公共图片不存在":
 			reason = "record_missing"
 		case "无权访问该图片":

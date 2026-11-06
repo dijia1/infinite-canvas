@@ -143,14 +143,14 @@ func (download *WorkflowImageDownload) Write(ctx context.Context, output io.Writ
 func (download *WorkflowImageDownload) writeImage(ctx context.Context, archive *zip.Writer, image workflowDownloadImage) (resultErr error) {
 	defer func() {
 		if resultErr != nil {
-			log.Printf("workflow image download read failed media=%s error=%s", image.media.ID, taskErrorCategory(resultErr))
+			log.Printf("workflow image download read failed media=%s error=%s", image.media.ID, TaskErrorCategory(resultErr))
 		}
 	}()
 	readCtx, cancel := context.WithTimeout(ctx, workflowImageReadTimeout)
 	defer cancel()
 	body, err := download.store.Get(readCtx, image.media.ObjectKey)
 	if err != nil {
-		return fmt.Errorf("read workflow image %s: %s", image.media.ID, taskErrorCategory(err))
+		return fmt.Errorf("read workflow image %s: %s", image.media.ID, TaskErrorCategory(err))
 	}
 	// Also release the reader on cancellation for stores whose reader ignores context.
 	stopClose := context.AfterFunc(readCtx, func() { _ = body.Close() })

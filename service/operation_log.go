@@ -27,8 +27,8 @@ func AuditErrorSummary(err error, fallback string) string {
 	if err == nil {
 		return ""
 	}
-	if safe, ok := err.(interface{ SafeMessage() string }); ok {
-		return safeAuditError(safe.SafeMessage())
+	if message, ok := SafeMessage(err); ok {
+		return safeAuditError(message)
 	}
 	return fallback
 }

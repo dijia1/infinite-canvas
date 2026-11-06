@@ -98,8 +98,8 @@ func AdminSetPortalMemberAppRole(w http.ResponseWriter, r *http.Request, targetU
 			FailStatus(w, http.StatusConflict, "不能移除最后一名应用管理员")
 		case service.IsAppMemberRoleValidationError(err):
 			message := "应用角色请求无效"
-			if safe, ok := err.(interface{ SafeMessage() string }); ok {
-				message = safe.SafeMessage()
+			if safe, ok := service.SafeMessage(err); ok {
+				message = safe
 			}
 			FailStatus(w, http.StatusBadRequest, message)
 		default:
@@ -138,7 +138,7 @@ func PortalDirectorySync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := service.SyncPortalMember(r.Context(), input.UserUID); err != nil {
-		if _, safe := err.(interface{ SafeMessage() string }); safe {
+		if _, safe := service.SafeMessage(err); safe {
 			w.WriteHeader(http.StatusBadRequest)
 		} else {
 			w.WriteHeader(http.StatusBadGateway)

@@ -119,6 +119,7 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 	if item.Status == "running" {
 		task, err := provider.GetVideo(ctx, item.ProviderTaskID)
 		if err != nil {
+			log.Printf("video task query failed id=%s provider_task=%s category=%s", item.ID, item.ProviderTaskID, TaskErrorCategory(err))
 			return retryVideoTask(item, current, "查询视频任务失败")
 		}
 		switch task.Status {
@@ -146,6 +147,7 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 	if item.Status == "saving" {
 		media, err := saveVideoTaskResults(ctx, item)
 		if err != nil {
+			log.Printf("video task result save failed id=%s provider_task=%s category=%s", item.ID, item.ProviderTaskID, TaskErrorCategory(err))
 			return retryVideoTask(item, current, "视频保存失败，可继续检查原任务")
 		}
 		// Reserved outputs survive ambiguous commits; never delete on DB error.

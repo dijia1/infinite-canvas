@@ -156,6 +156,7 @@ func reevaluateWorkflowRun(ownerUID, runID string) error {
 		if output.Status != "waiting" && output.Status != "ready" && output.Status != "blocked" {
 			continue
 		}
+		previousError := output.Error
 		next := output.Status
 		if record.Run.StopRequested {
 			next = "stopped"
@@ -172,7 +173,7 @@ func reevaluateWorkflowRun(ownerUID, runID string) error {
 				next, output.Error = "ready", ""
 			}
 		}
-		if next != output.Status || output.Error != "" {
+		if next != output.Status || output.Error != previousError {
 			output.Status = next
 			updates = append(updates, *output)
 		}
@@ -536,7 +537,7 @@ func applyWorkflowVideoView(attempt model.WorkflowOutputAttempt, view VideoTaskV
 }
 
 func failWorkflowAttempt(attempt model.WorkflowOutputAttempt, err error) error {
-	log.Printf("workflow failure run=%s node=%s slot=%s attempt=%d task=%s category=%s", attempt.RunID, attempt.NodeID, attempt.SlotID, attempt.Attempt, attempt.TaskID, taskErrorCategory(err))
+	log.Printf("workflow failure run=%s node=%s slot=%s attempt=%d task=%s category=%s", attempt.RunID, attempt.NodeID, attempt.SlotID, attempt.Attempt, attempt.TaskID, TaskErrorCategory(err))
 	attempt.Status, attempt.Error = "failed", workflowAttemptError(err)
 	return persistWorkflowAttempt(attempt, "failed", time.Now().UTC(), true, "failed")
 }
@@ -576,7 +577,7 @@ func retryWorkflowTaskCreation(attempt model.WorkflowOutputAttempt, err error) e
 	if workflowTaskCreationExpired(attempt, time.Now().UTC()) {
 		return failWorkflowAttempt(attempt, safeMessageError{message: "创建生成任务超时，尚未提交供应商；请检查参考素材或网络后重试"})
 	}
-	log.Printf("workflow create retry run=%s node=%s slot=%s attempt=%d request=%s category=%s", attempt.RunID, attempt.NodeID, attempt.SlotID, attempt.Attempt, attempt.RequestID, taskErrorCategory(err))
+	log.Printf("workflow create retry run=%s node=%s slot=%s attempt=%d request=%s category=%s", attempt.RunID, attempt.NodeID, attempt.SlotID, attempt.Attempt, attempt.RequestID, TaskErrorCategory(err))
 	attempt.Status = "submitting"
 	attempt.Error = "创建生成任务暂时失败，正在重试（最多等待 60 秒）"
 	return persistWorkflowAttempt(attempt, "submitting", time.Now().UTC().Add(workflowCreateRetryDelay), false, "")

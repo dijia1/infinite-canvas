@@ -38,7 +38,7 @@ func TestListSucceededImageGenerationTasksFinishedBetweenReturnsOnlyCompletedTas
 		}
 	}
 
-	result, err := ListSucceededImageGenerationTasksFinishedBetween("2026-09-02T16:00:00Z", "2026-09-03T16:00:00Z")
+	result, err := ListSucceededImageGenerationTasksFinishedBetween(time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC), time.Date(2026, 9, 3, 16, 0, 0, 0, time.UTC))
 	if err != nil || len(result) != 1 || result[0].OwnerUID != "included-user" || !result[0].Amount.Equal(decimal.RequireFromString("0.1234")) || !result[0].AmountRecorded {
 		t.Fatalf("ListSucceededImageGenerationTasksFinishedBetween() = %#v, %v", result, err)
 	}
@@ -49,6 +49,46 @@ func TestListSucceededImageGenerationTasksFinishedBetweenReturnsOnlyCompletedTas
 		t.Fatalf("missing statistics fields: %#v", result[0])
 	}
 
+}
+
+func TestImageTaskTimeRangesCompareInstantsAcrossTimestampFormats(t *testing.T) {
+	db := useImageTaskTestDB(t)
+	start := time.Date(2026, 9, 2, 16, 0, 0, 0, time.UTC)
+	end := start.Add(24 * time.Hour)
+	fixtures := []struct {
+		finished string
+		inRange  bool
+		expired  bool
+	}{
+		{"", false, false},
+		{"2026-09-02T15:59:59.999999Z", false, true},
+		{"2026-09-02T16:00:00Z", true, false},
+		{"2026-09-02T16:00:00.000001Z", true, false},
+		{"2026-09-03T00:00:00.000001+08:00", true, false},
+		{"2026-09-03T15:59:59.999999Z", true, false},
+		{"2026-09-03T16:00:00Z", false, false},
+		{"2026-09-03T16:00:00.000001Z", false, false},
+		{"2026-09-04T00:00:00+08:00", false, false},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.finished, func(t *testing.T) {
+			if err := db.Where("1 = 1").Delete(&model.ImageGenerationTask{}).Error; err != nil {
+				t.Fatal(err)
+			}
+			item := model.ImageGenerationTask{ID: "boundary", OwnerUID: "owner", ClientRequestID: "boundary", Status: model.ImageTaskSucceeded, FinishedAt: fixture.finished}
+			if err := db.Create(&item).Error; err != nil {
+				t.Fatal(err)
+			}
+			items, err := ListSucceededImageGenerationTasksFinishedBetween(start, end)
+			if err != nil || (len(items) == 1) != fixture.inRange {
+				t.Fatalf("range count=%d want=%v err=%v", len(items), fixture.inRange, err)
+			}
+			items, err = ListExpiredTerminalImageGenerationTasks(start)
+			if err != nil || (len(items) == 1) != fixture.expired {
+				t.Fatalf("expired count=%d want=%v err=%v", len(items), fixture.expired, err)
+			}
+		})
+	}
 }
 
 func TestCreateImageGenerationTaskWithOperationLogIsIdempotentPerOwnerAndClientRequest(t *testing.T) {

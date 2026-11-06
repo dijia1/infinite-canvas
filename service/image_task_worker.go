@@ -380,6 +380,7 @@ func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTas
 	userContext := WithPortalUser(ctx, PortalUser{UID: item.OwnerUID})
 	prepared, err := prepareImageTaskResultMedia(userContext, results)
 	if err != nil {
+		log.Printf("image task result save failed id=%s provider_task=%s category=%s", item.ID, item.ProviderTaskID, TaskErrorCategory(err))
 		if strings.TrimSpace(item.ProviderTaskID) == "" {
 			markImageTaskUncertain(item, "图片结果保存失败，请核对供应商任务，系统不会自动重复生成")
 		} else {
@@ -418,6 +419,7 @@ func providerImageResults(urls []string) []ai.ImageResult {
 }
 
 func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason error) {
+	log.Printf("image task failed id=%s provider_task=%s category=%s", item.ID, item.ProviderTaskID, TaskErrorCategory(reason))
 	message := imageTaskFailureMessage(reason)
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
 		"status": model.ImageTaskFailed, "error_message": message, "claim_id": "", "lease_until": nil, "updated_at": now(), "finished_at": now(),
@@ -477,8 +479,8 @@ func imageTaskFailureMessage(err error) string {
 	if err == nil {
 		return "图片生成失败"
 	}
-	if safe, ok := err.(interface{ SafeMessage() string }); ok {
-		if message := strings.TrimSpace(safe.SafeMessage()); message != "" {
+	if safe, ok := SafeMessage(err); ok {
+		if message := strings.TrimSpace(safe); message != "" {
 			return message
 		}
 	}
@@ -536,7 +538,7 @@ func cleanupImageTasks(ctx context.Context, current time.Time) {
 			}
 		}
 	}
-	items, err := repository.ListExpiredTerminalImageGenerationTasks(current.Add(-imageTaskRetention).Format(time.RFC3339))
+	items, err := repository.ListExpiredTerminalImageGenerationTasks(current.Add(-imageTaskRetention))
 	if err != nil {
 		log.Printf("image task retention query failed: %v", err)
 		return

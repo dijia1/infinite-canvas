@@ -110,7 +110,7 @@ func TestReferenceTransientStorageFailureRemainsRetryable(t *testing.T) {
 	if !errors.Is(err, failure) {
 		t.Fatalf("error=%v", err)
 	}
-	if strings.Contains(taskErrorCategory(err), "secret") {
+	if strings.Contains(TaskErrorCategory(err), "secret") {
 		t.Fatal("diagnostics leaked signed URL")
 	}
 }

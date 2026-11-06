@@ -107,7 +107,7 @@ func readImageTaskMediaReferences(ctx context.Context, user PortalUser, mediaIDs
 		}
 		reader, err := readMediaObject(ctx, store, item)
 		if err != nil {
-			log.Printf("image reference read failed media=%s category=%s", item.ID, taskErrorCategory(err))
+			log.Printf("image reference read failed media=%s category=%s", item.ID, TaskErrorCategory(err))
 			var serviceError *oss.ServiceError
 			if errors.Is(err, os.ErrNotExist) || (errors.As(err, &serviceError) && serviceError.Code == "NoSuchKey") {
 				return nil, safeMessageError{message: "参考图片文件不存在，请重新上传或替换图片后重新运行"}
