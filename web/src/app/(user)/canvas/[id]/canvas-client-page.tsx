@@ -55,7 +55,7 @@ import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
 import { getCanvasViewportSize } from "../utils/canvas-viewport-size";
 import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
-import { NODE_DEFAULT_SIZE, getNodeSpec, normalizeVideoConfigNodeSize } from "../constants";
+import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
 import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "../utils/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
@@ -497,8 +497,7 @@ function InfiniteCanvasPage() {
     const historySnapshot = useMemo<CanvasHistoryEntry>(() => ({ nodes, maskResources, connections, backgroundMode, showImageInfo }), [backgroundMode, connections, maskResources, nodes, showImageInfo]);
 
     const applyHistorySnapshot = useCallback((entry: CanvasHistoryEntry) => {
-        const applied = { ...entry, nodes: entry.nodes.map(normalizeVideoConfigNodeSize) };
-        setNodes(applied.nodes);
+        setNodes(entry.nodes);
         setMaskResources(entry.maskResources);
         setConnections(entry.connections);
         setBackgroundMode(entry.backgroundMode);
@@ -506,7 +505,7 @@ function InfiniteCanvasPage() {
         setSelectedNodeIds(new Set());
         setSelectedConnectionId(null);
         setContextMenu(null);
-        return applied;
+        return entry;
     }, []);
 
     const { canUndo, canRedo, undo, redo, pause, resume, replaceBaseline, rebase, getRetainedHistory } = useCanvasHistory({
@@ -529,7 +528,7 @@ function InfiniteCanvasPage() {
             canonicalRestore.run(
                 { projectId, generation: canonicalGeneration },
                 async () => {
-                    const initialNodes = resetInterruptedGeneration(project.nodes).map(normalizeVideoConfigNodeSize);
+                    const initialNodes = resetInterruptedGeneration(project.nodes);
                     const rect = containerRef.current?.getBoundingClientRect();
                     const initialViewportSize = { width: rect?.width || 1200, height: rect?.height || 720 };
                     const hydrationPlan = createCanvasImageHydrationPlan(initialNodes, project.viewport, initialViewportSize, { deferRemoteMedia: true });
@@ -1975,15 +1974,6 @@ function InfiniteCanvasPage() {
         [aiStatus?.imageModels, aiStatus?.videoModels, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId, theme],
     );
 
-    const handleConfigNodeLayoutHeightChange = useCallback((nodeId: string, height: number) => {
-        setNodes((current) => {
-            const target = current.find((item) => item.id === nodeId);
-            // Returning to the full layout must not shrink a height the user set with the resize handles.
-            if (!target || target.height >= height) return current;
-            return current.map((item) => item.id === nodeId ? { ...item, height } : item);
-        });
-    }, []);
-
     const renderConfigNodeContent = useCallback(
         (contentNode: CanvasNodeData) => {
             const inputs = configInputsById.get(contentNode.id) || [];
@@ -1996,7 +1986,6 @@ function InfiniteCanvasPage() {
                     compact={configCompact}
                     onConfigChange={handleConfigNodeChange}
                     onTextInputChange={handleNodeContentChange}
-                    onLayoutHeightChange={handleConfigNodeLayoutHeightChange}
                     onPreviewImagesChange={handleConfigPreviewImagesChange}
                     imageResources={canvasImageResources}
                     imageErrors={canvasImageErrors}
@@ -2009,7 +1998,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [configCompact, configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigNodeLayoutHeightChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
+        [configCompact, configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
     );
 
     const handleCanvasNodeHoverStart = useCallback(
@@ -2565,5 +2554,5 @@ function applyNodeConfigPatch(node: CanvasNodeData, patch: Partial<CanvasNodeDat
     const next = { ...node, metadata: { ...node.metadata, ...(patch || {}) } };
     const spec = node.type === CanvasNodeType.Video ? NODE_DEFAULT_SIZE[CanvasNodeType.Video] : NODE_DEFAULT_SIZE[CanvasNodeType.Image];
     const size = typeof patch.size === "string" && !node.metadata?.content ? nodeSizeFromRatio(patch.size, spec.width, spec.height) : null;
-    return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : normalizeVideoConfigNodeSize(next);
+    return size && (node.type === CanvasNodeType.Image || node.type === CanvasNodeType.Video) ? { ...next, ...size, position: { x: node.position.x + node.width / 2 - size.width / 2, y: node.position.y + node.height / 2 - size.height / 2 } } : next;
 }

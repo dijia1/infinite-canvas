@@ -16,7 +16,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { CanvasImageMaskOverlay } from "../image-mask/canvas-image-mask-overlay";
 import type { CanvasRenderDetail } from "../media/canvas-media-policy";
 import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
-import type { ConfigCardView } from "../utils/canvas-config-card";
+import { CONFIG_NODE_MIN_SIZE, type ConfigCardView } from "../utils/canvas-config-card";
 
 import { CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
@@ -256,9 +256,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     const handleResizeMouseDown = (event: React.MouseEvent, corner: ResizeCorner) => {
         event.stopPropagation();
         event.preventDefault();
-        const fullLayout = data.type === CanvasNodeType.Config && !configCard
-            ? event.currentTarget.closest("[data-node-id]")?.querySelector<HTMLDivElement>(".canvas-config-full")
-            : null;
         resizeRef.current = {
             isResizing: true,
             corner,
@@ -270,8 +267,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             startHeight: data.height,
             keepRatio: data.type === CanvasNodeType.Config || (data.type === CanvasNodeType.Image && !data.metadata?.freeResize) || data.type === CanvasNodeType.Video,
             ratio: data.type === CanvasNodeType.Config ? data.width / data.height : (data.metadata?.naturalWidth || data.width) / (data.metadata?.naturalHeight || data.height || 1),
-            // Clamp before resizing so full-layout height measurement cannot stretch the card out of ratio afterward.
-            minimum: fullLayout ? { width: 220, height: Math.max(160, fullLayout.offsetHeight + 4) } : undefined,
+            minimum: data.type === CanvasNodeType.Config ? CONFIG_NODE_MIN_SIZE : undefined,
         };
         onResizeStart?.();
         window.addEventListener("mousemove", handleResizeMove);

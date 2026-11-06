@@ -1,5 +1,8 @@
 import type { CanvasNodeData } from "../types";
 
+// World-space resize limits are shared by all forms; zoom only changes their presentation.
+export const CONFIG_NODE_MIN_SIZE = { width: 360, height: 274 };
+
 // Below this zoom the card's 11px labels render under 9px, so it switches to compact controls.
 export const CONFIG_COMPACT_MAX_SCALE = 0.8;
 // Below this zoom the compact controls are too small to read, so only the settings and run icons remain.

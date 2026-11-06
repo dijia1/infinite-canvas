@@ -1,5 +1,6 @@
 import { CanvasNodeType } from "./types";
-import type { CanvasNodeData, CanvasNodeMetadata } from "./types";
+import { CONFIG_NODE_MIN_SIZE } from "./utils/canvas-config-card";
+import type { CanvasNodeMetadata } from "./types";
 
 type CanvasNodeSpec = {
     width: number;
@@ -11,7 +12,7 @@ type CanvasNodeSpec = {
 export const NODE_DEFAULT_SIZE = {
     [CanvasNodeType.Image]: { width: 340, height: 240, title: "New Generation" },
     [CanvasNodeType.Text]: { width: 340, height: 240, title: "Note" },
-    [CanvasNodeType.Config]: { width: 360, height: 260, title: "生成配置" },
+    [CanvasNodeType.Config]: { ...CONFIG_NODE_MIN_SIZE, title: "生成配置" },
     [CanvasNodeType.Video]: { width: 420, height: 236, title: "Video" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
@@ -36,11 +37,4 @@ export const NODE_SPECS = {
 
 export function getNodeSpec(type: CanvasNodeType) {
     return NODE_SPECS[type];
-}
-
-export function normalizeVideoConfigNodeSize(node: CanvasNodeData): CanvasNodeData {
-    if (node.type !== CanvasNodeType.Config || node.metadata?.generationMode !== "video") return node;
-    const width = Math.max(340, node.width);
-    const height = Math.max(260, node.height);
-    return width === node.width && height === node.height ? node : { ...node, width, height };
 }
