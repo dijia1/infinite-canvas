@@ -22,6 +22,7 @@ type Options = {
 export function createWorkflowAutosave(options: Options) {
     let latest: WorkflowEditorDocument | undefined;
     let savedSnapshot = "";
+    let latestSnapshot = "";
     let state: WorkflowAutosaveState = { revision: 0, dirty: false, status: "idle", error: undefined };
     let enabled = false;
     let disposed = false;
@@ -60,13 +61,13 @@ export function createWorkflowAutosave(options: Options) {
                 if (disposed || !enabled || generation !== epoch) throw new WorkflowAutosaveInterruptedError("流程编辑会话已变化");
                 const submitted = latest!;
                 if (!submitted.name.trim()) throw new Error("请输入流程名称");
-                const submittedSnapshot = workflowEditorSnapshot(submitted);
+                const submittedSnapshot = latestSnapshot;
                 emit({ status: "saving" });
                 const saved = await options.save({ ...submitted, name: submitted.name.trim() }, state.revision);
                 if (disposed || generation !== epoch) throw new WorkflowAutosaveInterruptedError("流程编辑会话已变化");
                 savedSnapshot = workflowEditorSnapshot({ name: saved.name, graph: saved.graph });
-                if (workflowEditorSnapshot(latest!) === submittedSnapshot) latest = { name: saved.name, graph: saved.graph };
-                emit({ revision: saved.revision, dirty: workflowEditorSnapshot(latest!) !== savedSnapshot });
+                if (latestSnapshot === submittedSnapshot) { latest = { name: saved.name, graph: saved.graph }; latestSnapshot = savedSnapshot; }
+                emit({ revision: saved.revision, dirty: latestSnapshot !== savedSnapshot });
                 options.onSaved(saved, submittedSnapshot);
             }
             emit({ status: "idle", error: undefined });
@@ -108,13 +109,14 @@ export function createWorkflowAutosave(options: Options) {
             clearTimer();
             generation++;
             latest = document;
-            savedSnapshot = workflowEditorSnapshot(document);
+            savedSnapshot = latestSnapshot = workflowEditorSnapshot(document);
             emit({ revision, dirty: false, status: "idle", error: undefined });
         },
-        update(document: WorkflowEditorDocument) {
+        update(document: WorkflowEditorDocument, snapshot = workflowEditorSnapshot(document)) {
             if (disposed) return;
             latest = document;
-            emit({ dirty: Boolean(savedSnapshot && workflowEditorSnapshot(document) !== savedSnapshot) });
+            latestSnapshot = snapshot;
+            emit({ dirty: Boolean(savedSnapshot && latestSnapshot !== savedSnapshot) });
             schedule();
         },
         setEnabled(value: boolean) {

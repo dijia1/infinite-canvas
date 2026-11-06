@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { CanvasNodeType, type CanvasNodeData } from "../types.ts";
-import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection } from "./canvas-graph-utils.ts";
+import { hiddenBatchNodeIds, normalizeConnection } from "./canvas-graph-utils.ts";
 
 function node(id: string, type: CanvasNodeType, metadata?: CanvasNodeData["metadata"]): CanvasNodeData {
     return { id, type, title: id, position: { x: 0, y: 0 }, width: 100, height: 100, metadata };
@@ -41,8 +41,8 @@ test("hides a collapsed batch child and its connection endpoint", () => {
     const child = node("child", CanvasNodeType.Image, { batchRootId: root.id });
     const nodes = [root, child];
 
-    assert.equal(isHiddenBatchChild(child, nodes), true);
-    assert.equal(isHiddenBatchConnectionEndpoint(child, nodes), true);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenNodeIds.has(child.id), true);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenConnectionNodeIds.has(child.id), true);
 });
 
 test("keeps collapsing batch children visible without changing endpoint visibility", () => {
@@ -50,8 +50,8 @@ test("keeps collapsing batch children visible without changing endpoint visibili
     const child = node("child", CanvasNodeType.Image, { batchRootId: root.id });
     const nodes = [root, child];
 
-    assert.equal(isHiddenBatchChild(child, nodes, new Set([root.id])), false);
-    assert.equal(isHiddenBatchConnectionEndpoint(child, nodes), true);
+    assert.equal(hiddenBatchNodeIds(nodes, new Set([root.id])).hiddenNodeIds.has(child.id), false);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenConnectionNodeIds.has(child.id), true);
 });
 
 test("does not hide children without an existing batch root", () => {
@@ -59,8 +59,8 @@ test("does not hide children without an existing batch root", () => {
     const missingRootChild = node("missing-root", CanvasNodeType.Image, { batchRootId: "unknown" });
     const nodes = [standalone, missingRootChild];
 
-    assert.equal(isHiddenBatchChild(standalone, nodes), false);
-    assert.equal(isHiddenBatchConnectionEndpoint(standalone, nodes), false);
-    assert.equal(isHiddenBatchChild(missingRootChild, nodes), false);
-    assert.equal(isHiddenBatchConnectionEndpoint(missingRootChild, nodes), false);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenNodeIds.has(standalone.id), false);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenConnectionNodeIds.has(standalone.id), false);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenNodeIds.has(missingRootChild.id), false);
+    assert.equal(hiddenBatchNodeIds(nodes).hiddenConnectionNodeIds.has(missingRootChild.id), false);
 });

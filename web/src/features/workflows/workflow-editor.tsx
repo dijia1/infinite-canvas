@@ -1,5 +1,7 @@
 "use client";
 
+import { useWorkflowDraft } from "./use-workflow-draft";
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { App, Button, Drawer, Dropdown, Empty, Modal, Spin } from "antd";
 import { ChevronDown, Download, Image as ImageIcon, List, Play, Square, Video } from "lucide-react";
@@ -194,7 +196,8 @@ function WorkflowEditorContent() {
         for (const inputs of index.values()) inputs.sort((left, right) => left.order - right.order);
         return index;
     }, [graph.connections]);
-    const currentSnapshot = useMemo(() => workflowEditorSnapshot({ name, graph }), [graph, name]);
+    const editorDocument = useMemo(() => ({ name, graph }), [graph, name]);
+    const currentSnapshot = useMemo(() => workflowEditorSnapshot(editorDocument), [editorDocument]);
     editorDocumentRef.current = { name, graph };
     const dirty = Boolean(savedSnapshot && currentSnapshot !== savedSnapshot);
     const localImages = useWorkflowLocalImages({
@@ -311,11 +314,7 @@ function WorkflowEditorContent() {
         window.addEventListener("beforeunload", beforeUnload);
         return () => window.removeEventListener("beforeunload", beforeUnload);
     }, [dirty]);
-    useEffect(() => {
-        if (!draftOwnerUID || !workflowId || !savedSnapshot || !lease.editable || draftRecoveryPending || typeof window === "undefined") return;
-        if (dirty) writeWorkflowDraft(window.sessionStorage, draftOwnerUID, workflowId, { revision, document: { name, graph } });
-        else clearWorkflowDraft(window.sessionStorage, draftOwnerUID, workflowId);
-    }, [dirty, draftOwnerUID, graph, name, revision, savedSnapshot, workflowId, lease.editable, draftRecoveryPending]);
+    useWorkflowDraft({ ownerUID: draftOwnerUID, workflowId, enabled: Boolean(savedSnapshot) && lease.editable && !draftRecoveryPending, dirty, revision, document: editorDocument });
     useEffect(() => {
         if (assetPickerOpen && mediaTarget?.type === "image") void refreshAssets().catch((error) => message.error(error instanceof Error ? error.message : "素材加载失败"));
     }, [assetPickerOpen, mediaTarget?.type, message, refreshAssets]);
@@ -725,9 +724,9 @@ function WorkflowEditorContent() {
         if (!editBlockedRef.current) canvas.handleNodeMouseDown(event, workflowVisualOutputId(node.id, slot.id));
     };
     useEffect(() => {
-        autosave.update({ name, graph });
+        autosave.update(editorDocument, currentSnapshot);
         autosave.setEnabled(!readOnly && !interactions.isNodeDragging && !resizing && !frameGesture.active);
-    }, [autosave, name, graph, readOnly, interactions.isNodeDragging, resizing, frameGesture.active]);
+    }, [autosave, editorDocument, currentSnapshot, readOnly, interactions.isNodeDragging, resizing, frameGesture.active]);
     const resizeSession = useRef<{ id: string; clientX: number; clientY: number; start: Parameters<typeof resizeCanvasNode>[0]; config: boolean } | null>(null);
     const visualNodesRef = useRef(canvas.nodes);
     visualNodesRef.current = canvas.nodes;

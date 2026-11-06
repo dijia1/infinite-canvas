@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { distanceBetweenPoints, segmentHitsConnection } from "../utils/canvas-connection-geometry";
-import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint, normalizeConnection } from "../utils/canvas-graph-utils";
+import { hiddenBatchNodeIds, normalizeConnection } from "../utils/canvas-graph-utils";
 import { isCanvasPerfDebugEnabled, logCanvasPerf } from "../utils/canvas-performance-debug";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ContextMenuState, type Position, type SelectionBox, type ViewportTransform } from "../types";
 
@@ -200,9 +200,10 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
 
     const getConnectableNodeAtPoint = (clientX: number, clientY: number, current: ConnectionHandle) => {
         const world = options.screenToCanvas(clientX, clientY);
+        const { hiddenNodeIds } = hiddenBatchNodeIds(options.nodesRef.current);
         return (
             [...options.nodesRef.current]
-                .filter((node) => !isHiddenBatchChild(node, options.nodesRef.current))
+                .filter((node) => !hiddenNodeIds.has(node.id))
                 .reverse()
                 .find((node) => {
                     if (node.id === current.nodeId) return false;
@@ -413,12 +414,14 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
             let scannedConnections = 0;
             if (previousPoint) {
                 const threshold = Math.max(6, Math.min(20, 12 / options.viewportRef.current.k));
+                const nodesById = new Map(options.nodesRef.current.map((node) => [node.id, node]));
+                const { hiddenConnectionNodeIds } = hiddenBatchNodeIds(options.nodesRef.current);
                 options.connectionsRef.current.forEach((connection) => {
                     scannedConnections += 1;
                     if (nextConnectionIds.has(connection.id)) return;
-                    const from = options.nodesRef.current.find((node) => node.id === connection.fromNodeId);
-                    const to = options.nodesRef.current.find((node) => node.id === connection.toNodeId);
-                    if (!from || !to || isHiddenBatchConnectionEndpoint(from, options.nodesRef.current) || isHiddenBatchConnectionEndpoint(to, options.nodesRef.current)) return;
+                    const from = nodesById.get(connection.fromNodeId);
+                    const to = nodesById.get(connection.toNodeId);
+                    if (!from || !to || hiddenConnectionNodeIds.has(from.id) || hiddenConnectionNodeIds.has(to.id)) return;
                     if (segmentHitsConnection(previousPoint, world, from, to, threshold)) nextConnectionIds.add(connection.id);
                 });
             }
@@ -443,8 +446,9 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         const rectW = Math.abs(world.x - selectionBox.startWorldX);
         const rectH = Math.abs(world.y - selectionBox.startWorldY);
         const nextSelected = new Set<string>(selectionBox.additive ? selectionBox.initialSelectedNodeIds : []);
+        const { hiddenNodeIds } = hiddenBatchNodeIds(options.nodesRef.current);
         options.nodesRef.current
-            .filter((node) => !isHiddenBatchChild(node, options.nodesRef.current))
+            .filter((node) => !hiddenNodeIds.has(node.id))
             .forEach((node) => {
                 const intersects = rectX < node.position.x + node.width && rectX + rectW > node.position.x && rectY < node.position.y + node.height && rectY + rectH > node.position.y;
                 if (intersects) nextSelected.add(node.id);

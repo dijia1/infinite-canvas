@@ -44,7 +44,7 @@ import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
 import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
-import { isHiddenBatchChild, isHiddenBatchConnectionEndpoint } from "../utils/canvas-graph-utils";
+import { hiddenBatchNodeIds } from "../utils/canvas-graph-utils";
 import { buildConnectionPathData, getConnectionCurve } from "../utils/canvas-connection-geometry";
 import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "../utils/canvas-connection-visibility";
 import { canvasImageDownloadTargets, selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
@@ -82,6 +82,7 @@ import { useCanvasStore, selectCanvasProjectSummaries } from "../stores/use-canv
 import { useCanvasProjectDetail } from "../hooks/use-canvas-project-detail";
 import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
 import { useCanvasDocumentSync, type CanvasEditorDocument } from "../hooks/use-canvas-document-sync";
+import { useCanvasKeyboard } from "../hooks/use-canvas-keyboard";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
 import { useCanvasInteractions } from "../hooks/use-canvas-interactions";
 import { useCanvasGeneration } from "../hooks/use-canvas-generation";
@@ -919,19 +920,20 @@ function InfiniteCanvasPage() {
     // Read the element's current size when culling runs so the fallback cannot truncate a larger viewport.
     const canvasViewportSize = getCanvasViewportSize(containerRef.current, size);
     const externalVideoNodeIds = useExternalVideoNodes();
+    const { hiddenNodeIds, hiddenConnectionNodeIds } = useMemo(() => hiddenBatchNodeIds(nodes, collapsingBatchIds), [nodes, collapsingBatchIds]);
     const visibleNodes = useMemo(
-        () => nodes.filter((node) => externalVideoNodeIds.has(node.id) || (!isHiddenBatchChild(node, nodes, collapsingBatchIds) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize))),
-        [canvasViewportSize, collapsingBatchIds, nodes, viewport.k, viewport.x, viewport.y, externalVideoNodeIds],
+        () => nodes.filter((node) => externalVideoNodeIds.has(node.id) || (!hiddenNodeIds.has(node.id) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize))),
+        [canvasViewportSize, hiddenNodeIds, nodes, viewport.k, viewport.x, viewport.y, externalVideoNodeIds],
     );
     const visibleNodeIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
     const onScreenNodes = useMemo(
-        () => nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize, 0)),
-        [canvasViewportSize, collapsingBatchIds, nodes, viewport.k, viewport.x, viewport.y],
+        () => nodes.filter((node) => !hiddenNodeIds.has(node.id) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize, 0)),
+        [canvasViewportSize, hiddenNodeIds, nodes, viewport.k, viewport.x, viewport.y],
     );
     const onScreenNodeIds = useMemo(() => new Set(onScreenNodes.map(node => node.id)), [onScreenNodes]);
     const mediaPrefetchNodes = useMemo(
-        () => nodes.filter((node) => !isHiddenBatchChild(node, nodes, collapsingBatchIds) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize, CANVAS_MEDIA_PREFETCH_PADDING)),
-        [canvasViewportSize, collapsingBatchIds, nodes, viewport.k, viewport.x, viewport.y],
+        () => nodes.filter((node) => !hiddenNodeIds.has(node.id) && isCanvasNodeNearViewport(node, viewport, canvasViewportSize, CANVAS_MEDIA_PREFETCH_PADDING)),
+        [canvasViewportSize, hiddenNodeIds, nodes, viewport.k, viewport.x, viewport.y],
     );
 
     useEffect(() => {
@@ -983,11 +985,11 @@ function InfiniteCanvasPage() {
                 if (!from || !to) return false;
                 const isInteractive = selectedConnectionId === connection.id || cutConnectionState?.connectionIds.has(connection.id);
                 if (isInteractive) return true;
-                if (isHiddenBatchConnectionEndpoint(from, nodes) || isHiddenBatchConnectionEndpoint(to, nodes)) return false;
+                if (hiddenConnectionNodeIds.has(from.id) || hiddenConnectionNodeIds.has(to.id)) return false;
                 if (!shouldRenderCanvasConnection(connection, visibleNodeIds)) return false;
                 return isCanvasConnectionNearViewport(from, to, viewport, canvasViewportSize);
             }),
-        [canvasViewportSize, connections, cutConnectionState, nodeById, nodes, selectedConnectionId, viewport, visibleNodeIds],
+        [canvasViewportSize, connections, cutConnectionState, hiddenConnectionNodeIds, nodeById, selectedConnectionId, viewport, visibleNodeIds],
     );
     const loadingNodeCount = useMemo(() => nodes.filter((node) => node.metadata?.status === NODE_STATUS_LOADING).length, [nodes]);
     const toolbarNode = toolbarNodeId ? nodeById.get(toolbarNodeId) || null : null;
@@ -1129,16 +1131,6 @@ function InfiniteCanvasPage() {
         return null;
     }, [activeNodeId, dialogNodeId, nodeById]);
 
-    const generationInputNodeSignature = useMemo(
-        () =>
-            nodes
-                .map((node) => {
-                    const contentKey = node.type === CanvasNodeType.Image ? node.metadata?.storageKey || `inline:${node.metadata?.content?.length || 0}` : node.metadata?.content || node.metadata?.prompt || "";
-                    return [node.id, node.type, node.title, contentKey, node.metadata?.mimeType || "", (node.metadata?.inputOrder || []).join(",")].join("::");
-                })
-                .join("|"),
-        [nodes],
-    );
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
         nodes.forEach((node) => {
@@ -1146,7 +1138,7 @@ function InfiniteCanvasPage() {
             map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
         });
         return map;
-    }, [connections, generationInputNodeSignature, nodes]);
+    }, [connections, nodes]);
     const focusedConfigInputBadges = useMemo(() => {
         const map = new Map<string, ConfigInputBadge>();
         if (!focusedConfigNodeId) return map;
@@ -1641,74 +1633,37 @@ function InfiniteCanvasPage() {
         if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
     }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message]);
 
-    useEffect(() => {
-        const handleKeyDown = (event: KeyboardEvent) => {
-            if (isProjectReadonly) return;
-            if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement) return;
-
-            const key = event.key.toLowerCase();
-            const isModifierShortcut = event.metaKey || event.ctrlKey;
-
-            if (isModifierShortcut && !event.altKey && key === "z") {
-                event.preventDefault();
-                if (event.shiftKey) redo();
-                else undo();
-                return;
-            }
-
-            if (isModifierShortcut && !event.altKey && key === "y") {
-                event.preventDefault();
-                redo();
-                return;
-            }
-
-            if (isModifierShortcut && !event.altKey && key === "a") {
-                event.preventDefault();
-                setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
+    useCanvasKeyboard({
+        readOnly: isProjectReadonly,
+        undo, redo,
+        copy: copySelectedNodes,
+        paste: () => { if (!pasteCopiedNodes()) void pasteSystemClipboard(); },
+        selectAll: () => {
+            setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
+            setSelectedConnectionId(null);
+            setContextMenu(null);
+            resetInteractionState();
+        },
+        deleteSelection: () => {
+            if (selectedNodeIdsRef.current.size) deleteNodes(new Set(selectedNodeIdsRef.current));
+            else if (selectedConnectionId) {
+                setConnections((prev) => prev.filter((connection) => connection.id !== selectedConnectionId));
                 setSelectedConnectionId(null);
-                setContextMenu(null);
-                resetInteractionState();
-                return;
             }
-
-            if (isModifierShortcut && !event.altKey && key === "c") {
-                event.preventDefault();
-                copySelectedNodes();
-                return;
-            }
-
-            if (isModifierShortcut && !event.altKey && key === "v") {
-                event.preventDefault();
-                if (!pasteCopiedNodes()) void pasteSystemClipboard();
-                return;
-            }
-
-            if (event.key === "Delete" || event.key === "Backspace") {
-                if (selectedNodeIdsRef.current.size) {
-                    deleteNodes(new Set(selectedNodeIdsRef.current));
-                } else if (selectedConnectionId) {
-                    setConnections((prev) => prev.filter((conn) => conn.id !== selectedConnectionId));
-                    setSelectedConnectionId(null);
-                }
-            }
-
-            if (event.key === "Escape") {
-                resetInteractionState();
-                setSelectedNodeIds(new Set());
-                setSelectedConnectionId(null);
-                setContextMenu(null);
-                setHoveredNodeId(null);
-                setToolbarNodeId(null);
-                setDialogNodeId(null);
-                setEditingNodeId(null);
-                setMaskNodeId(null);
-                setCropNodeId(null);
-            }
-        };
-
-        window.addEventListener("keydown", handleKeyDown);
-        return () => window.removeEventListener("keydown", handleKeyDown);
-    }, [copySelectedNodes, deleteNodes, isProjectReadonly, pasteCopiedNodes, pasteSystemClipboard, redo, resetInteractionState, selectedConnectionId, undo]);
+        },
+        escape: () => {
+            resetInteractionState();
+            setSelectedNodeIds(new Set());
+            setSelectedConnectionId(null);
+            setContextMenu(null);
+            setHoveredNodeId(null);
+            setToolbarNodeId(null);
+            setDialogNodeId(null);
+            setEditingNodeId(null);
+            setMaskNodeId(null);
+            setCropNodeId(null);
+        },
+    });
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
