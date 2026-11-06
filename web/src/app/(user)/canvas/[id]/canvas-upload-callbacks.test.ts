@@ -23,6 +23,8 @@ for (const kind of ["current", "old-image", "old-scope"] as const) {
         }).named("localImageUploadController");
         callbacks.onProgress("A", 50, source);
         assert.equal(nodes[0].metadata?.localUploadProgress, kind === "current" ? 50 : undefined);
+        callbacks.onStage("A", "verifying", source);
+        assert.equal(nodes[0].metadata?.localUploadState, kind === "current" ? "verifying" : "uploading");
         callbacks.onCompleted("A", image, { mediaId: "result" }, source);
         assert.equal(nodes[0].metadata?.mediaId, kind === "current" ? "result" : undefined);
         callbacks.onFailed("A", "old error", source);
@@ -52,8 +54,8 @@ test("a resumed upload cannot fail or restart an image restored while local cach
 });
 
 
-test("Undo can resume the same local image after its previous upload finished", async () => {
-    const node = { id: "A", type: CanvasNodeType.Image, metadata: { storageKey: "local-A", localUploadState: "uploading" } };
+for (const stage of ["uploading", "verifying"] as const) test(`Undo can resume the same ${stage} local image after its previous upload finished`, async () => {
+    const node = { id: "A", type: CanvasNodeType.Image, metadata: { storageKey: "local-A", localUploadState: stage } };
     let uploads = 0;
     let active = false;
     const runEffect = sourceBehavior(new URL("./canvas-client-page.tsx", import.meta.url), {

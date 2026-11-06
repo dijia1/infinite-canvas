@@ -70,7 +70,9 @@ test("local video preview appears before response; progress never changes the do
 test("confirmation failure keeps original media, preview and uploaded intent for retry", async () => {
     const s = setup();
     s.setNode({ ...s.node, metadata: { mediaId: "original" } });
-    const pending = s.c.start(s.node, file());
+    const metadata = { width: 720, height: 1280, duration: 5 };
+    const pending = s.c.start(s.node, file(), metadata);
+    assert.equal(s.calls[0].options.metadata, metadata);
     s.calls[0].options.onUploaded?.("intent-once");
     s.calls[0].response.reject(Error("confirmation failed"));
     await pending;
@@ -79,6 +81,7 @@ test("confirmation failure keeps original media, preview and uploaded intent for
     assert.equal(s.c.isPending("v"), true);
     const retry = s.c.retry("v");
     assert.equal(s.calls[1].options.uploadedIntentId, "intent-once");
+    assert.equal(s.calls[1].options.metadata, metadata);
     s.calls[1].response.resolve(remote);
     await retry;
     assert.equal(s.node.metadata?.mediaId, "remote");

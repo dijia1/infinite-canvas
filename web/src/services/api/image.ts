@@ -50,6 +50,7 @@ type UserImageUploadIntent = {
 
 export type UserImageUploadOptions = {
     onProgress?: (percent: number) => void;
+    onStage?: (stage: "uploading" | "verifying") => void;
     signal?: AbortSignal;
 };
 
@@ -86,6 +87,7 @@ function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
 }
 
 export async function uploadUserImage(file: File, intent: "canvas" | "library" | "mask" = "library", options: UserImageUploadOptions = {}) {
+    options.onStage?.("uploading");
     const uploadIntent = await axios.post<ImageApiResponse & { data?: UserImageUploadIntent }>(
         aiApiPath("/media/upload-intents"),
         {
@@ -101,7 +103,8 @@ export async function uploadUserImage(file: File, intent: "canvas" | "library" |
         const { id, uploadUrl } = uploadIntent.data.data;
         if (!id || !uploadUrl) throw new Error("上传服务没有返回有效凭证");
         await uploadDirectlyToOSS(uploadUrl, file, options);
-        const completed = await axios.post<ImageApiResponse & { data?: UserImageUploadData }>(aiApiPath(`/media/upload-intents/${encodeURIComponent(id)}/complete`));
+        options.onStage?.("verifying");
+        const completed = await axios.post<ImageApiResponse & { data?: UserImageUploadData }>(aiApiPath(`/media/upload-intents/${encodeURIComponent(id)}/complete`), undefined, { signal: options.signal });
         return parseUserImageUpload(completed.data);
     }
     if (uploadIntent.data.data.mode !== "proxy") throw new Error("上传服务返回了未知模式");
@@ -115,6 +118,7 @@ export async function uploadUserImage(file: File, intent: "canvas" | "library" |
             options.onProgress?.(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
         },
     });
+    options.onStage?.("verifying");
     return parseUserImageUpload(response.data);
 }
 

@@ -22,6 +22,7 @@ type CanvasLocalImageUploadControllerOptions = {
     onUploaded?: (nodeId: string, remote: UploadedRemoteImage, source: LocalImageUploadTask) => void;
     promote: (image: UploadedImage, mediaId: string) => Promise<UploadedImage>;
     onProgress: (nodeId: string, progress: number, source: LocalImageUploadTask) => void;
+    onStage?: (nodeId: string, stage: "uploading" | "verifying", source: LocalImageUploadTask) => void;
     onCompleted: (nodeId: string, image: UploadedImage, remote: UploadedRemoteImage, source: LocalImageUploadTask) => void;
     onFailed: (nodeId: string, error: string, source: LocalImageUploadTask) => void;
 };
@@ -58,6 +59,7 @@ export function createCanvasLocalImageUploadController(options: CanvasLocalImage
             const remote = await options.upload(file, intent, {
                 signal: controller.signal,
                 onProgress: progress => { if (isCurrent(entry)) options.onProgress(nodeId, progress, source); },
+                onStage: stage => { if (isCurrent(entry)) options.onStage?.(nodeId, stage, source); },
             });
             if (!isCurrent(entry)) return;
             options.onUploaded?.(nodeId, remote, source);

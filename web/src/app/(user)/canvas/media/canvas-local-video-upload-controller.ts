@@ -1,4 +1,4 @@
-import { uploadVideoMedia, type VideoMediaAccess, type VideoUploadOptions } from "@/services/api/video-media";
+import { uploadVideoMedia, type VideoMediaAccess, type VideoUploadOptions, type VideoUploadMetadata } from "@/services/api/video-media";
 import type { CanvasNodeData } from "../types";
 
 export type LocalVideoUploadView = { url: string; stage: "uploading" | "verifying" | "failed" | "ready"; progress: number; error?: string };
@@ -9,7 +9,7 @@ type Options = {
     getNode: (id: string) => CanvasNodeData | undefined;
     canEdit: () => boolean;
     onChange: (views: Map<string, LocalVideoUploadView>) => void;
-    onCompleted: (id: string, file: File, remote: VideoMediaAccess, source: CanvasNodeData) => void;
+    onCompleted: (id: string, file: File, remote: VideoMediaAccess, source: CanvasNodeData, preparedMetadata?: VideoUploadMetadata) => void;
     upload?: typeof uploadVideoMedia;
     createURL?: (file: File) => string;
     revokeURL?: (url: string) => void;
@@ -17,7 +17,7 @@ type Options = {
 
 // Preview, file bytes and progress belong to the page, never the saved graph.
 export function createCanvasLocalVideoUploadController(options: Options) {
-    type Entry = { source: CanvasNodeData; file: File; view: LocalVideoUploadView; abort?: AbortController; uploadedIntentId?: string; remoteId?: string };
+    type Entry = { source: CanvasNodeData; file: File; metadata?: VideoUploadMetadata; view: LocalVideoUploadView; abort?: AbortController; uploadedIntentId?: string; remoteId?: string };
     const entries = new Map<string, Entry>();
     const views = () => new Map([...entries].map(([id, entry]) => [id, entry.view]));
     const emit = () => options.onChange(views());
@@ -42,6 +42,7 @@ export function createCanvasLocalVideoUploadController(options: Options) {
         };
         try {
             const uploadOptions: VideoUploadOptions = {
+                metadata: entry.metadata,
                 signal: abort.signal,
                 uploadedIntentId: entry.uploadedIntentId,
                 onProgress: (progress) => update({ progress }),
@@ -52,7 +53,7 @@ export function createCanvasLocalVideoUploadController(options: Options) {
             };
             const remote = await (options.upload || uploadVideoMedia)(entry.file, uploadOptions);
             if (!current()) return;
-            options.onCompleted(id, entry.file, remote, entry.source);
+            options.onCompleted(id, entry.file, remote, entry.source, entry.metadata);
             entry.remoteId = remote.mediaId;
             entry.view = { ...entry.view, stage: "ready", progress: 100, error: undefined };
             emit();
@@ -64,10 +65,10 @@ export function createCanvasLocalVideoUploadController(options: Options) {
     };
     return {
         views,
-        start: (node: CanvasNodeData, file: File) => {
+        start: (node: CanvasNodeData, file: File, metadata?: VideoUploadMetadata) => {
             if (!options.canEdit()) return Promise.resolve();
             cancel(node.id);
-            const entry: Entry = { source: node, file, view: { url: (options.createURL || URL.createObjectURL)(file), stage: "uploading", progress: 0 } };
+            const entry: Entry = { source: node, file, metadata, view: { url: (options.createURL || URL.createObjectURL)(file), stage: "uploading", progress: 0 } };
             entries.set(node.id, entry);
             emit();
             return run(entry);

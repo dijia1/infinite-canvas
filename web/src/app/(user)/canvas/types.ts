@@ -17,7 +17,7 @@ export enum CanvasNodeType {
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "error";
-export type CanvasLocalImageUploadState = "uploading" | "failed";
+export type CanvasLocalImageUploadState = "uploading" | "verifying" | "failed";
 export type CanvasLocalImageUploadIntent = "canvas" | "library";
 export type CanvasGenerationMode = "image" | "video";
 export type CanvasImageGenerationType = "generation" | "edit";

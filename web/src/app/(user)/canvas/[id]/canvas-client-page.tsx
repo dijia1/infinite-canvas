@@ -1,5 +1,5 @@
 "use client";
-import { uploadVideoMedia } from "@/services/api/video-media";
+import { prepareVideoUpload, uploadVideoMedia } from "@/services/api/video-media";
 import { createCanvasLocalVideoUploadController, videoUploadSourceIdentity, type LocalVideoUploadView } from "../media/canvas-local-video-upload-controller";
 
 import { CanvasConnectionCreateMenu } from "@/components/canvas-connection-create-menu";
@@ -318,10 +318,12 @@ function InfiniteCanvasPage() {
             canEdit: () => videoCanEditRef.current,
             getNode: (id) => nodesRef.current.find((node) => node.id === id),
             onChange: setLocalVideoUploads,
-            onCompleted: (id, file, remote, source) => {
-                const size = fitNodeSize(remote.width, remote.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+            onCompleted: (id, file, remote, source, preparedMetadata) => {
                 const metadata = videoMetadata({ url: remote.url, storageKey: "", mediaId: remote.mediaId, duration: remote.duration, bytes: remote.bytes, mimeType: remote.contentType, width: remote.width, height: remote.height });
-                setNodes((current) => current.map((node) => node.id === id && videoUploadSourceIdentity(node) === videoUploadSourceIdentity(source) ? replaceNodeWithUploadedVideo(node, file.name, metadata, size) : node));
+                setNodes((current) => current.map((node) => {
+                    if (node.id !== id || videoUploadSourceIdentity(node) !== videoUploadSourceIdentity(source)) return node;
+                    return replaceNodeWithUploadedVideo(node, file.name, metadata, preparedMetadata ? undefined : fitNodeSize(remote.width, remote.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT));
+                }));
             },
         }),
         [canonicalGeneration, projectId, syncScope],
@@ -384,6 +386,9 @@ function InfiniteCanvasPage() {
                             source.scope === getVideoSessionScope() && isLocalImageUploadNode(node) && node.id === nodeId && node.metadata?.storageKey === source.image.storageKey && node.metadata?.localUploadState === "uploading" ? { ...node, metadata: { ...node.metadata, localUploadProgress: Math.max(0, Math.min(100, Math.round(progress))) } } : node,
                         ),
                     );
+                },
+                onStage: (nodeId, stage, source) => {
+                    setNodes((current) => current.map((node) => source.scope === getVideoSessionScope() && isLocalImageUploadNode(node) && node.id === nodeId && node.metadata?.storageKey === source.image.storageKey ? { ...node, metadata: { ...node.metadata, localUploadState: stage, localUploadProgress: stage === "verifying" ? 100 : 0 } } : node));
                 },
                 onCompleted: (nodeId, image, remote, source) => {
                     setNodes((current) =>
@@ -651,7 +656,7 @@ function InfiniteCanvasPage() {
     useEffect(() => {
         if (!documentReady || isProjectReadonly) return;
         for (const node of nodes) {
-            if (!isLocalImageUploadNode(node) || node.metadata?.localUploadState !== "uploading" || !node.metadata.storageKey) continue;
+            if (!isLocalImageUploadNode(node) || node.metadata?.localUploadState === "failed" || !node.metadata?.storageKey) continue;
             if (localImageUploadController.isActive(node.id)) continue;
             const scope = getVideoSessionScope();
             const storageKey = node.metadata.storageKey;
@@ -1583,14 +1588,18 @@ function InfiniteCanvasPage() {
 
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         if (!videoCanEditRef.current) return;
-        const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { status: "success" }), title: file.name };
+        const scope = getVideoSessionScope();
+        const metadata = await prepareVideoUpload(file);
+        if (!videoCanEditRef.current || scope !== getVideoSessionScope()) return;
+        const size = fitNodeSize(metadata.width, metadata.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+        const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { status: "success", naturalWidth: metadata.width, naturalHeight: metadata.height, duration: metadata.duration, mimeType: file.type, bytes: file.size }), ...size, title: file.name };
         node.position = { x: position.x - node.width / 2, y: position.y - node.height / 2 };
         setNodes((prev) => [...prev, node]);
         setSelectedNodeIds(new Set([node.id]));
         setSelectedConnectionId(null);
         setDialogNodeId(node.id);
-        void localVideoUploadController.start(node, file);
-    }, [localVideoUploadController]);
+        void localVideoUploadController.start(node, file, metadata);
+    }, [getVideoSessionScope, localVideoUploadController]);
 
     const createTextNodeFromClipboard = useCallback(
         (text: string) => {
@@ -1926,14 +1935,14 @@ function InfiniteCanvasPage() {
                 setDialogNodeId(target.nodeId);
                 startLocalImageUpload(target.nodeId, file, image, "canvas");
             } else {
-                const position = target?.position || screenToCanvas((containerRef.current?.getBoundingClientRect().left || 0) + size.width / 2, (containerRef.current?.getBoundingClientRect().top || 0) + size.height / 2);
+                const position = target?.position || getCanvasCenter();
                 void (file.type.startsWith("video/") ? createVideoFileNode(file, position) : createImageFileNode(file, position)).catch((error) => message.error(error instanceof Error ? error.message : "素材添加失败"));
             }
 
             uploadTargetRef.current = null;
             event.target.value = "";
         },
-        [createImageFileNode, createVideoFileNode, discardLocalImageUploads, localVideoUploadController, message, screenToCanvas, size.height, size.width, startLocalImageUpload],
+        [createImageFileNode, createVideoFileNode, discardLocalImageUploads, getCanvasCenter, localVideoUploadController, message, startLocalImageUpload],
     );
 
     const startTitleEditing = useCallback(() => {

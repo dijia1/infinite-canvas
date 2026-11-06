@@ -3,6 +3,7 @@ import { uploadDirectlyToOSS } from "./direct-upload";
 import { aiApiPath } from "./request";
 
 export type VideoMediaAccess = { mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number; duration: number; expiresAt?: string };
+export type VideoUploadMetadata = Pick<VideoMediaAccess, "duration" | "width" | "height">;
 type Envelope<T> = { code: number; msg?: string; data?: T };
 export class VideoMediaRequestError extends Error {}
 function data<T>(value: Envelope<T>): T {
@@ -10,6 +11,7 @@ function data<T>(value: Envelope<T>): T {
     return value.data;
 }
 export type VideoUploadOptions = {
+    metadata?: VideoUploadMetadata;
     signal?: AbortSignal;
     onProgress?: (percent: number) => void;
     onStage?: (stage: "uploading" | "verifying") => void;
@@ -22,7 +24,8 @@ function validateVideoUpload(file: Blob) {
     if (file.size > 100 * 1024 * 1024) throw new Error("视频大小不能超过 100 MB");
 }
 
-function readVideoMetadata(file: Blob, signal?: AbortSignal): Promise<Pick<VideoMediaAccess, "duration" | "width" | "height">> {
+export function prepareVideoUpload(file: Blob, signal?: AbortSignal): Promise<VideoUploadMetadata> {
+    validateVideoUpload(file);
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
         const video = document.createElement("video");
@@ -55,9 +58,8 @@ function readVideoMetadata(file: Blob, signal?: AbortSignal): Promise<Pick<Video
     });
 }
 export async function uploadVideoMedia(file: Blob, options: VideoUploadOptions = {}): Promise<VideoMediaAccess> {
-    validateVideoUpload(file);
     const { signal } = options;
-    const metadata = await readVideoMetadata(file, signal);
+    const metadata = options.metadata ?? (await prepareVideoUpload(file, signal));
     if (options.uploadedIntentId) {
         options.onStage?.("verifying");
         return data((await axios.post<Envelope<VideoMediaAccess>>(aiApiPath(`/media/upload-intents/${encodeURIComponent(options.uploadedIntentId)}/complete`), metadata, { signal })).data);

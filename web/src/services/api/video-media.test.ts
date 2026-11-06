@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import axios from "axios";
-import { uploadVideoMedia, getVideoMediaAccess } from "./video-media";
+import { prepareVideoUpload, uploadVideoMedia, getVideoMediaAccess } from "./video-media";
 
 const originalDocument = globalThis.document;
 const originalCreateURL = URL.createObjectURL;
@@ -68,6 +68,30 @@ test("video upload sends MP4 bytes directly to OSS and returns stable media", as
         assert.deepEqual(await uploadVideoMedia(file), media);
         assert.equal(events.length, 3);
         assert.equal(events[1], "https://oss.example/upload");
+    } finally {
+        axios.post = originalPost;
+        globalThis.fetch = originalFetch;
+    }
+});
+
+test("prepared video dimensions are reused through upload without reading the file again", async () => {
+    const originalPost = axios.post,
+        originalFetch = globalThis.fetch;
+    const file = new File(["video"], "portrait.mp4", { type: "video/mp4" });
+    metadata.videoWidth = 720;
+    metadata.videoHeight = 1280;
+    const prepared = await prepareVideoUpload(file);
+    assert.deepEqual(prepared, { width: 720, height: 1280, duration: 5 });
+    assert.equal(createdURLs.length, 1);
+    metadataEvent = "error"; // A second read would fail this upload.
+    axios.post = (async (url: string, body: unknown) => {
+        if (url.endsWith("/complete")) assert.deepEqual(body, prepared);
+        return { data: { code: 0, data: url.endsWith("/complete") ? { mediaId: "portrait" } : { mode: "direct", id: "upload", uploadUrl: "https://oss.example/upload" } } };
+    }) as typeof axios.post;
+    globalThis.fetch = (async () => new Response(null, { status: 200 })) as typeof fetch;
+    try {
+        assert.equal((await uploadVideoMedia(file, { metadata: prepared })).mediaId, "portrait");
+        assert.equal(createdURLs.length, 1);
     } finally {
         axios.post = originalPost;
         globalThis.fetch = originalFetch;
