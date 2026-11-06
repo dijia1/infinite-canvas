@@ -133,6 +133,15 @@ func AIImageTask(w http.ResponseWriter, r *http.Request, id string) {
 	OK(w, task)
 }
 
+func AIImageResume(w http.ResponseWriter, r *http.Request, id string) {
+	task, err := service.ResumeImageGenerationTask(r.Context(), id)
+	if err != nil {
+		FailError(w, err)
+		return
+	}
+	OK(w, task)
+}
+
 func AIImageTaskByClientRequest(w http.ResponseWriter, r *http.Request, clientRequestID string) {
 	task, err := service.GetImageTaskByClientRequest(r.Context(), clientRequestID)
 	if err != nil {

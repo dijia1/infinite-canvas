@@ -70,6 +70,15 @@ func runImageTaskPreparer(ctx, execution context.Context, concurrency int) {
 }
 
 func prepareImageGenerationTask(ctx context.Context, task model.ImageGenerationTask) {
+	deadline, err := imageTaskDeadline(task)
+	if err != nil {
+		failImageTaskPreparation(task.ID, err)
+		return
+	}
+	if !time.Now().UTC().Before(deadline) {
+		failImageTaskPreparation(task.ID, safeMessageError{message: "图片参考素材准备超时，尚未提交供应商"})
+		return
+	}
 	store, err := taskInputStoreFactory()
 	if err != nil {
 		log.Printf("image task %s prepare store failed: %v", task.ID, err)

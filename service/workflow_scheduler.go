@@ -436,6 +436,9 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 }
 
 func deferWorkflowAttempt(attempt model.WorkflowOutputAttempt) error {
+	if attempt.Status == "uncertain" {
+		return persistWorkflowAttempt(attempt, "uncertain", time.Now().UTC().Add(5*workflowPollDelay), false, "")
+	}
 	outputStatus := "running"
 	if attempt.TaskID == "" {
 		attempt.Status = "submitting"
@@ -500,7 +503,7 @@ func applyWorkflowImageView(attempt model.WorkflowOutputAttempt, view ImageTaskV
 			attempt.Error = "图片生成失败"
 		}
 		return persistWorkflowAttempt(attempt, "failed", nextPoll, true, "failed")
-	case string(model.ImageTaskUncertain):
+	case string(model.ImageTaskUncertain), string(model.ImageTaskPaused):
 		attempt.Status, attempt.Error = "uncertain", strings.TrimSpace(view.Error)
 		return persistWorkflowAttempt(attempt, "uncertain", time.Now().UTC().Add(5*time.Second), false, "uncertain")
 	default:

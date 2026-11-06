@@ -147,19 +147,24 @@ func UpdateClaimedVideoTask(item model.VideoGenerationTask, updates map[string]a
 	}
 	return nil
 }
-func ResumeVideoGenerationTask(id, owner string, current time.Time, timeout time.Duration) error {
+func ResumeVideoGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int) error {
 	db, err := DB()
 	if err != nil {
 		return err
 	}
-	result := db.Model(&model.VideoGenerationTask{}).Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, "paused").Updates(map[string]any{"status": gorm.Expr("CASE WHEN result_urls_json <> '[]' THEN 'saving' ELSE 'running' END"), "error": "", "attempts": 0, "deadline": current.Add(timeout), "next_poll_at": current, "lease_until": nil, "claim_id": ""})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return errors.New("任务不能恢复")
-	}
-	return nil
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := reserveWorkflowTaskCapacity(tx, "video", id, owner, globalLimit, current); err != nil {
+			return err
+		}
+		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, "paused").Updates(map[string]any{"status": gorm.Expr("CASE WHEN result_urls_json <> '[]' THEN 'saving' ELSE 'running' END"), "error": "", "attempts": 0, "deadline": current.Add(timeout), "next_poll_at": current, "lease_until": nil, "claim_id": ""})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("任务不能恢复")
+		}
+		return nil
+	})
 }
 
 // Read while media locks are held. Task creation takes these same locks.

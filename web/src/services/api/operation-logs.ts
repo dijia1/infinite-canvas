@@ -4,7 +4,7 @@ export type GenerationTaskStatus = "queued" | "submitting" | "running" | "saving
 
 export type ImageOperationDetails = {
     taskId: string;
-    status: Exclude<GenerationTaskStatus, "saving" | "paused">;
+    status: Exclude<GenerationTaskStatus, "saving">;
     providerId: string;
     providerName: string;
     providerTaskId: string;
@@ -57,4 +57,8 @@ export function fetchOperationLogs(query: { mediaId?: string; page?: number; pag
 
 export function syncPortalMembers() {
     return apiPost<{ count: number; syncedAt: string }>("/api/admin/members/sync");
+}
+
+export function resolveGenerationTask(kind: "image" | "video", taskId: string, input: { action: "attach" | "close"; providerTaskId: string; reason: string }) {
+    return apiPost<{ ok: boolean }>(`/api/admin/generation-tasks/${kind}/${encodeURIComponent(taskId)}/resolve`, input);
 }

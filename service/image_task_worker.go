@@ -16,13 +16,15 @@ import (
 )
 
 const (
-	imageTaskPollInterval   = 2 * time.Second
-	defaultImageTaskTimeout = 3 * time.Minute
-	imageTaskLeaseDuration  = 45 * time.Second
-	imageTaskLeaseInterval  = 10 * time.Second
-	imageTaskRetention      = 30 * 24 * time.Hour
-	imageTaskSignedURLTTL   = 2*time.Hour + 10*time.Minute
-	imageTaskMinURLLifetime = 2 * time.Hour
+	imageTaskPollInterval       = 2 * time.Second
+	defaultImageTaskTimeout     = 3 * time.Minute
+	defaultImageTaskWaitTimeout = 30 * time.Minute
+	imageTaskMaxPollFailures    = 5
+	imageTaskLeaseDuration      = 45 * time.Second
+	imageTaskLeaseInterval      = 10 * time.Second
+	imageTaskRetention          = 30 * 24 * time.Hour
+	imageTaskSignedURLTTL       = 2*time.Hour + 10*time.Minute
+	imageTaskMinURLLifetime     = 2 * time.Hour
 )
 
 func parseImageTaskWorkerConcurrency(value int) (int, error) {
@@ -47,10 +49,43 @@ func parseImageTaskTimeout(value string) (time.Duration, error) {
 	return timeout, nil
 }
 
+func imageTaskWaitTimeout() (time.Duration, error) {
+	value := strings.TrimSpace(config.Cfg.AIImageTaskWaitTimeout)
+	if value == "" {
+		return defaultImageTaskWaitTimeout, nil
+	}
+	timeout, err := time.ParseDuration(value)
+	if err != nil || timeout <= 0 {
+		return 0, errors.New("AI_IMAGE_TASK_WAIT_TIMEOUT 必须是大于 0 的有效时间，例如 30m")
+	}
+	return timeout, nil
+}
+
+func imageTaskDeadline(item model.ImageGenerationTask) (time.Time, error) {
+	if item.Deadline != nil {
+		return *item.Deadline, nil
+	}
+	timeout, err := imageTaskWaitTimeout()
+	if err != nil {
+		return time.Time{}, err
+	}
+	created := time.Now().UTC()
+	if item.CreatedAt != "" {
+		created, err = time.Parse(time.RFC3339Nano, item.CreatedAt)
+		if err != nil {
+			return time.Time{}, err
+		}
+	}
+	return created.Add(timeout), nil
+}
+
 // StartImageTaskWorker starts a bounded in-process worker pool. It holds no
 // database transaction while contacting a provider or OSS, so polling does not
 // occupy a database connection.
 func StartImageTaskWorker(parent context.Context) (func(), error) {
+	if _, err := imageTaskWaitTimeout(); err != nil {
+		return nil, err
+	}
 	concurrency, err := parseImageTaskWorkerConcurrency(config.Cfg.AITaskWorkerConcurrency)
 	if err != nil {
 		return nil, err
@@ -166,6 +201,28 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 		markImageTaskUncertain(item, "图片提交结果不确定，请核对供应商任务，系统不会自动重复生成")
 		return
 	}
+	deadline, err := imageTaskDeadline(item)
+	if err != nil {
+		log.Printf("image task deadline failed id=%s category=%s", item.ID, TaskErrorCategory(err))
+		markImageTaskUncertain(item, "图片任务等待时间无效，请联系管理员核对原任务")
+		return
+	}
+	missingDeadline := item.Deadline == nil
+	item.Deadline = &deadline
+	if !time.Now().UTC().Before(deadline) {
+		if providerTaskID == "" {
+			failImageTask(ctx, item, safeMessageError{message: "图片任务排队超时，尚未提交供应商"})
+		} else {
+			pauseImageTask(item, "图片任务等待超时，可继续检查原任务")
+		}
+		return
+	}
+	if missingDeadline {
+		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"deadline": deadline}); err != nil {
+			log.Printf("image task deadline update failed id=%s category=%s", item.ID, TaskErrorCategory(err))
+			return
+		}
+	}
 	inputs, err := imageTaskInputs(item)
 	if err != nil {
 		if providerTaskID == "" {
@@ -262,12 +319,21 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 	}
 
 	for {
+		if !time.Now().UTC().Before(deadline) {
+			pauseImageTask(item, "图片任务等待超时，可继续检查原任务")
+			return
+		}
 		if ctx.Err() != nil {
-			releaseImageTaskForRetry(item, "图片任务等待中断，系统将继续查询原任务")
+			releaseImageTask(item, "图片任务等待中断，系统将继续查询原任务", false)
 			return
 		}
 		remote, pollErr := provider.GetImageTask(ctx, providerTaskID)
 		if pollErr != nil {
+			log.Printf("image task query failed id=%s provider_task=%s category=%s", item.ID, providerTaskID, TaskErrorCategory(pollErr))
+			if ctx.Err() != nil {
+				releaseImageTask(item, "图片任务等待中断，系统将继续查询原任务", false)
+				return
+			}
 			releaseImageTaskForRetry(item, "图片任务查询失败，系统将继续查询原任务")
 			return
 		}
@@ -285,11 +351,13 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			completeImageTask(ctx, item, inputs, urls)
 			return
 		}
-		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "updated_at": now()}); err != nil {
+		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "poll_failures": 0, "error_message": "", "updated_at": now()}); err != nil {
 			log.Printf("image task %s progress update failed: %v", item.ID, err)
 			return
 		}
+		item.PollFailures = 0
 		if !waitForImageTask(ctx, imageTaskPollInterval) {
+			releaseImageTask(item, "图片任务等待中断，系统将继续查询原任务", false)
 			return
 		}
 	}
@@ -454,9 +522,34 @@ func markImageTaskUncertain(item model.ImageGenerationTask, message string) {
 }
 
 func releaseImageTaskForRetry(item model.ImageGenerationTask, message string) {
-	current := time.Now().UTC()
+	releaseImageTask(item, message, true)
+}
+
+func pauseImageTask(item model.ImageGenerationTask, message string) {
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
-		"status": model.ImageTaskRunning, "error_message": message, "claim_id": "", "lease_until": current.Add(imageTaskPollInterval), "updated_at": current.Format(time.RFC3339Nano),
+		"status": model.ImageTaskPaused, "error_message": message, "claim_id": "", "lease_until": nil, "poll_failures": item.PollFailures, "updated_at": now(),
+	}); err != nil {
+		log.Printf("image task pause failed id=%s category=%s", item.ID, TaskErrorCategory(err))
+	}
+}
+
+func releaseImageTask(item model.ImageGenerationTask, message string, failure bool) {
+	if failure {
+		item.PollFailures++
+	}
+	current := time.Now().UTC()
+	if item.Deadline != nil && !current.Before(*item.Deadline) {
+		pauseImageTask(item, "图片任务等待超时，可继续检查原任务")
+		return
+	}
+	if item.PollFailures >= imageTaskMaxPollFailures {
+		reason, _, _ := strings.Cut(message, "，系统将")
+		pauseImageTask(item, reason+"，已暂停，可继续检查原任务")
+		return
+	}
+	delay := imageTaskPollInterval * time.Duration(max(1, item.PollFailures))
+	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
+		"status": model.ImageTaskRunning, "error_message": message, "claim_id": "", "lease_until": current.Add(delay), "poll_failures": item.PollFailures, "updated_at": current.Format(time.RFC3339Nano),
 	}); err != nil {
 		log.Printf("image task %s release for retry failed: %v", item.ID, err)
 	}

@@ -335,7 +335,7 @@ func ClaimWorkflowAttempt(globalLimit, runLimit int, allowNew bool, current time
 			return nil
 		}
 		var active int64
-		if err := tx.Model(&model.WorkflowOutputAttempt{}).Where("status IN ?", []string{"claimed", "submitting", "running", "uncertain"}).Count(&active).Error; err != nil {
+		if err := tx.Model(&model.WorkflowOutputAttempt{}).Where("status IN ?", []string{"claimed", "submitting", "running"}).Count(&active).Error; err != nil {
 			return err
 		}
 		if int(active) >= globalLimit {

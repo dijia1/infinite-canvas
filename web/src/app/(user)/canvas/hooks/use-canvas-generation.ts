@@ -9,7 +9,7 @@ import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config"
 import type { AICapability } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 import { VideoQueryTransientError, VideoRequestRejectedError, validateVideoGeneration, getVideoTask, getVideoTaskByClientRequest, resumeVideoTask, type VideoGenerationTask } from "@/services/api/video";
-import { ImageRequestRejectedError, type ImageGenerationTask } from "@/services/api/image";
+import { ImageQueryTransientError, ImageRequestRejectedError, type ImageGenerationTask } from "@/services/api/image";
 import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
 import type { UploadedFile } from "@/services/file-storage";
 import { imageEditReferenceError } from "@/lib/image-edit-validation";
@@ -62,8 +62,9 @@ export type CanvasGenerationControllerOptions = {
     createConfigNode: (position: Position, metadata: CanvasNodeMetadata) => CanvasNodeData;
     requestGeneration: (config: AiConfig, prompt: string, clientRequestId: string) => Promise<ImageGenerationTask>;
     requestEdit: (config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId: string) => Promise<ImageGenerationTask>;
-    getImageTask: (taskId: string) => Promise<ImageGenerationTask>;
-    getImageTaskByClientRequest: (clientRequestId: string) => Promise<ImageGenerationTask>;
+    getImageTask: (taskId: string, signal?: AbortSignal) => Promise<ImageGenerationTask>;
+    getImageTaskByClientRequest: (clientRequestId: string, signal?: AbortSignal) => Promise<ImageGenerationTask>;
+    resumeImageTask: (taskId: string, signal?: AbortSignal) => Promise<ImageGenerationTask>;
     requestVideoGeneration: (config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId?: string, videoMediaIds?: string[]) => Promise<VideoGenerationTask>;
     getVideoTask?: (id: string, signal?: AbortSignal) => Promise<VideoGenerationTask>;
     resumeVideoTask?: (id: string, signal?: AbortSignal) => Promise<VideoGenerationTask>;
@@ -82,7 +83,7 @@ export type CanvasGenerationControllerOptions = {
 
 export type CanvasGenerationController = {
     getImageResultState: (nodeId: string) => "loading" | "error" | undefined;
-    stopVideoObservations: (all?: boolean) => void;
+    stopTaskObservations: (all?: boolean) => void;
     readonly runningNodeId: string | null;
     updateOptions: (options: CanvasGenerationControllerOptions) => void;
     generateNode: (nodeId: string, mode: CanvasGenerationMode, prompt: string) => Promise<void>;
@@ -114,22 +115,22 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         );
     };
     const activeVideoTaskNodeIds = new Set<string>();
-    const videoOperations = new Set<{ controller: AbortController; scope: string | undefined; nodeId: string }>();
-    const beginVideoOperation = (nodeId: string) => {
+    const taskOperations = new Set<{ controller: AbortController; scope: string | undefined; nodeId: string }>();
+    const beginTaskOperation = (nodeId: string) => {
         const operation = { controller: new AbortController(), scope: options.getSessionScope?.() ?? options.sessionScope, nodeId };
-        videoOperations.add(operation);
+        taskOperations.add(operation);
         return operation;
     };
-    const stopVideoObservations = (all = false) => {
+    const stopTaskObservations = (all = false) => {
         const scope = options.getSessionScope?.() ?? options.sessionScope;
-        for (const operation of videoOperations) {
+        for (const operation of taskOperations) {
             if (all || operation.scope !== scope || !options.nodesRef.current.some((node) => node.id === operation.nodeId)) {
                 operation.controller.abort();
-                videoOperations.delete(operation);
+                taskOperations.delete(operation);
             }
         }
     };
-    const waitForVideo = (signal: AbortSignal, delay: number) =>
+    const waitForTask = (signal: AbortSignal, delay: number) =>
         new Promise<void>((resolve, reject) => {
             const abort = () => {
                 clearTimeout(timer);
@@ -145,14 +146,14 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 abort();
             }
         });
-    const queryVideo = async (query: () => Promise<VideoGenerationTask>, signal: AbortSignal) => {
+    const queryTask = async <T,>(query: () => Promise<T>, signal: AbortSignal, retryDelay = 12_000): Promise<T> => {
         for (let retry = 0; ; retry++) {
             if (signal.aborted) throw new DOMException("Aborted", "AbortError");
             try {
                 return await query();
             } catch (error) {
-                if (!(error instanceof VideoQueryTransientError) || retry >= 3 || signal.aborted) throw error;
-                await waitForVideo(signal, 12_000 * (retry + 1));
+                if (!(error instanceof VideoQueryTransientError || error instanceof ImageQueryTransientError) || retry >= 3 || signal.aborted) throw error;
+                await waitForTask(signal, retryDelay * (retry + 1));
             }
         }
     };
@@ -197,7 +198,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         );
         return references.every(Boolean) ? (references as ReferenceImage[]) : null;
     };
-    const imageTaskError = (task: ImageGenerationTask) => task.error || (task.status === "uncertain" ? "提交结果待确认，请勿重复生成" : "图片生成失败");
+    const imageTaskError = (task: ImageGenerationTask) => task.error || (task.status === "uncertain" ? "提交结果待确认，请勿重复生成" : task.status === "paused" ? "图片任务已暂停，可继续检查原任务" : "图片生成失败");
     const setImageTaskState = (identity: TaskIdentity, task: ImageGenerationTask) => {
         options.setNodes((previous) =>
             !taskCurrent(identity, previous, task) ? previous : previous.map((node) =>
@@ -208,8 +209,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                               ...node.metadata,
                               imageTaskId: task.id,
                               imageTaskClientRequestId: identity.clientRequestId || task.clientRequestId,
-                              status: (task.status === "failed" || task.status === "uncertain") ? NODE_STATUS_ERROR : NODE_STATUS_LOADING,
-                              errorDetails: (task.status === "failed" || task.status === "uncertain") ? imageTaskError(task) : undefined,
+                              status: (task.status === "failed" || task.status === "uncertain" || task.status === "paused") ? NODE_STATUS_ERROR : NODE_STATUS_LOADING,
+                              errorDetails: (task.status === "failed" || task.status === "uncertain" || task.status === "paused") ? imageTaskError(task) : undefined,
                           },
                       }
                     : node,
@@ -273,30 +274,35 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const observationKey = JSON.stringify([identity.scope, nodeId, identity.taskId || initialTask?.id, identity.clientRequestId]);
         if (activeImageTaskNodeIds.has(observationKey) || !taskCurrent(identity, options.nodesRef.current, initialTask)) return;
         activeImageTaskNodeIds.add(observationKey);
+        const operation = beginTaskOperation(nodeId);
+        const signal = operation.controller.signal;
         let task = initialTask;
         try {
             if (!task) {
                 const taskID = identity.taskId;
                 const clientRequestID = identity.clientRequestId;
-                task = taskID ? await options.getImageTask(taskID) : clientRequestID ? await options.getImageTaskByClientRequest(clientRequestID) : undefined;
+                task = taskID ? await queryTask(() => options.getImageTask(taskID, signal), signal, 2_000) : clientRequestID ? await queryTask(() => options.getImageTaskByClientRequest(clientRequestID, signal), signal, 2_000) : undefined;
             }
-            while (task && taskCurrent(identity, options.nodesRef.current, task)) {
+            while (task && !signal.aborted && taskCurrent(identity, options.nodesRef.current, task)) {
                 setImageTaskState(identity, task);
                 if (task.status === "succeeded") {
                     await completeImageTaskNode(identity, rootId, task);
                     return;
                 }
-                if ((task.status === "failed" || task.status === "uncertain")) throw new Error(imageTaskError(task));
-                await new Promise<void>((resolve) => window.setTimeout(resolve, 2_000));
+                if ((task.status === "failed" || task.status === "uncertain" || task.status === "paused")) throw new Error(imageTaskError(task));
+                await waitForTask(signal, 2_000);
                 if (!taskCurrent(identity, options.nodesRef.current, task)) return;
-                task = await options.getImageTask(task.id);
+                const taskID = task.id;
+                task = await queryTask(() => options.getImageTask(taskID, signal), signal, 2_000);
             }
             if (!task) throw new Error("图片任务不存在");
         } catch (error) {
+            if (signal.aborted) return;
             const observedTask = task;
             const errorDetails = error instanceof Error ? error.message : "图片生成失败";
             options.setNodes((previous) => !taskCurrent(identity, previous, observedTask) ? previous : previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node)));
         } finally {
+            taskOperations.delete(operation);
             activeImageTaskNodeIds.delete(observationKey);
         }
     };
@@ -332,7 +338,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             }
         }
         if (!taskCurrent(identity, options.nodesRef.current, task)) return;
-        if (task.status === "succeeded" || (task.status === "failed" || task.status === "uncertain")) {
+        if (task.status === "succeeded" || (task.status === "failed" || task.status === "uncertain" || task.status === "paused")) {
             await observeImageTask(nodeId, rootId, task, identity);
             return;
         }
@@ -343,7 +349,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const observationKey = JSON.stringify([identity.scope, nodeId, identity.taskId || initial?.id, identity.clientRequestId]);
         if (activeVideoTaskNodeIds.has(observationKey) || !taskCurrent(identity, options.nodesRef.current, initial)) return;
         activeVideoTaskNodeIds.add(observationKey);
-        const operation = beginVideoOperation(nodeId);
+        const operation = beginTaskOperation(nodeId);
         const signal = operation.controller.signal;
         let task = initial;
         const current = (nodes = options.nodesRef.current, observedTask = task) => !signal.aborted && taskCurrent(identity, nodes, observedTask);
@@ -352,7 +358,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             const clientID = identity.clientRequestId;
             task =
                 initial ||
-                (id ? await queryVideo(() => (options.getVideoTask || getVideoTask)(id, signal), signal) : clientID ? await queryVideo(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(clientID, signal), signal) : undefined);
+                (id ? await queryTask(() => (options.getVideoTask || getVideoTask)(id, signal), signal) : clientID ? await queryTask(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(clientID, signal), signal) : undefined);
             while (task && current()) {
                 const observedTask = task;
                 const terminal = ["failed", "uncertain", "paused"].includes(task.status);
@@ -378,17 +384,17 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                     ),
                 );
                 if (terminal || task.status === "succeeded") return;
-                await waitForVideo(signal, 12_000);
+                await waitForTask(signal, 12_000);
                 if (!current()) return;
                 const taskId = task.id;
-                task = await queryVideo(() => (options.getVideoTask || getVideoTask)(taskId, signal), signal);
+                task = await queryTask(() => (options.getVideoTask || getVideoTask)(taskId, signal), signal);
             }
         } catch (error) {
             const observedTask = task;
             if (current())
                 options.setNodes((previous) => !current(previous, observedTask) ? previous : previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails: error instanceof Error ? error.message : "读取视频任务失败" } } : node)));
         } finally {
-            videoOperations.delete(operation);
+            taskOperations.delete(operation);
             activeVideoTaskNodeIds.delete(observationKey);
         }
     };
@@ -415,16 +421,16 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 options.setNodes((previous) => !taskCurrent(identity, previous) ? previous : previous.map((node) => (node.id === nodeId ? { ...node, metadata: { ...node.metadata, videoTaskClientRequestId: undefined, status: NODE_STATUS_ERROR, errorDetails: error.message } } : node)));
                 throw error;
             }
-            const operation = beginVideoOperation(nodeId);
+            const operation = beginTaskOperation(nodeId);
             try {
-                task = await queryVideo(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(clientRequestId, operation.controller.signal), operation.controller.signal);
+                task = await queryTask(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(clientRequestId, operation.controller.signal), operation.controller.signal);
             } catch {
                 if (operation.controller.signal.aborted || !taskCurrent(identity)) return;
                 const errorDetails = error instanceof Error ? error.message : "视频任务提交失败";
                 options.setNodes((previous) => !taskCurrent(identity, previous) ? previous : previous.map((node) => node.id === nodeId ? { ...node, metadata: { ...node.metadata, status: NODE_STATUS_ERROR, errorDetails } } : node));
                 throw error;
             } finally {
-                videoOperations.delete(operation);
+                taskOperations.delete(operation);
             }
         }
         if (!taskCurrent(identity, options.nodesRef.current, task)) return;
@@ -685,34 +691,40 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             : sessionScope() === identity.scope && nodes.some((item) => item.id === node.id && item.type === node.type);
         if (!current()) return;
         if (node.type === CanvasNodeType.Image && node.metadata?.status === NODE_STATUS_ERROR && (node.metadata.imageTaskId || node.metadata.imageTaskClientRequestId)) {
+            const operation = beginTaskOperation(node.id);
+            const signal = operation.controller.signal;
             try {
-                const task = node.metadata.imageTaskId
-                    ? await options.getImageTask(node.metadata.imageTaskId)
-                    : await options.getImageTaskByClientRequest(node.metadata.imageTaskClientRequestId!);
-                if (!current()) return;
+                let task = node.metadata.imageTaskId
+                    ? await queryTask(() => options.getImageTask(node.metadata!.imageTaskId!, signal), signal, 2_000)
+                    : await queryTask(() => options.getImageTaskByClientRequest(node.metadata!.imageTaskClientRequestId!, signal), signal, 2_000);
+                if (signal.aborted || !current()) return;
+                if (task.status === "paused") task = await options.resumeImageTask(task.id, signal);
+                if (signal.aborted || !current()) return;
                 if (task.status !== "failed") {
                     await observeImageTask(node.id, node.metadata.batchRootId || node.id, task, identity);
                     return;
                 }
             } catch (error) {
-                if (current()) options.message.error(error instanceof Error ? error.message : "查询原图片任务失败，请稍后重试");
+                if (!signal.aborted && current()) options.message.error(error instanceof Error ? error.message : "查询原图片任务失败，请稍后重试");
                 return;
+            } finally {
+                taskOperations.delete(operation);
             }
         }
         if (node.type === CanvasNodeType.Video && (node.metadata?.videoTaskId || node.metadata?.videoTaskClientRequestId)) {
-            const operation = beginVideoOperation(node.id);
+            const operation = beginTaskOperation(node.id);
             const signal = operation.controller.signal;
             try {
                 let task = node.metadata.videoTaskId
-                    ? await queryVideo(() => (options.getVideoTask || getVideoTask)(node.metadata!.videoTaskId!, signal), signal)
-                    : await queryVideo(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(node.metadata!.videoTaskClientRequestId!, signal), signal);
+                    ? await queryTask(() => (options.getVideoTask || getVideoTask)(node.metadata!.videoTaskId!, signal), signal)
+                    : await queryTask(() => (options.getVideoTaskByClientRequest || getVideoTaskByClientRequest)(node.metadata!.videoTaskClientRequestId!, signal), signal);
                 if (signal.aborted || !current()) return;
                 if (task.status === "paused") task = await (options.resumeVideoTask || resumeVideoTask)(task.id, signal);
                 if (!signal.aborted && current()) void observeVideoTask(node.id, task, identity);
             } catch (error) {
                 if (!signal.aborted && current()) options.message.error(error instanceof Error ? error.message : "恢复视频任务失败");
             } finally {
-                videoOperations.delete(operation);
+                taskOperations.delete(operation);
             }
             return;
         }
@@ -829,7 +841,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
 
     return {
         getImageResultState,
-        stopVideoObservations,
+        stopTaskObservations,
         get runningNodeId() {
             return runningNodeId;
         },
@@ -859,10 +871,10 @@ export function useCanvasGeneration(options: UseCanvasGenerationOptions) {
     else controllerRef.current.updateOptions(controllerOptions);
     const controller = controllerRef.current;
     useEffect(() => {
-        controller.stopVideoObservations();
+        controller.stopTaskObservations();
     });
     useEffect(() => {
-        const stop = () => controller.stopVideoObservations(true);
+        const stop = () => controller.stopTaskObservations(true);
         const restore = (event: PageTransitionEvent) => {
             if (event.persisted) controller.resumePendingImageTasks();
         };

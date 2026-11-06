@@ -345,7 +345,7 @@ func TestVideoWorkerDownloadFailurePausesAndResumesOriginalTask(t *testing.T) {
 	if got.Status != "paused" || got.ProviderTaskID != "upstream" || calls != 0 {
 		t.Fatal(got.Status, calls)
 	}
-	if err := repository.ResumeVideoGenerationTask(item.ID, item.OwnerUID, current, time.Hour); err != nil {
+	if err := repository.ResumeVideoGenerationTask(item.ID, item.OwnerUID, current, time.Hour, 4); err != nil {
 		t.Fatal(err)
 	}
 	got = readWorkerVideo(t, item)

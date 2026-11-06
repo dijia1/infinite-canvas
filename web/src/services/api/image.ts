@@ -28,13 +28,22 @@ export type GeneratedImage = { id: string; dataUrl: string; mediaId?: string };
 export type ImageGenerationTask = {
     id: string;
     clientRequestId: string;
-    status: "queued" | "submitting" | "running" | "succeeded" | "failed" | "uncertain";
+    status: "queued" | "submitting" | "running" | "succeeded" | "failed" | "uncertain" | "paused";
     progress: number;
     error?: string;
     images: GeneratedImage[];
 };
 
 export class ImageRequestRejectedError extends Error {}
+export class ImageQueryTransientError extends Error {}
+
+function imageQueryError(error: unknown): never {
+    if (axios.isCancel(error)) throw error;
+    if (axios.isAxiosError(error) && (!error.response || [408, 429].includes(error.response.status) || error.response.status >= 500)) {
+        throw new ImageQueryTransientError("图片任务查询暂不可用，后台任务仍会继续，可重新查询");
+    }
+    throw new Error(apiRequestError(error, "查询图片任务失败"));
+}
 
 type UserImageUploadData = {
     mediaId?: string;
@@ -79,7 +88,7 @@ function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
     return {
         id: item.id,
         clientRequestId: typeof item.clientRequestId === "string" ? item.clientRequestId : "",
-        status: item.status === "queued" || item.status === "submitting" || item.status === "running" || item.status === "succeeded" || item.status === "failed" || item.status === "uncertain" ? item.status : "failed",
+        status: item.status === "queued" || item.status === "submitting" || item.status === "running" || item.status === "succeeded" || item.status === "failed" || item.status === "uncertain" || item.status === "paused" ? item.status : "failed",
         progress: typeof item.progress === "number" ? item.progress : 0,
         error: typeof item.error === "string" ? item.error : undefined,
         images,
@@ -219,20 +228,28 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     }
 }
 
-export async function getImageGenerationTask(taskId: string): Promise<ImageGenerationTask> {
+export async function getImageGenerationTask(taskId: string, signal?: AbortSignal): Promise<ImageGenerationTask> {
     try {
-        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/${encodeURIComponent(taskId)}`));
+        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/${encodeURIComponent(taskId)}`), { timeout: 20_000, signal });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(apiRequestError(error, "查询图片任务失败"));
+        imageQueryError(error);
     }
 }
 
-export async function getImageGenerationTaskByClientRequest(clientRequestId: string): Promise<ImageGenerationTask> {
+export async function getImageGenerationTaskByClientRequest(clientRequestId: string, signal?: AbortSignal): Promise<ImageGenerationTask> {
     try {
-        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/by-client-request/${encodeURIComponent(clientRequestId)}`));
+        const response = await axios.get<ImageApiResponse>(aiApiPath(`/images/tasks/by-client-request/${encodeURIComponent(clientRequestId)}`), { timeout: 20_000, signal });
         return parseImageTask(response.data);
     } catch (error) {
-        throw new Error(apiRequestError(error, "查询图片任务失败"));
+        imageQueryError(error);
+    }
+}
+
+export async function resumeImageGenerationTask(taskId: string, signal?: AbortSignal): Promise<ImageGenerationTask> {
+    try {
+        return parseImageTask((await axios.post<ImageApiResponse>(aiApiPath(`/images/tasks/${encodeURIComponent(taskId)}/resume`), undefined, { timeout: 20_000, signal })).data);
+    } catch (error) {
+        imageQueryError(error);
     }
 }

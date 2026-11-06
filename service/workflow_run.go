@@ -322,17 +322,28 @@ func GetWorkflowRun(_ context.Context, user PortalUser, id string) (WorkflowRunD
 		return WorkflowRunDetail{}, err
 	}
 	videoTaskIDs := make([]string, 0)
+	imageTaskIDs := make([]string, 0)
 	for _, attempt := range record.Attempts {
 		if attempt.Status == "uncertain" && attempt.TaskType == "video" && strings.TrimSpace(attempt.TaskID) != "" {
 			videoTaskIDs = append(videoTaskIDs, attempt.TaskID)
+		}
+		if attempt.Status == "uncertain" && attempt.TaskType == "image" && strings.TrimSpace(attempt.TaskID) != "" {
+			imageTaskIDs = append(imageTaskIDs, attempt.TaskID)
 		}
 	}
 	resumableVideoTaskIDs, err := repository.ListResumableVideoGenerationTaskIDs(user.UID, videoTaskIDs)
 	if err != nil {
 		return WorkflowRunDetail{}, err
 	}
+	resumableImageTaskIDs, err := repository.ListResumableImageGenerationTaskIDs(user.UID, imageTaskIDs)
+	if err != nil {
+		return WorkflowRunDetail{}, err
+	}
 	for index := range record.Attempts {
-		if _, resumable := resumableVideoTaskIDs[record.Attempts[index].TaskID]; resumable {
+		attempt := &record.Attempts[index]
+		_, videoResumable := resumableVideoTaskIDs[attempt.TaskID]
+		_, imageResumable := resumableImageTaskIDs[attempt.TaskID]
+		if attempt.TaskType == "video" && videoResumable || attempt.TaskType == "image" && imageResumable {
 			record.Attempts[index].ResumeTaskID = record.Attempts[index].TaskID
 		}
 	}

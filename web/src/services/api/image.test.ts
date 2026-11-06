@@ -3,7 +3,7 @@ import test from "node:test";
 
 import axios from "axios";
 
-import { getImageGenerationTask, ImageRequestRejectedError, requestEdit, requestGeneration, uploadUserImage } from "./image";
+import { getImageGenerationTask, ImageQueryTransientError, ImageRequestRejectedError, resumeImageGenerationTask, requestEdit, requestGeneration, uploadUserImage } from "./image";
 
 type AxiosPost = typeof axios.post;
 
@@ -14,6 +14,36 @@ function withAxiosPost(handler: AxiosPost) {
         axios.post = original;
     };
 }
+
+test("image task queries retain paused status, time out and support cancellation", async () => {
+    const original = axios.get;
+    const signal = new AbortController().signal;
+    try {
+        axios.get = (async (_url: string, options: { signal?: AbortSignal; timeout?: number }) => {
+            assert.equal(options.signal, signal);
+            assert.equal(options.timeout, 20_000);
+            return { data: { code: 0, data: { id: "original", status: "paused", images: [] } } };
+        }) as typeof axios.get;
+        assert.equal((await getImageGenerationTask("original", signal)).status, "paused");
+        axios.get = (async () => { throw { isAxiosError: true, response: { status: 503 } }; }) as typeof axios.get;
+        await assert.rejects(getImageGenerationTask("original", signal), ImageQueryTransientError);
+        const cancelled = new axios.CanceledError("cancelled");
+        axios.get = (async () => { throw cancelled; }) as typeof axios.get;
+        await assert.rejects(getImageGenerationTask("original", signal), (error: unknown) => error === cancelled);
+    } finally { axios.get = original; }
+});
+
+test("image resume sends no new generation request", async () => {
+    const signal = new AbortController().signal;
+    const restore = withAxiosPost((async (url: string, body: unknown, options: { signal?: AbortSignal }) => {
+        assert.ok(url.endsWith("/images/tasks/original/resume"));
+        assert.equal(body, undefined);
+        assert.equal(options.signal, signal);
+        return { data: { code: 0, data: { id: "original", status: "running", images: [] } } };
+    }) as AxiosPost);
+    try { assert.equal((await resumeImageGenerationTask("original", signal)).id, "original"); }
+    finally { restore(); }
+});
 
 test("uploads directly to OSS then confirms a user image", async () => {
     const calls: string[] = [];

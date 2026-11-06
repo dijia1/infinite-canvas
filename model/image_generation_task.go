@@ -13,6 +13,7 @@ const (
 	ImageTaskQueued     ImageGenerationTaskStatus = "queued"
 	ImageTaskSubmitting ImageGenerationTaskStatus = "submitting"
 	ImageTaskRunning    ImageGenerationTaskStatus = "running"
+	ImageTaskPaused     ImageGenerationTaskStatus = "paused"
 	ImageTaskSucceeded  ImageGenerationTaskStatus = "succeeded"
 	ImageTaskFailed     ImageGenerationTaskStatus = "failed"
 	ImageTaskUncertain  ImageGenerationTaskStatus = "uncertain"
@@ -47,6 +48,8 @@ type ImageGenerationTask struct {
 	ProviderTaskID      string                    `json:"-" gorm:"index"`
 	ClaimID             string                    `json:"-" gorm:"index"`
 	LeaseUntil          *time.Time                `json:"-" gorm:"index"`
+	Deadline            *time.Time                `json:"-"`
+	PollFailures        int                       `json:"-" gorm:"not null;default:0"`
 	Progress            int                       `json:"progress"`
 	ResultMediaIDsJSON  string                    `json:"-"`
 	ErrorMessage        string                    `json:"error,omitempty"`

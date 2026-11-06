@@ -5,6 +5,7 @@ import { createCanvasGenerationController } from "./use-canvas-generation.ts";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
 import type { AiConfig } from "@/lib/ai-config";
 import type { ImageGenerationTask } from "@/services/api/image";
+import { ImageQueryTransientError } from "@/services/api/image";
 import type { VideoGenerationTask } from "@/services/api/video";
 import type { StoredCanvasImage } from "@/services/canvas-image-hydration";
 
@@ -101,6 +102,7 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
             calls.edit++;
             return completedTask(`edit-${calls.edit}`, `edit-media-${calls.edit}`);
         },
+        resumeImageTask: async () => { throw new Error("unexpected task resume"); },
         getImageTask: async () => {
             throw new Error("unexpected task polling");
         },
@@ -713,6 +715,77 @@ test("video paused task retries resume same task without a new generation", asyn
     assert.equal(calls.video, 0);
     assert.equal(nodesRef.current[0].metadata?.mediaId, "media");
 });
+test("image paused task resumes its original ID without another generation", async () => {
+    const source = node("image", CanvasNodeType.Image, { status: "error", imageTaskId: "existing-image" });
+    const resumed: string[] = [];
+    const { controller, calls, nodesRef } = setup([source], [], {
+        getImageTask: async () => ({ id: "existing-image", clientRequestId: "", status: "paused", progress: 0, images: [] }),
+        resumeImageTask: async (id: string) => {
+            resumed.push(id);
+            return { id, clientRequestId: "", status: "succeeded", progress: 100, images: [{ id: "result", dataUrl: "data:image/png;base64,result", mediaId: "original-media" }] };
+        },
+    });
+    await controller.retryNode(source);
+    assert.deepEqual(resumed, ["existing-image"]);
+    assert.equal(calls.generation + calls.edit, 0);
+    assert.equal(nodesRef.current[0].metadata?.mediaId, "original-media");
+});
+test("a paused image query cannot resume a task after leaving its canvas", async () => {
+    const pending = deferred<ImageGenerationTask>();
+    const source = node("image", CanvasNodeType.Image, { status: "error", imageTaskId: "original" });
+    let scope = "owner/project-a";
+    let resumed = 0;
+    const { controller } = setup([source], [], {
+        getSessionScope: () => scope,
+        getImageTask: () => pending.promise,
+        resumeImageTask: async () => { resumed++; throw new Error("must not resume another canvas"); },
+    });
+    const retry = controller.retryNode(source);
+    scope = "owner/project-b";
+    controller.stopTaskObservations();
+    pending.resolve({ id: "original", clientRequestId: "", status: "paused", progress: 0, images: [] });
+    await retry;
+    assert.equal(resumed, 0);
+});
+test("image observation retries transient queries and keeps the original task identity", async () => {
+    const originalTimer = globalThis.setTimeout;
+    const waits: number[] = [];
+    globalThis.setTimeout = ((callback: () => void, delay: number) => { waits.push(delay); queueMicrotask(callback); return 123; }) as unknown as typeof setTimeout;
+    try {
+        let queries = 0;
+        const { controller, nodesRef, calls } = setup([node("image", CanvasNodeType.Image, { status: "loading", imageTaskId: "original-image" })], [], {
+            getImageTask: async (id: string, signal: AbortSignal) => {
+                assert.equal(id, "original-image");
+                assert.equal(signal.aborted, false);
+                if (++queries === 1) throw new ImageQueryTransientError("temporary outage");
+                return { id, clientRequestId: "", status: "succeeded", progress: 100, images: [{ id: "result", dataUrl: "data:image/png;base64,result", mediaId: "recovered-media" }] };
+            },
+        });
+        controller.resumePendingImageTasks();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        assert.equal(queries, 2);
+        assert.deepEqual(waits, [2000]);
+        assert.equal(nodesRef.current[0].metadata?.mediaId, "recovered-media");
+        assert.equal(calls.generation + calls.edit, 0);
+        assert.deepEqual(calls.errors, []);
+    } finally { globalThis.setTimeout = originalTimer; }
+});
+test("leaving the canvas aborts image queries without writing a failure", async () => {
+    let signal: AbortSignal | undefined;
+    const { controller, nodesRef } = setup([node("image", CanvasNodeType.Image, { status: "loading", imageTaskId: "original" })], [], {
+        getImageTask: (_id: string, nextSignal: AbortSignal) => {
+            signal = nextSignal;
+            return new Promise((_resolve, reject) => nextSignal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
+        },
+    });
+    controller.resumePendingImageTasks();
+    assert.ok(signal);
+    controller.stopTaskObservations(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(signal.aborted, true);
+    assert.equal(nodesRef.current[0].metadata?.status, "loading");
+    assert.equal(nodesRef.current[0].metadata?.errorDetails, undefined);
+});
 test("video observation waits twelve seconds between local task queries", async () => {
     const original = globalThis.setTimeout;
     const waits: { delay: number; run: () => void }[] = [];
@@ -800,7 +873,7 @@ test("leaving canvas or deleting a video aborts its query without changing the t
         assert.equal(signal?.aborted, false);
         if (reason === "delete") nodesRef.current = [];
         if (reason === "scope") scope = "B";
-        controller.stopVideoObservations(reason === "leave");
+        controller.stopTaskObservations(reason === "leave");
         await new Promise<void>((resolve) => setImmediate(resolve));
         assert.equal(signal?.aborted, true);
         assert.equal(source.metadata?.status, "loading");
@@ -823,7 +896,7 @@ test("stopping video observation clears its waiting timer", async () => {
             requestVideoGeneration: async () => ({ id: "task", status: "running", progress: 0, resultMediaIds: [], videos: [] }),
         });
         await controller.generateNode("source", "video", "dance");
-        controller.stopVideoObservations(true);
+        controller.stopTaskObservations(true);
         await new Promise<void>((resolve) => setImmediate(resolve));
         assert.equal(cleared, 1);
         assert.equal(calls.errors.length, 0);

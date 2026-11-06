@@ -60,7 +60,8 @@ func TestImageWorkerDrainRetainsLeaseAndCompletesCurrentProviderCall(t *testing.
 		t.Fatal(err)
 	}
 	db, _ := repository.DB()
-	item := model.ImageGenerationTask{ID: newID("drain-image"), OwnerUID: newID("owner"), ClientRequestID: newID("request"), Mode: ImageTaskModeGeneration, Status: model.ImageTaskRunning, ProviderType: kind, ProviderTaskID: "original", ReferencesJSON: "[]", CreatedAt: "2000-01-01T00:00:00Z", UpdatedAt: now()}
+	waitingDeadline := time.Now().UTC().Add(time.Hour)
+	item := model.ImageGenerationTask{ID: newID("drain-image"), OwnerUID: newID("owner"), ClientRequestID: newID("request"), Mode: ImageTaskModeGeneration, Status: model.ImageTaskRunning, ProviderType: kind, ProviderTaskID: "original", ReferencesJSON: "[]", CreatedAt: "2000-01-01T00:00:00Z", UpdatedAt: now(), Deadline: &waitingDeadline}
 	if err := db.Create(&item).Error; err != nil {
 		t.Fatal(err)
 	}

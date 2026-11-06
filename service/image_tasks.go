@@ -84,6 +84,11 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		}
 		return imageTaskView(ctx, user, existing)
 	}
+	waitTimeout, err := imageTaskWaitTimeout()
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	deadline := time.Now().UTC().Add(waitTimeout)
 
 	provider, err := selectedImageTaskProvider(request.Mode, request.ProviderID)
 	if err != nil {
@@ -163,7 +168,7 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		ID: taskID, OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, RequestHashVersion: imageRequestHashVersion, RequestSchemaJSON: schemaJSON, Mode: request.Mode,
 		Status: status, ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config),
 		Prompt: request.Request.Prompt, Quality: strings.TrimSpace(request.Request.Quality), Size: strings.TrimSpace(request.Request.Size), Resolution: strings.TrimSpace(request.Request.Resolution), OutputFormat: request.Request.OutputFormat, Background: request.Request.Background, ProviderOptionsJSON: providerOptionsJSON, Count: 1,
-		Amount: amount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(),
+		Amount: amount, AmountRecorded: true, ReferencesJSON: string(inputsJSON), RequestSummary: requestSummary, OperationLogID: operationLogID, CreatedAt: now(), UpdatedAt: now(), Deadline: &deadline,
 	}
 	operation := model.OperationLog{
 		ID: operationLogID, ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...),
@@ -410,6 +415,22 @@ func GetImageTask(ctx context.Context, id string) (ImageTaskView, error) {
 		return ImageTaskView{}, safeMessageError{message: "图片任务不存在"}
 	}
 	return imageTaskView(ctx, user, item)
+}
+
+func ResumeImageGenerationTask(ctx context.Context, id string) (ImageTaskView, error) {
+	user, ok := PortalUserFromContext(ctx)
+	if !ok || strings.TrimSpace(user.UID) == "" {
+		return ImageTaskView{}, safeMessageError{message: "未经过 Portal Gateway 身份验证"}
+	}
+	timeout, err := imageTaskWaitTimeout()
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	global, _ := workflowConcurrency()
+	if err := repository.ResumeImageGenerationTask(id, user.UID, time.Now().UTC(), timeout, global); err != nil {
+		return ImageTaskView{}, generationResumeError(err)
+	}
+	return GetImageTask(ctx, id)
 }
 
 func GetImageTaskByClientRequest(ctx context.Context, clientRequestID string) (ImageTaskView, error) {

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiRequestError } from "@/services/api/request";
 import { resumeVideoTask } from "@/services/api/video";
+import { resumeImageGenerationTask } from "@/services/api/image";
 import { createWorkflowRun, fetchWorkflowRun, fetchWorkflowRunState, retryWorkflowOutput, stopWorkflowRun } from "@/services/api/workflows";
 import {
     clearPendingWorkflowRetryRequest,
@@ -381,12 +382,12 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
         [assertCurrent, ownerUID, updateCachedDetail, withOperation, workflowId],
     );
 
-    const resumeVideo = useCallback(
-        (taskID: string) => {
+    const resumeTask = useCallback(
+        (taskID: string, taskType: "image" | "video") => {
             const startedIdentity = identityRef.current;
             return withOperation(startedIdentity, async () => {
                 if (!ownerUID || !workflowId) throw new Error("流程尚未加载");
-                const task = await resumeVideoTask(taskID);
+                const task = await (taskType === "image" ? resumeImageGenerationTask(taskID) : resumeVideoTask(taskID));
                 assertCurrent(startedIdentity);
                 void queryClient.invalidateQueries({ queryKey: workflowRunOverviewQueryKey(ownerUID, workflowId) });
                 void queryClient.invalidateQueries({ queryKey: ["workflow-run", ownerUID, workflowId] });
@@ -416,7 +417,7 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
         start,
         retry,
         stop,
-        resumeVideo,
+        resumeTask,
         pendingByScope,
         pendingRetryKeys,
         loading: overviewQuery.isPending || detailQueries.some((query) => query.isPending) || operationCount > 0,

@@ -68,7 +68,7 @@ test("an aborted queued detail never consumes a request slot", async () => {
 test("resume video uses the original task ID and refreshes workflow state", async () => {
     const resumed: string[] = [];
     const invalidated: unknown[] = [];
-    const resumeVideo = sourceBehavior(sourceURL, {
+    const resumeTask = sourceBehavior(sourceURL, {
         useCallback: (callback: unknown) => callback,
         identityRef: { current: "owner/workflow" },
         withOperation: async (_identity: string, operation: () => Promise<unknown>) => operation(),
@@ -81,9 +81,9 @@ test("resume video uses the original task ID and refreshes workflow state", asyn
         assertCurrent: () => undefined,
         queryClient: { invalidateQueries: (value: unknown) => invalidated.push(value) },
         workflowRunOverviewQueryKey,
-    }).named("resumeVideo") as (taskID: string) => Promise<{ id: string }>;
+    }).named("resumeTask") as (taskID: string, taskType: "image" | "video") => Promise<{ id: string }>;
 
-    assert.deepEqual(await resumeVideo("original-video-task"), { id: "original-video-task" });
+    assert.deepEqual(await resumeTask("original-video-task", "video"), { id: "original-video-task" });
     assert.deepEqual(resumed, ["original-video-task"]);
     assert.deepEqual(invalidated, [
         { queryKey: workflowRunOverviewQueryKey("owner", "workflow") },

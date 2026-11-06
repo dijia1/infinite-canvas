@@ -245,6 +245,49 @@ func GetImageGenerationTaskByClientRequest(ownerUID, clientRequestID string) (mo
 	return item, err == nil, err
 }
 
+func ListResumableImageGenerationTaskIDs(owner string, taskIDs []string) (map[string]struct{}, error) {
+	result := make(map[string]struct{})
+	if len(taskIDs) == 0 {
+		return result, nil
+	}
+	db, err := DB()
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := db.Model(&model.ImageGenerationTask{}).
+		Where("owner_uid = ? AND id IN ? AND status = ? AND provider_task_id <> ''", owner, taskIDs, model.ImageTaskPaused).
+		Pluck("id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		result[id] = struct{}{}
+	}
+	return result, nil
+}
+
+func ResumeImageGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int) error {
+	db, err := DB()
+	if err != nil {
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := reserveWorkflowTaskCapacity(tx, "image", id, owner, globalLimit, current); err != nil {
+			return err
+		}
+		result := tx.Model(&model.ImageGenerationTask{}).
+			Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, model.ImageTaskPaused).
+			Updates(map[string]any{"status": model.ImageTaskRunning, "error_message": "", "poll_failures": 0, "deadline": current.Add(timeout), "lease_until": nil, "claim_id": "", "updated_at": current.Format(time.RFC3339Nano)})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("图片任务不能恢复")
+		}
+		return nil
+	})
+}
+
 func ClaimNextImageGenerationTask(current time.Time, lease time.Duration) (model.ImageGenerationTask, bool, error) {
 	database, err := DB()
 	if err != nil {

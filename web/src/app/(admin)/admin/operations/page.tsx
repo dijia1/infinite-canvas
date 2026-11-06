@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Empty, Input, Pagination, Select, Spin, Tag } from "antd";
+import { Button, Empty, Input, Pagination, Select, Spin, Tag } from "antd";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useDeferredValue, useEffect, useState } from "react";
 
@@ -9,6 +9,7 @@ import { formatCNYAmount } from "@/lib/money";
 import { fetchOperationLogs, type OperationLog } from "@/services/api/operation-logs";
 
 import { generationStatusOptions, operationStatusPresentation } from "./operation-status";
+import { TaskResolutionDialog } from "./task-resolution-dialog";
 
 const PAGE_SIZE = 20;
 
@@ -26,6 +27,7 @@ const actionLabels: Record<string, string> = {
     image_generate: "图片生成",
     image_edit: "图片编辑",
     video_generate: "视频生成",
+    generation_task_resolution: "核对生成任务",
     private_image_upload: "上传私人图片",
     private_image_delete: "删除私人图片",
     public_image_upload: "上传公共图片",
@@ -102,7 +104,7 @@ function AdminOperationsContent() {
             ) : query.data?.items.length ? (
                 <div className="space-y-3">
                     {query.data.items.map((item) => (
-                        <OperationLogItem key={item.id} item={item} />
+                        <OperationLogItem key={item.id} item={item} onResolved={() => void query.refetch()} />
                     ))}
                 </div>
             ) : (
@@ -113,7 +115,11 @@ function AdminOperationsContent() {
     );
 }
 
-function OperationLogItem({ item }: { item: OperationLog }) {
+function OperationLogItem({ item, onResolved }: { item: OperationLog; onResolved: () => void }) {
+    const [resolving, setResolving] = useState(false);
+    const task = item.image || item.video;
+    const kind = item.image ? "image" : "video";
+    const needsResolution = task?.status === "uncertain" || task?.status === "paused";
     return (
         <article className="rounded-lg border border-stone-200 bg-background p-4 dark:border-stone-800">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -154,9 +160,11 @@ function OperationLogItem({ item }: { item: OperationLog }) {
                     ) : null}
                     {item.requestSummary ? <OperationRequestSummary summary={item.requestSummary} lifecycle={item.targetType === "media_lifecycle"} /> : null}
                     {item.errorMessage ? <p className="mt-2 text-sm text-red-600 dark:text-red-400">{item.errorMessage}</p> : null}
+                    {needsResolution ? <Button className="mt-3" size="small" onClick={() => setResolving(true)}>核对任务</Button> : null}
                 </div>
                 <time className="shrink-0 text-xs text-stone-500 dark:text-stone-400">{new Date(item.createdAt).toLocaleString()}</time>
             </div>
+            {resolving && task ? <TaskResolutionDialog kind={kind} taskId={task.taskId} providerTaskId={task.providerTaskId} onClose={() => setResolving(false)} onResolved={onResolved} /> : null}
         </article>
     );
 }

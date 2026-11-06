@@ -201,8 +201,9 @@ func ResumeVideoGenerationTask(ctx context.Context, id string) (VideoTaskView, e
 	if err != nil {
 		return VideoTaskView{}, err
 	}
-	if err := repository.ResumeVideoGenerationTask(id, user.UID, time.Now().UTC(), timeout); err != nil {
-		return VideoTaskView{}, err
+	global, _ := workflowConcurrency()
+	if err := repository.ResumeVideoGenerationTask(id, user.UID, time.Now().UTC(), timeout, global); err != nil {
+		return VideoTaskView{}, generationResumeError(err)
 	}
 	return GetVideoGenerationTask(ctx, id)
 }

@@ -147,19 +147,23 @@ export function isRetryableImageOutput(slot: WorkflowOutputSlot, output: Workflo
     return slot.type === "image" && output?.status === "failed" && Boolean(run && !run.stopRequested && run.status !== "stopped");
 }
 
-export function workflowVideoResumeTaskID(detail: WorkflowRunDetail, output: WorkflowOutputExecution) {
+export function workflowResumeTaskID(detail: WorkflowRunDetail, output: WorkflowOutputExecution) {
     if (detail.run.status !== "attention_required" || output.status !== "uncertain") return undefined;
     const node = detail.graph.nodes.find((item) => item.id === output.nodeId);
     const slot = node?.outputs?.find((item) => item.id === output.slotId);
-    if (node?.type !== "video_generation" || slot?.type !== "video") return undefined;
-    const attempt = detail.attempts.find((item) => item.nodeId === output.nodeId && item.slotId === output.slotId && item.attempt === output.attempt && item.status === "uncertain" && item.taskType === "video");
+    const type = node?.type === "video_generation" ? "video" : node?.type === "image_generation" ? "image" : undefined;
+    if (!type || slot?.type !== type) return undefined;
+    const attempt = detail.attempts.find((item) => item.nodeId === output.nodeId && item.slotId === output.slotId && item.attempt === output.attempt && item.status === "uncertain" && item.taskType === type);
     return attempt?.resumeTaskId?.trim() || undefined;
 }
 
 export function workflowRunAttentionText(detail: WorkflowRunDetail) {
-    return detail.outputs.some((output) => Boolean(workflowVideoResumeTaskID(detail, output)))
-        ? "视频任务需要确认。请恢复原任务，页面会继续刷新同一任务的状态，不会创建新的生成任务。"
-        : "生成任务需要确认。页面会继续刷新原任务状态，不会创建新的生成任务。";
+    const uncertain = detail.outputs.filter((output) => output.status === "uncertain");
+    const resumable = uncertain.filter((output) => Boolean(workflowResumeTaskID(detail, output)));
+    return [
+        resumable.length ? "任务已暂停。请恢复原任务以继续检查，系统不会重新提交生成。" : "",
+        uncertain.length > resumable.length ? "提交结果需要管理员核对。请联系管理员在操作记录中绑定原供应商任务或结案，勿重复生成。" : "",
+    ].filter(Boolean).join(" ");
 }
 
 

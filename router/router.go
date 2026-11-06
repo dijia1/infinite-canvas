@@ -56,6 +56,7 @@ func New() *gin.Engine {
 	v1.POST("/workflow-runs/:id/retry", func(c *gin.Context) { handler.RetryWorkflowRunOutput(c.Writer, c.Request, c.Param("id")) })
 	v1.DELETE("/workflow-runs/:id", func(c *gin.Context) { handler.DeleteWorkflowRun(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/images/tasks/:id", func(c *gin.Context) { handler.AIImageTask(c.Writer, c.Request, c.Param("id")) })
+	v1.POST("/images/tasks/:id/resume", func(c *gin.Context) { handler.AIImageResume(c.Writer, c.Request, c.Param("id")) })
 	v1.GET("/images/tasks/by-client-request/:id", func(c *gin.Context) { handler.AIImageTaskByClientRequest(c.Writer, c.Request, c.Param("id")) })
 	v1.POST("/media/images", gin.WrapF(handler.UploadImage))
 	v1.POST("/media/upload-intents", gin.WrapF(handler.CreateMediaUploadIntent))
@@ -89,6 +90,9 @@ func New() *gin.Engine {
 	admin.POST("/settings", gin.WrapF(handler.AdminSaveSettings))
 	admin.GET("/ai/provider-types", gin.WrapF(handler.AdminAIProviderTypes))
 	admin.GET("/operation-logs", gin.WrapF(handler.AdminOperationLogs))
+	admin.POST("/generation-tasks/:kind/:id/resolve", func(c *gin.Context) {
+		handler.AdminResolveGenerationTask(c.Writer, c.Request, c.Param("kind"), c.Param("id"))
+	})
 	admin.GET("/members", gin.WrapF(handler.AdminPortalMembers))
 	admin.PATCH("/members/:uid/app-role", func(c *gin.Context) {
 		handler.AdminSetPortalMemberAppRole(c.Writer, c.Request, c.Param("uid"))

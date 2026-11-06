@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
 	"net"
+
+	"github.com/basketikun/infinite-canvas/repository"
 )
 
 func SafeMessage(err error) (string, bool) {
@@ -14,6 +16,17 @@ func SafeMessage(err error) (string, bool) {
 		return safe.SafeMessage(), true
 	}
 	return "", false
+}
+
+func generationResumeError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrWorkflowCapacity):
+		return safeMessageError{message: "当前流程生成容量已满，请稍后恢复原任务"}
+	case errors.Is(err, repository.ErrGenerationTaskBusy):
+		return safeMessageError{message: "任务状态正在更新，请稍后恢复原任务"}
+	default:
+		return err
+	}
 }
 
 // TaskErrorCategory omits raw SDK errors, signed URLs and credentials.

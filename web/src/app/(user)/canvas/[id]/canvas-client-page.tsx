@@ -13,7 +13,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ImageIcon, Images, List, Plus, Redo2, Settings2, Trash2, Undo2, Upload, Video } from "lucide-react";
 import { ImageDownloadProgress, useImageDownloads } from "@/components/image-download-progress";
 
-import { getImageGenerationTask, getImageGenerationTaskByClientRequest, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
+import { getImageGenerationTask, getImageGenerationTaskByClientRequest, resumeImageGenerationTask, requestEdit, requestGeneration, uploadUserImage } from "@/services/api/image";
 import { importCanvasPublicImages } from "@/services/api/canvas-projects";
 import { canApplyPublicImageMigration, hasPublicImageMigrationCandidates, normalizePublicImageReferences } from "../utils/canvas-public-image-migration";
 import { fetchPublicImageAccess, importPublicImage } from "@/services/api/public-images";
@@ -838,6 +838,7 @@ function InfiniteCanvasPage() {
         requestEdit,
         getImageTask: getImageGenerationTask,
         getImageTaskByClientRequest: getImageGenerationTaskByClientRequest,
+        resumeImageTask: resumeImageGenerationTask,
         requestVideoGeneration,
         uploadImage,
         uploadMediaFile,
