@@ -49,6 +49,7 @@ func TestImageTaskPausesAfterFiveFailuresAndResumesOnlyOriginalTask(t *testing.T
 	item := recoveryImageFixture(t, provider)
 	db, _ := repository.DB()
 	for failure := 1; failure <= 5; failure++ {
+		releasedAt := time.Now().UTC()
 		executeImageTask(context.Background(), item)
 		stored, _, err := repository.GetImageGenerationTask(item.ID)
 		if err != nil || stored.PollFailures != failure || stored.ProviderTaskID != item.ProviderTaskID || stored.FinishedAt != "" {
@@ -62,6 +63,10 @@ func TestImageTaskPausesAfterFiveFailuresAndResumesOnlyOriginalTask(t *testing.T
 		}
 		if stored.Status != model.ImageTaskRunning || stored.LeaseUntil == nil {
 			t.Fatalf("retry state=%+v", stored)
+		}
+		wantDelay := time.Duration(failure) * 12 * time.Second
+		if stored.LeaseUntil.Before(releasedAt.Add(wantDelay-time.Millisecond)) || stored.LeaseUntil.After(time.Now().UTC().Add(wantDelay)) {
+			t.Fatalf("failure %d retry lease=%v, want delay=%v", failure, stored.LeaseUntil, wantDelay)
 		}
 		lease := time.Now().UTC().Add(time.Minute)
 		if err := db.Model(&stored).Updates(map[string]any{"claim_id": "retry-claim", "lease_until": lease}).Error; err != nil {
@@ -84,6 +89,27 @@ func TestImageTaskPausesAfterFiveFailuresAndResumesOnlyOriginalTask(t *testing.T
 	}
 	if provider.createCalls != 0 || provider.pollCalls != 5 {
 		t.Fatalf("create=%d query=%d", provider.createCalls, provider.pollCalls)
+	}
+}
+
+func TestInterruptedImageTaskKeepsFailuresAndUsesNormalPollingDelay(t *testing.T) {
+	provider := &recoveryImageProvider{query: func(context.Context, string) (ai.ImageTask, error) {
+		t.Fatal("interrupted task contacted the supplier")
+		return ai.ImageTask{}, nil
+	}}
+	item := recoveryImageFixture(t, provider)
+	item.PollFailures = 3
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	releasedAt := time.Now().UTC()
+	executeImageTask(ctx, item)
+	stored, found, err := repository.GetImageGenerationTask(item.ID)
+	if err != nil || !found || stored.Status != model.ImageTaskRunning || stored.PollFailures != 3 || stored.LeaseUntil == nil {
+		t.Fatalf("interrupted task=%+v err=%v", stored, err)
+	}
+	wantDelay := 2 * time.Second
+	if stored.LeaseUntil.Before(releasedAt.Add(wantDelay-time.Millisecond)) || stored.LeaseUntil.After(time.Now().UTC().Add(wantDelay)) {
+		t.Fatalf("interruption retry lease=%v, want delay=%v", stored.LeaseUntil, wantDelay)
 	}
 }
 

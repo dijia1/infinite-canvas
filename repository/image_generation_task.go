@@ -202,7 +202,10 @@ func ListTerminalImageGenerationTasksWithInputs() ([]model.ImageGenerationTask, 
 		return nil, err
 	}
 	var items []model.ImageGenerationTask
-	err = database.Distinct("image_generation_tasks.*").Joins("JOIN image_generation_task_inputs ON image_generation_task_inputs.task_id = image_generation_tasks.id").Where("image_generation_tasks.status IN ?", []model.ImageGenerationTaskStatus{model.ImageTaskSucceeded, model.ImageTaskFailed}).Find(&items).Error
+	err = database.Select("id", "references_json").
+		Where("status IN ?", []model.ImageGenerationTaskStatus{model.ImageTaskSucceeded, model.ImageTaskFailed}).
+		Where("EXISTS (SELECT 1 FROM image_generation_task_inputs WHERE task_id = image_generation_tasks.id) OR COALESCE(references_json, '') NOT IN ?", []string{"", "[]", "null"}).
+		Find(&items).Error
 	return items, err
 }
 

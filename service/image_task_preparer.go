@@ -310,6 +310,16 @@ func imageObjectPreconditionFailed(err error) bool {
 	return errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusPreconditionFailed
 }
 
+// Task-owned inputs and prefix snapshots are removed only after the terminal
+// state commits. Keep the records on cleanup failure so retention can retry.
+func cleanupImageTaskResources(ctx context.Context, item model.ImageGenerationTask) error {
+	inputs, inputErr := imageTaskInputs(item)
+	if inputErr == nil {
+		inputErr = DeleteImageTaskInputs(ctx, inputs)
+	}
+	return errors.Join(inputErr, cleanupImageTaskSnapshotPrefix(ctx, item.ID))
+}
+
 func cleanupImageTaskSnapshotPrefix(ctx context.Context, taskID string) error {
 	store, err := taskInputStoreFactory()
 	if err != nil {

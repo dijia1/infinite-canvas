@@ -478,7 +478,7 @@ func TestExpiredImageTaskWorkerCleansPreparedResultWithoutPublishingMedia(t *tes
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	completeImageTaskResults(canceled, item, nil, []ai.ImageResult{{Data: tinyPNG, ContentType: "image/png"}})
+	completeImageTaskResults(canceled, item, []ai.ImageResult{{Data: tinyPNG, ContentType: "image/png"}})
 
 	database, err := repository.DB()
 	if err != nil {

@@ -17,6 +17,7 @@ import (
 
 const (
 	imageTaskPollInterval       = 2 * time.Second
+	imageTaskFailureRetryBase   = 12 * time.Second
 	defaultImageTaskTimeout     = 3 * time.Minute
 	defaultImageTaskWaitTimeout = 30 * time.Minute
 	imageTaskMaxPollFailures    = 5
@@ -305,7 +306,7 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 				}
 				return
 			}
-			completeImageTask(ctx, item, inputs, urls)
+			completeImageTask(ctx, item, urls)
 			return
 		}
 		if providerTaskID == "" {
@@ -348,7 +349,7 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 				}
 				return
 			}
-			completeImageTask(ctx, item, inputs, urls)
+			completeImageTask(ctx, item, urls)
 			return
 		}
 		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "poll_failures": 0, "error_message": "", "updated_at": now()}); err != nil {
@@ -440,11 +441,11 @@ func imageTaskTerminalResult(task ai.ImageTask) ([]string, error, bool) {
 	}
 }
 
-func completeImageTask(ctx context.Context, item model.ImageGenerationTask, inputs []ImageTaskInput, urls []string) {
-	completeImageTaskResults(ctx, item, inputs, providerImageResults(urls))
+func completeImageTask(ctx context.Context, item model.ImageGenerationTask, urls []string) {
+	completeImageTaskResults(ctx, item, providerImageResults(urls))
 }
 
-func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTask, inputs []ImageTaskInput, results []ai.ImageResult) {
+func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTask, results []ai.ImageResult) {
 	userContext := WithPortalUser(ctx, PortalUser{UID: item.OwnerUID})
 	prepared, err := prepareImageTaskResultMedia(userContext, results)
 	if err != nil {
@@ -468,11 +469,8 @@ func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTas
 		}
 		return
 	}
-	if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-		log.Printf("image task %s input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
-	}
-	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-		log.Printf("image task %s snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
+	if err := cleanupImageTaskResources(ctx, item); err != nil {
+		log.Printf("image task %s resource cleanup deferred category=%s", item.ID, TaskErrorCategory(err))
 	}
 }
 
@@ -496,14 +494,8 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 		log.Printf("image task %s failure update failed: %v", item.ID, err)
 		return
 	}
-	inputs, inputErr := imageTaskInputs(item)
-	if inputErr == nil {
-		if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-			log.Printf("image task %s input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
-		}
-	}
-	if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-		log.Printf("image task %s snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
+	if err := cleanupImageTaskResources(ctx, item); err != nil {
+		log.Printf("image task %s resource cleanup deferred category=%s", item.ID, TaskErrorCategory(err))
 	}
 	updateImageTaskOperationLog(item, model.OperationStatusFailure, nil, message)
 }
@@ -548,7 +540,10 @@ func releaseImageTask(item model.ImageGenerationTask, message string, failure bo
 		pauseImageTask(item, reason+"，已暂停，可继续检查原任务")
 		return
 	}
-	delay := imageTaskPollInterval * time.Duration(max(1, item.PollFailures))
+	delay := imageTaskPollInterval
+	if failure {
+		delay = imageTaskFailureRetryBase * time.Duration(item.PollFailures)
+	}
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
 		"status": model.ImageTaskRunning, "error_message": message, "claim_id": "", "lease_until": current.Add(delay), "poll_failures": item.PollFailures, "updated_at": current.Format(time.RFC3339Nano),
 	}); err != nil {
@@ -627,8 +622,8 @@ func cleanupImageTasks(ctx context.Context, current time.Time) {
 			if ctx.Err() != nil || workersStopping() {
 				return
 			}
-			if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-				log.Printf("image task %s periodic snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
+			if err := cleanupImageTaskResources(ctx, item); err != nil {
+				log.Printf("image task %s periodic resource cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 			}
 		}
 	}
@@ -641,16 +636,9 @@ func cleanupImageTasks(ctx context.Context, current time.Time) {
 		if ctx.Err() != nil || workersStopping() {
 			return
 		}
-		if err := cleanupImageTaskSnapshotPrefix(ctx, item.ID); err != nil {
-			log.Printf("image task %s retention snapshot cleanup failed category=%s", item.ID, TaskErrorCategory(err))
+		if err := cleanupImageTaskResources(ctx, item); err != nil {
+			log.Printf("image task %s retention resource cleanup failed category=%s", item.ID, TaskErrorCategory(err))
 			continue
-		}
-		inputs, inputErr := imageTaskInputs(item)
-		if inputErr == nil {
-			if err := DeleteImageTaskInputs(ctx, inputs); err != nil {
-				log.Printf("image task %s retention input cleanup failed category=%s", item.ID, TaskErrorCategory(err))
-				continue
-			}
 		}
 		if err := repository.DeleteImageGenerationTask(item.ID); err != nil {
 			log.Printf("image task %s retention delete failed: %v", item.ID, err)

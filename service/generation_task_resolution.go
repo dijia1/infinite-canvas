@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -67,5 +68,20 @@ func ResolveGenerationTask(ctx context.Context, kind, id string, input Generatio
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return safeMessageError{message: "生成任务不存在"}
 	}
-	return generationResumeError(err)
+	if err != nil {
+		return generationResumeError(err)
+	}
+	if kind == "image" && input.Action == "close" {
+		item, found, loadErr := repository.GetImageGenerationTask(id)
+		if loadErr != nil {
+			log.Printf("image task %s closed task cleanup lookup failed: %v", id, loadErr)
+		} else if found {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer cancel()
+			if cleanupErr := cleanupImageTaskResources(cleanupCtx, item); cleanupErr != nil {
+				log.Printf("image task %s closed task cleanup deferred category=%s", id, TaskErrorCategory(cleanupErr))
+			}
+		}
+	}
+	return nil
 }

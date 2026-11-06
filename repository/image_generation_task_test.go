@@ -91,6 +91,53 @@ func TestImageTaskTimeRangesCompareInstantsAcrossTimestampFormats(t *testing.T) 
 	}
 }
 
+func TestListTerminalImageGenerationTasksWithInputsIncludesLegacyAndExcludesActive(t *testing.T) {
+	db := useImageTaskTestDB(t)
+	fixtures := []struct {
+		id         string
+		status     model.ImageGenerationTaskStatus
+		references string
+		inputRows  int
+		want       bool
+	}{
+		{"prepared", model.ImageTaskSucceeded, "[]", 2, true},
+		{"legacy", model.ImageTaskFailed, `[{"objectKey":"legacy-task-input.png"}]`, 0, true},
+		{"paused", model.ImageTaskPaused, `[{"objectKey":"paused-input.png"}]`, 1, false},
+		{"uncertain", model.ImageTaskUncertain, `[{"objectKey":"uncertain-input.png"}]`, 1, false},
+		{"running", model.ImageTaskRunning, `[{"objectKey":"running-input.png"}]`, 1, false},
+		{"empty", model.ImageTaskFailed, "", 0, false},
+		{"empty-list", model.ImageTaskSucceeded, "[]", 0, false},
+		{"null-list", model.ImageTaskSucceeded, "null", 0, false},
+	}
+	for _, fixture := range fixtures {
+		item := model.ImageGenerationTask{ID: fixture.id, OwnerUID: "owner", ClientRequestID: fixture.id, Status: fixture.status, ReferencesJSON: fixture.references, ProviderConfig: "provider-secret", Prompt: "unused-prompt"}
+		if err := db.Create(&item).Error; err != nil {
+			t.Fatal(err)
+		}
+		for position := 0; position < fixture.inputRows; position++ {
+			if err := db.Create(&model.ImageGenerationTaskInput{ID: fixture.id + time.Duration(position).String(), TaskID: item.ID, Position: position}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	items, err := ListTerminalImageGenerationTasksWithInputs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]bool{}
+	for _, item := range items {
+		if byID[item.ID] || item.ProviderConfig != "" || item.Prompt != "" {
+			t.Fatalf("cleanup scan duplicated a task or loaded unrelated data: %+v", item)
+		}
+		byID[item.ID] = true
+	}
+	for _, fixture := range fixtures {
+		if byID[fixture.id] != fixture.want {
+			t.Fatalf("task %s selected=%v, want=%v", fixture.id, byID[fixture.id], fixture.want)
+		}
+	}
+}
+
 func TestCreateImageGenerationTaskWithOperationLogIsIdempotentPerOwnerAndClientRequest(t *testing.T) {
 	database := useImageTaskTestDB(t)
 	item := model.ImageGenerationTask{ID: "task-1", OwnerUID: "user-1", ClientRequestID: "client-1", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskQueued, OperationLogID: "operation-1", CreatedAt: "2026-08-24T10:00:00Z", UpdatedAt: "2026-08-24T10:00:00Z"}
