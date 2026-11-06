@@ -67,7 +67,7 @@ OSS 保存视频本体；Canvas 继续保存 metadata.mediaId，不保存签名�
 
 继续使用 GET /api/v1/media/:id/access，返回现有 url、previewUrl、expiresAt、duration 等字段。签发地址本身不执行 OSS 截帧，浏览器请求 previewUrl 时才处理。
 
-对 OSS 视频，previewUrl 使用固定规则：video/snapshot,t_<时间>,f_jpg,w_480。截帧时间默认 500 毫秒；有有效 duration 时，取 500 毫秒与视频时长一半的较小值，取非负整数。无可信时长时取 0。0.5 秒不保证完全避免黑屏。
+对 OSS 视频，previewUrl 使用固定规则：video/snapshot,t_0,f_jpg,w_480。默认截取第一帧作为封面，不随视频时长改变取帧时间。
 
 截帧规格由后端固定，前端不接受任意 process 或 OSS objectKey。封面权限与视频一致，不需要独立授权或媒体记录。同步截帧仅支持相应编码；MP4 扩展名不能保证编码受支持。
 

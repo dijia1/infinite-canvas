@@ -107,7 +107,7 @@ func TestConcurrentLegacyMediaBindingKeepsWinner(t *testing.T) {
 func TestOSSMediaSignaturesCarryVersionAndProcessing(t *testing.T) {
 	client := oss.NewClient(oss.LoadDefaultConfig().WithRegion("cn-hongkong").WithCredentialsProvider(credentials.NewStaticCredentialsProvider("test-id", "test-secret")))
 	store := &ossImageStore{public: client, bucket: "test", ttl: time.Hour}
-	for _, process := range []string{"", mediaPreviewProcess, videoSnapshotProcess(5)} {
+	for _, process := range []string{"", mediaPreviewProcess, mediaVideoPreviewProcess} {
 		for _, disposition := range []string{"", VideoDownloadDisposition("clip.mp4")} {
 			address, _, err := store.SignedMediaURL(context.Background(), "media.png", "null", process, disposition)
 			if err != nil {

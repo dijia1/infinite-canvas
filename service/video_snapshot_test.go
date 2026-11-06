@@ -8,13 +8,15 @@ import (
 	"time"
 )
 
-func TestVideoSnapshotProcess(t *testing.T) {
-	for _, row := range []struct {
-		duration float64
-		want     string
-	}{{5, "video/snapshot,t_500,f_jpg,w_480"}, {0.4, "video/snapshot,t_200,f_jpg,w_480"}, {0, "video/snapshot,t_0,f_jpg,w_480"}, {-1, "video/snapshot,t_0,f_jpg,w_480"}} {
-		if got := videoSnapshotProcess(row.duration); got != row.want {
-			t.Fatalf("%v: %s", row.duration, got)
+func TestVideoSnapshotUsesFirstFrame(t *testing.T) {
+	for _, duration := range []float64{5, 0.4, 0} {
+		store := &snapshotTestStore{}
+		access, err := mediaAccess(context.Background(), store, model.Media{ID: "video", ContentType: "video/mp4", Duration: duration})
+		if err != nil || access.URL == "" || access.PreviewURL == "" {
+			t.Fatalf("duration %v: unexpected access: %#v %v", duration, access, err)
+		}
+		if len(store.processes) != 2 || store.processes[1] != "video/snapshot,t_0,f_jpg,w_480" {
+			t.Fatalf("duration %v: unexpected signed process: %v", duration, store.processes)
 		}
 	}
 }
@@ -38,7 +40,7 @@ func TestVideoSnapshotSigningFailureKeepsPlayback(t *testing.T) {
 	if err != nil || access.URL == "" || access.PreviewURL != "" {
 		t.Fatalf("playback should survive poster failure: %#v %v", access, err)
 	}
-	if len(store.processes) != 2 || store.processes[1] != "video/snapshot,t_200,f_jpg,w_480" {
+	if len(store.processes) != 2 || store.processes[1] != "video/snapshot,t_0,f_jpg,w_480" {
 		t.Fatalf("unexpected signed process: %v", store.processes)
 	}
 }

@@ -31,6 +31,7 @@ import (
 const maxMediaBytes = 50 << 20
 const maxVideoBytes = 100 << 20
 const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
+const mediaVideoPreviewProcess = "video/snapshot,t_0,f_jpg,w_480"
 const mediaUploadIntentTTL = 15 * time.Minute
 
 type MediaAccess struct {
@@ -507,14 +508,6 @@ func isMissingImageObjectError(err error) bool {
 	return errors.As(err, &serviceError) && serviceError.StatusCode == http.StatusNotFound
 }
 
-func videoSnapshotProcess(duration float64) string {
-	millis := 0
-	if duration > 0 && !math.IsInf(duration, 0) && !math.IsNaN(duration) {
-		millis = int(math.Min(500, duration*500))
-	}
-	return fmt.Sprintf("video/snapshot,t_%d,f_jpg,w_480", millis)
-}
-
 func mediaAccess(ctx context.Context, store imageStore, item model.Media) (MediaAccess, error) {
 	sign := func(process string) (string, time.Time, error) { return store.SignedURL(ctx, item.ObjectKey, process) }
 	if versioned, ok := store.(mediaVersionStore); ok {
@@ -534,7 +527,7 @@ func mediaAccess(ctx context.Context, store imageStore, item model.Media) (Media
 	process := mediaPreviewProcess
 	video := strings.HasPrefix(item.ContentType, "video/")
 	if video {
-		process = videoSnapshotProcess(item.Duration)
+		process = mediaVideoPreviewProcess
 	}
 	previewURL, _, err := sign(process)
 	if err != nil {
