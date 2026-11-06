@@ -29,6 +29,7 @@ import (
 )
 
 const maxMediaBytes = 50 << 20
+const maxVideoBytes = 100 << 20
 const mediaPreviewProcess = "image/resize,w_320/quality,q_80/format,webp"
 const mediaUploadIntentTTL = 15 * time.Minute
 
@@ -50,6 +51,12 @@ type MediaUploadIntentInput struct {
 	ContentType string `json:"contentType"`
 	Bytes       int64  `json:"bytes"`
 	Intent      string `json:"intent"`
+}
+
+type MediaUploadCompletionInput struct {
+	Duration float64 `json:"duration"`
+	Width    int     `json:"width"`
+	Height   int     `json:"height"`
 }
 
 type MediaUploadIntentView struct {
@@ -147,7 +154,7 @@ func CreateMediaUploadIntent(ctx context.Context, user PortalUser, input MediaUp
 	return MediaUploadIntentView{Mode: "direct", ID: item.ID, UploadURL: uploadURL, ExpiresAt: signedExpiry}, nil
 }
 
-func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) (MediaAccess, bool, error) {
+func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string, input MediaUploadCompletionInput) (MediaAccess, bool, error) {
 	if user.UID == "" {
 		return MediaAccess{}, false, errors.New("未经过 Portal Gateway 身份验证")
 	}
@@ -165,6 +172,9 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 		access, err := MediaAccessURL(ctx, user, intent.CompletedMediaID)
 		return access, false, err
 	}
+	if intent.ContentType == "video/mp4" && (input.Duration <= 0 || math.IsNaN(input.Duration) || math.IsInf(input.Duration, 0) || input.Width <= 0 || input.Height <= 0) {
+		return MediaAccess{}, false, safeMessageError{message: "无法读取视频时长或尺寸，请重新选择视频"}
+	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, intent.ExpiresAt)
 	if err != nil || !time.Now().UTC().Before(expiresAt) {
 		return MediaAccess{}, false, safeMessageError{message: "上传请求已过期，请重新选择图片"}
@@ -180,14 +190,16 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 	if metadata.Bytes != intent.ExpectedBytes || normalizedImageContentType(metadata.ContentType) != intent.ContentType {
 		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
 	}
-	var prefix []byte
-	if versioned, ok := store.(versionedImageStore); ok && metadata.VersionID != "" && metadata.ETag != "" {
-		prefix, err = versioned.ReadPrefixVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag, 512)
-	} else {
-		prefix, err = store.ReadPrefix(ctx, intent.ObjectKey, 512)
-	}
-	if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
-		return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
+	if intent.ContentType != "video/mp4" {
+		var prefix []byte
+		if versioned, ok := store.(versionedImageStore); ok && metadata.VersionID != "" && metadata.ETag != "" {
+			prefix, err = versioned.ReadPrefixVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag, 512)
+		} else {
+			prefix, err = store.ReadPrefix(ctx, intent.ObjectKey, 512)
+		}
+		if err != nil || normalizedImageContentType(http.DetectContentType(prefix)) != intent.ContentType {
+			return MediaAccess{}, false, safeMessageError{message: "图片上传校验失败，请重新上传"}
+		}
 	}
 	source, err := uploadMediaSource([]string{intent.Intent})
 	if err != nil {
@@ -214,37 +226,12 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string) 
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Minute)
 		defer cancel()
-		// Copy to an immutable object before publishing media: the upload URL
-		// may remain writable until expiry after the completion call.
-		reader, err := func() (io.ReadCloser, error) {
-			if versioned, ok := store.(mediaVersionStore); ok {
-				return versioned.GetVersion(ctx, intent.ObjectKey, metadata.VersionID, metadata.ETag)
-			}
-			return store.Get(ctx, intent.ObjectKey)
-		}()
-		if err != nil {
-			return MediaAccess{}, false, err
-		}
-		file, err := spoolVideo(reader)
-		reader.Close()
-		if err != nil {
-			return MediaAccess{}, false, err
-		}
-		defer os.Remove(file.Name())
-		defer file.Close()
-		info, err := file.Stat()
-		if err != nil || info.Size() != intent.ExpectedBytes {
-			return MediaAccess{}, false, safeMessageError{message: "视频上传校验失败，请重新上传"}
-		}
-		item.Duration, item.Width, item.Height, err = probeVideoFile(ctx, file.Name())
-		if err != nil {
-			return MediaAccess{}, false, err
-		}
+		item.Duration, item.Width, item.Height = input.Duration, input.Width, input.Height
 		item.ObjectKey = intent.FinalObjectKey
 		expiry := time.Now().UTC().Add(24 * time.Hour)
 		item.ExpiresAt = &expiry
-		// Publish exactly the version just validated, without uploading the
-		// downloaded video again. The browser can still overwrite its upload key.
+		// Copy the HEAD-bound version inside OSS. Uploaded video bytes never
+		// pass through this server; the browser supplies playback metadata.
 		versioned, ok := store.(versionedImageStore)
 		if !ok {
 			return MediaAccess{}, false, safeMessageError{message: "视频上传需要支持版本的 OSS 存储"}
@@ -281,10 +268,13 @@ func validateMediaUploadIntentInput(input MediaUploadIntentInput) (model.MediaSo
 	if filename == "" || filename == "." {
 		return "", "", "", safeMessageError{message: "图片文件名无效"}
 	}
-	if input.Bytes <= 0 || input.Bytes > maxMediaBytes {
+	contentType := normalizedImageContentType(input.ContentType)
+	if input.Bytes <= 0 || input.Bytes > mediaSizeLimit(contentType) {
+		if contentType == "video/mp4" {
+			return "", "", "", safeMessageError{message: "视频大小无效，最大 100 MB"}
+		}
 		return "", "", "", safeMessageError{message: "图片大小无效"}
 	}
-	contentType := normalizedImageContentType(input.ContentType)
 	if source == model.MediaSourceMask && contentType != "image/png" {
 		return "", "", "", safeMessageError{message: "遮罩必须为 PNG 图片"}
 	}
@@ -293,6 +283,13 @@ func validateMediaUploadIntentInput(input MediaUploadIntentInput) (model.MediaSo
 		return "", "", "", safeMessageError{message: "图片格式无效"}
 	}
 	return source, filename, extension, nil
+}
+
+func mediaSizeLimit(contentType string) int64 {
+	if contentType == "video/mp4" {
+		return maxVideoBytes
+	}
+	return maxMediaBytes
 }
 
 var mediaUploadExtensions = map[string]string{

@@ -4,10 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,26 +17,21 @@ import (
 	"github.com/basketikun/infinite-canvas/repository"
 )
 
-func TestVideoUploadCompletionCopiesValidatedVersionWithoutReupload(t *testing.T) {
+func TestVideoUploadCompletionAndShareCopyInsideOSSWithoutDownload(t *testing.T) {
 	for _, rejectCopy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("reject-copy-%v", rejectCopy), func(t *testing.T) {
-			// The real ffprobe behavior has its own MP4 test. Stub only that
-			// executable here so copy/publication regressions run without FFmpeg.
-			bin := t.TempDir()
-			probe := "#!/bin/sh\nprintf '%s' '{\"format\":{\"duration\":\"1\"},\"streams\":[{\"width\":160,\"height\":90}]}'\n"
-			if err := os.WriteFile(filepath.Join(bin, "ffprobe"), []byte(probe), 0700); err != nil {
-				t.Fatal(err)
-			}
-			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-			fixture := append([]byte{0, 0, 0, 24}, []byte("ftypmp42")...)
-			fixture = append(fixture, make([]byte, 600)...)
-
+			const bytes = 80 << 20 // Exceeds the old image/video limit without allocating a large fixture.
 			source := newID("video-source") + ".mp4"
 			var mu sync.Mutex
-			copies, uploads := 0, 0
+			copies, uploads, downloads := 0, 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				mu.Lock()
 				defer mu.Unlock()
+				if r.Method == http.MethodGet {
+					downloads++
+					http.Error(w, "video downloads are forbidden", http.StatusBadRequest)
+					return
+				}
 				if r.Method == http.MethodPut {
 					if r.Header.Get("x-oss-copy-source") == "" {
 						uploads++
@@ -45,8 +39,12 @@ func TestVideoUploadCompletionCopiesValidatedVersionWithoutReupload(t *testing.T
 						return
 					}
 					copies++
-					if !strings.Contains(r.Header.Get("x-oss-copy-source"), source+"?versionId=source-version") || r.Header.Get("x-oss-copy-source-if-match") != "source-etag" {
-						t.Error("copy did not bind validated source version and ETag")
+					version, etag := "final-version", "final-etag"
+					if copies == 1 {
+						version, etag = "source-version", "source-etag"
+					}
+					if !strings.Contains(r.Header.Get("x-oss-copy-source"), "?versionId="+version) || r.Header.Get("x-oss-copy-source-if-match") != etag {
+						t.Error("copy did not bind source version and ETag")
 					}
 					body, _ := io.ReadAll(r.Body)
 					if len(body) != 0 {
@@ -67,23 +65,13 @@ func TestVideoUploadCompletionCopiesValidatedVersionWithoutReupload(t *testing.T
 				if isSource {
 					version, etag = "source-version", "source-etag"
 				}
-				if r.Method == http.MethodGet && r.URL.Query().Get("versionId") != version {
-					t.Error("read did not bind source version")
-				}
 				if !isSource && r.Method == http.MethodHead && r.URL.Query().Get("versionId") != version {
 					t.Error("final HEAD did not bind copy result version")
 				}
 				w.Header().Set("x-oss-version-id", version)
 				w.Header().Set("ETag", etag)
 				w.Header().Set("Content-Type", "video/mp4")
-				data := fixture
-				if r.Header.Get("Range") != "" && len(data) > 512 {
-					data = data[:512]
-				}
-				w.Header().Set("Content-Length", fmt.Sprint(len(data)))
-				if r.Method == http.MethodGet {
-					w.Write(data)
-				}
+				w.Header().Set("Content-Length", fmt.Sprint(bytes))
 			}))
 			defer server.Close()
 			previous := config.Cfg
@@ -97,11 +85,12 @@ func TestVideoUploadCompletionCopiesValidatedVersionWithoutReupload(t *testing.T
 			config.Cfg.OSSAccessKeySecret = "fake"
 			config.Cfg.OSSSignedURLTTL = "15m"
 			user := PortalUser{UID: newID("video-owner")}
-			intent := model.MediaUploadIntent{ID: newID("video-upload"), OwnerUID: user.UID, ObjectKey: source, Filename: "input.mp4", ContentType: "video/mp4", ExpectedBytes: int64(len(fixture)), Intent: "canvas", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
+			intent := model.MediaUploadIntent{ID: newID("video-upload"), OwnerUID: user.UID, ObjectKey: source, Filename: "input.mp4", ContentType: "video/mp4", ExpectedBytes: bytes, Intent: "canvas", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
 			if err := repository.SaveMediaUploadIntent(intent); err != nil {
 				t.Fatal(err)
 			}
-			access, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID)
+			access, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, MediaUploadCompletionInput{Duration: 16.25, Width: 720, Height: 1280})
+			expectedCopies := 1
 			if rejectCopy {
 				if err == nil || created {
 					t.Fatal("failed copy was published")
@@ -115,19 +104,43 @@ func TestVideoUploadCompletionCopiesValidatedVersionWithoutReupload(t *testing.T
 					t.Fatalf("complete: %v", err)
 				}
 				item, found, err := repository.GetMedia(access.MediaID)
-				if err != nil || !found || item.ObjectVersionID != "final-version" || item.ObjectETag != "final-etag" || access.Duration != 1 || access.Width != 160 {
+				if err != nil || !found || item.ObjectVersionID != "final-version" || item.ObjectETag != "final-etag" || access.Duration != 16.25 || access.Width != 720 || access.Height != 1280 || access.Bytes != bytes {
 					t.Fatalf("wrong bound video: %+v %v", item, err)
 				}
-				again, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID)
+				again, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, MediaUploadCompletionInput{})
 				if err != nil || created || again.MediaID != access.MediaID {
 					t.Fatalf("completion replay: %+v %v", again, err)
 				}
+				store, err := newImageStore()
+				if err != nil {
+					t.Fatal(err)
+				}
+				shared, err := copyCanvasShareMedia(context.Background(), store, item, newID("video-recipient"))
+				if err != nil || shared.Bytes != bytes || shared.Duration != item.Duration || shared.Width != item.Width || shared.Height != item.Height {
+					t.Fatalf("large video share: %+v %v", shared, err)
+				}
+				expectedCopies++
 			}
 			mu.Lock()
 			defer mu.Unlock()
-			if uploads != 0 || copies != 1 {
-				t.Fatalf("copies=%d full uploads=%d", copies, uploads)
+			if uploads != 0 || downloads != 0 || copies != expectedCopies {
+				t.Fatalf("copies=%d full uploads=%d downloads=%d", copies, uploads, downloads)
 			}
 		})
+	}
+}
+
+func TestVideoUploadCompletionRejectsInvalidBrowserMetadata(t *testing.T) {
+	user := PortalUser{UID: newID("video-owner")}
+	intent := model.MediaUploadIntent{ID: newID("video-upload"), OwnerUID: user.UID, ObjectKey: "video.mp4", ContentType: "video/mp4", ExpectedBytes: 100, Intent: "canvas", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
+	if err := repository.SaveMediaUploadIntent(intent); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []MediaUploadCompletionInput{
+		{}, {Duration: -1, Width: 720, Height: 1280}, {Duration: math.NaN(), Width: 720, Height: 1280}, {Duration: math.Inf(1), Width: 720, Height: 1280}, {Duration: 5, Width: 0, Height: 1280}, {Duration: 5, Width: 720, Height: -1},
+	} {
+		if _, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, input); err == nil || created || !strings.Contains(err.Error(), "时长或尺寸") {
+			t.Fatalf("invalid metadata accepted: %+v, %v", input, err)
+		}
 	}
 }

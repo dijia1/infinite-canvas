@@ -254,11 +254,10 @@ func resolveVideoTaskInputs(ctx context.Context, user PortalUser, request Create
 				return result, safeMessageError{message: "参考素材类型不匹配"}
 			}
 			if group == 1 {
-				seconds, _, _, err := probeStoredVideo(ctx, store, item.ObjectKey)
-				if err != nil {
-					return result, err
+				if item.Duration <= 0 {
+					return result, safeMessageError{message: "参考视频缺少时长信息，请重新上传"}
 				}
-				duration += seconds
+				duration += item.Duration
 				if duration > 15.000001 {
 					return result, safeMessageError{message: "参考视频总时长不能超过 15 秒"}
 				}

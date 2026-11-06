@@ -9,12 +9,65 @@ import (
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
 	"github.com/shopspring/decimal"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestVideoReferencesUseSavedDurationWithoutDownloading(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.Error(w, "video download forbidden", http.StatusBadRequest)
+	}))
+	defer server.Close()
+	previous := config.Cfg
+	t.Cleanup(func() { config.Cfg = previous })
+	config.Cfg.MediaStorage = "oss"
+	config.Cfg.OSSRegion, config.Cfg.OSSBucket = "cn-test", "test"
+	config.Cfg.OSSInternalEndpoint, config.Cfg.OSSPublicEndpoint = server.URL, server.URL
+	config.Cfg.OSSAccessKeyID, config.Cfg.OSSAccessKeySecret = "fake", "fake"
+	config.Cfg.OSSSignedURLTTL = "15m"
+	for _, test := range []struct {
+		name      string
+		durations []float64
+		wantError string
+	}{
+		{"at-limit", []float64{15}, ""},
+		{"combined-at-limit", []float64{7, 8}, ""},
+		{"over-limit", []float64{7, 8.1}, "不能超过 15 秒"},
+		{"missing-duration", []float64{0}, "请重新上传"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			user := PortalUser{UID: newID("video-owner")}
+			input := CreateVideoTaskRequest{Prompt: "test", Seconds: 5}
+			for _, duration := range test.durations {
+				item := model.Media{ID: newID("video-ref"), OwnerUID: user.UID, ObjectKey: newID("video-input") + ".mp4", ContentType: "video/mp4", Duration: duration, Bytes: 80 << 20, Width: 720, Height: 1280}
+				if _, err := repository.SaveMedia(item); err != nil {
+					t.Fatal(err)
+				}
+				input.VideoMediaIDs = append(input.VideoMediaIDs, item.ID)
+			}
+			result, err := resolveVideoTaskInputs(context.Background(), user, input)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("expected %q, got %v", test.wantError, err)
+				}
+			} else if err != nil || len(result.VideoURLs) != len(input.VideoMediaIDs) {
+				t.Fatalf("resolve references: %+v %v", result, err)
+			}
+		})
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("reference resolution made %d OSS requests", requests.Load())
+	}
+}
 
 func TestVideoRequestBoundariesAndPriceSnapshot(t *testing.T) {
 	request := CreateVideoTaskRequest{ClientRequestID: "client", Prompt: "test", Seconds: 4, Size: "16:9", Resolution: "720p"}

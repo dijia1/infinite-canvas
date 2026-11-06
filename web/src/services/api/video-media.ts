@@ -17,14 +17,50 @@ export type VideoUploadOptions = {
     uploadedIntentId?: string;
 };
 function validateVideoUpload(file: Blob) {
-    if (file.type !== "video/mp4" || !file.size || file.size > 50 * 1024 * 1024) throw new Error("请上传不超过 50 MB 的 MP4 视频");
+    if (file.type !== "video/mp4") throw new Error("仅支持 MP4 视频");
+    if (!file.size) throw new Error("视频文件为空");
+    if (file.size > 100 * 1024 * 1024) throw new Error("视频大小不能超过 100 MB");
+}
+
+function readVideoMetadata(file: Blob, signal?: AbortSignal): Promise<Pick<VideoMediaAccess, "duration" | "width" | "height">> {
+    signal?.throwIfAborted();
+    return new Promise((resolve, reject) => {
+        const video = document.createElement("video");
+        const url = URL.createObjectURL(file);
+        const cleanup = () => {
+            video.onloadedmetadata = null;
+            video.onerror = null;
+            signal?.removeEventListener("abort", abort);
+            video.removeAttribute("src");
+            video.load();
+            URL.revokeObjectURL(url);
+        };
+        const abort = () => {
+            cleanup();
+            reject(new DOMException("上传已取消", "AbortError"));
+        };
+        video.preload = "metadata";
+        video.onloadedmetadata = () => {
+            const metadata = { duration: video.duration, width: video.videoWidth, height: video.videoHeight };
+            cleanup();
+            if (!Number.isFinite(metadata.duration) || metadata.duration <= 0 || metadata.width <= 0 || metadata.height <= 0) reject(new Error("无法读取视频时长或尺寸，请重新选择视频"));
+            else resolve(metadata);
+        };
+        video.onerror = () => {
+            cleanup();
+            reject(new Error("无法读取视频，请确认文件可播放"));
+        };
+        signal?.addEventListener("abort", abort, { once: true });
+        video.src = url;
+    });
 }
 export async function uploadVideoMedia(file: Blob, options: VideoUploadOptions = {}): Promise<VideoMediaAccess> {
     validateVideoUpload(file);
     const { signal } = options;
+    const metadata = await readVideoMetadata(file, signal);
     if (options.uploadedIntentId) {
         options.onStage?.("verifying");
-        return data((await axios.post<Envelope<VideoMediaAccess>>(aiApiPath(`/media/upload-intents/${encodeURIComponent(options.uploadedIntentId)}/complete`), undefined, { signal })).data);
+        return data((await axios.post<Envelope<VideoMediaAccess>>(aiApiPath(`/media/upload-intents/${encodeURIComponent(options.uploadedIntentId)}/complete`), metadata, { signal })).data);
     }
     options.onStage?.("uploading");
     const intent = data(
@@ -45,7 +81,7 @@ export async function uploadVideoMedia(file: Blob, options: VideoUploadOptions =
     await uploadDirectlyToOSS(intent.uploadUrl, file, options);
     options.onUploaded?.(intent.id);
     options.onStage?.("verifying");
-    return data((await axios.post<Envelope<VideoMediaAccess>>(aiApiPath(`/media/upload-intents/${encodeURIComponent(intent.id)}/complete`), undefined, { signal })).data);
+    return data((await axios.post<Envelope<VideoMediaAccess>>(aiApiPath(`/media/upload-intents/${encodeURIComponent(intent.id)}/complete`), metadata, { signal })).data);
 }
 export async function getVideoMediaAccess(mediaId: string, signal?: AbortSignal): Promise<VideoMediaAccess> {
     return data((await axios.get<Envelope<VideoMediaAccess>>(aiApiPath(`/media/${encodeURIComponent(mediaId)}/access`), { signal, timeout: 20_000 })).data);

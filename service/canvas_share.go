@@ -282,7 +282,7 @@ func copyCanvasShareMedia(ctx context.Context, store imageStore, source model.Me
 		if err != nil {
 			return model.Media{}, err
 		}
-		if bound.Bytes <= 0 || bound.Bytes > maxMediaBytes {
+		if bound.Bytes <= 0 || bound.Bytes > mediaSizeLimit(bound.ContentType) {
 			return model.Media{}, errors.New("分享素材大小无效")
 		}
 		if strings.HasPrefix(bound.ContentType, "video/") && bound.ContentType != "video/mp4" {
@@ -316,8 +316,8 @@ func copyCanvasShareMedia(ctx context.Context, store imageStore, source model.Me
 		if err != nil {
 			return model.Media{}, err
 		}
-		if metadata.Bytes <= 0 || metadata.Bytes > maxMediaBytes {
-			return model.Media{}, errors.New("分享视频大小无效，最大 50 MB")
+		if metadata.Bytes <= 0 || metadata.Bytes > maxVideoBytes {
+			return model.Media{}, errors.New("分享视频大小无效，最大 100 MB")
 		}
 		copier, ok := store.(interface {
 			Copy(context.Context, string, string) error

@@ -172,7 +172,7 @@ func TestPublicImageImportCannotUseBrowserFinalizeAndCannotRecopyUnknownResult(t
 	if err := db.Where("owner_uid = ? AND intent = ?", user.UID, repository.PublicImageImportIntent).First(&intent).Error; err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID); err == nil {
+	if _, _, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, MediaUploadCompletionInput{}); err == nil {
 		t.Fatal("browser finalized a server reservation")
 	}
 	delete(store.objects, intent.ObjectKey)

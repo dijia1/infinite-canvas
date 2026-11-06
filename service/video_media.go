@@ -14,8 +14,8 @@ import (
 	"time"
 )
 
-// Videos are spooled to disk, never buffered in memory. ffprobe only sees a
-// local file, with network protocols disabled for untrusted media containers.
+// Generated results are spooled to disk, never buffered in memory. Uploaded
+// references use browser metadata and do not enter this probing path.
 func probeVideoFile(ctx context.Context, path string) (float64, int, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
@@ -58,11 +58,11 @@ func spoolVideo(reader io.Reader) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	n, err := io.Copy(file, io.LimitReader(reader, maxMediaBytes+1))
-	if err != nil || n == 0 || n > maxMediaBytes {
+	n, err := io.Copy(file, io.LimitReader(reader, maxVideoBytes+1))
+	if err != nil || n == 0 || n > maxVideoBytes {
 		file.Close()
 		os.Remove(file.Name())
-		return nil, errors.New("视频大小无效，最大 50 MB")
+		return nil, errors.New("视频大小无效，最大 100 MB")
 	}
 	return file, nil
 }
@@ -81,20 +81,6 @@ func putVideoFile(ctx context.Context, store imageStore, key string, file *os.Fi
 	default:
 		return errors.New("视频需要配置 OSS 存储")
 	}
-}
-func probeStoredVideo(ctx context.Context, store imageStore, key string) (float64, int, int, error) {
-	reader, err := store.Get(ctx, key)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer reader.Close()
-	file, err := spoolVideo(reader)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	return probeVideoFile(ctx, file.Name())
 }
 func videoReferenceURL(ctx context.Context, store imageStore, key string) (string, error) {
 	target, ok := store.(*ossImageStore)

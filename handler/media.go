@@ -82,7 +82,12 @@ func CompleteMediaUploadIntent(w http.ResponseWriter, r *http.Request, id string
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
-	result, created, err := service.CompleteMediaUploadIntent(r.Context(), user, id)
+	var input service.MediaUploadCompletionInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
+		Fail(w, "请求参数无效")
+		return
+	}
+	result, created, err := service.CompleteMediaUploadIntent(r.Context(), user, id, input)
 	if err != nil {
 		FailError(w, err)
 		return

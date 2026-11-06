@@ -126,7 +126,7 @@ func TestMaskFinalizeKeepsInitialExpiry(t *testing.T) {
 	if err := repository.SaveMediaUploadIntent(intent); err != nil {
 		t.Fatal(err)
 	}
-	first, created, err := CompleteMediaUploadIntent(ctx, user, intent.ID)
+	first, created, err := CompleteMediaUploadIntent(ctx, user, intent.ID, MediaUploadCompletionInput{})
 	if err != nil || !created {
 		t.Fatalf("finalize: %+v %v", first, err)
 	}
@@ -134,7 +134,7 @@ func TestMaskFinalizeKeepsInitialExpiry(t *testing.T) {
 	if item.Source != model.MediaSourceMask || item.ExpiresAt == nil || item.ExpiresAt.Before(current.Add(24*time.Hour)) {
 		t.Fatalf("mask lifetime: %+v", item)
 	}
-	second, created, err := CompleteMediaUploadIntent(ctx, user, intent.ID)
+	second, created, err := CompleteMediaUploadIntent(ctx, user, intent.ID, MediaUploadCompletionInput{})
 	if err != nil || created || second.MediaID != first.MediaID || !second.MediaExpiresAt.Equal(*item.ExpiresAt) {
 		t.Fatalf("repeated finalize changed lifetime: %+v %v", second, err)
 	}

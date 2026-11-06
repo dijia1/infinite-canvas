@@ -9,7 +9,7 @@ export function CanvasVideoUploadContent({ nodeId, upload, visible, onRetry, onC
             {upload.stage !== "ready" && (
                 <div role="status" className="absolute inset-x-2 top-2 rounded-lg bg-black/80 p-2 text-xs text-white">
                     <div className="flex items-center justify-between gap-2">
-                        <span>{upload.stage === "failed" ? "视频上传失败" : upload.stage === "verifying" ? "视频校验中…" : `视频上传中 ${upload.progress}%`}</span>
+                        <span>{upload.stage === "failed" ? "视频上传失败" : upload.stage === "verifying" ? "正在完成上传…" : `视频上传中 ${upload.progress}%`}</span>
                         <span className="flex shrink-0 gap-2" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                             {upload.stage === "failed" && (
                                 <button type="button" className="underline" onClick={onRetry}>
