@@ -148,6 +148,9 @@ func MigrateDatabase() error {
 	if err == nil {
 		err = migrateWorkflowFrameSchema(database)
 	}
+	if err == nil {
+		err = clearTerminalGenerationTaskConfigs(database)
+	}
 	return err
 }
 

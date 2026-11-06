@@ -202,7 +202,7 @@ func CompleteVideoGenerationTask(item model.VideoGenerationTask, media []model.M
 			}
 			ids = append(ids, m.ID)
 		}
-		if err := tx.Model(&task).Updates(map[string]any{"status": "succeeded", "progress": 100, "result_media_ids_json": mustJSON(ids), "finished_at": current, "lease_until": nil, "error": ""}).Error; err != nil {
+		if err := tx.Model(&task).Updates(map[string]any{"status": "succeeded", "progress": 100, "result_media_ids_json": mustJSON(ids), "finished_at": current, "lease_until": nil, "error": "", "provider_config": ""}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.OperationLog{}).Where("id = ?", task.OperationLogID).Updates(map[string]any{"status": model.OperationStatusSuccess, "provider_task_id": task.ProviderTaskID, "media_ids": mustJSON(ids)}).Error
@@ -216,7 +216,7 @@ func FinishFailedVideoTask(item model.VideoGenerationTask, message string, curre
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		leaseCheckAt := time.Now().UTC()
-		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND claim_id = ? AND lease_until > ?", item.ID, item.ClaimID, leaseCheckAt).Updates(map[string]any{"status": "failed", "error": message, "finished_at": current, "lease_until": nil})
+		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND claim_id = ? AND lease_until > ?", item.ID, item.ClaimID, leaseCheckAt).Updates(map[string]any{"status": "failed", "error": message, "finished_at": current, "lease_until": nil, "provider_config": ""})
 		if result.Error != nil {
 			return result.Error
 		}

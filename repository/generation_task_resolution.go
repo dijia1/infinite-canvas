@@ -45,6 +45,9 @@ func ResolveGenerationTask(kind, id, action, providerTaskID string, current time
 			updates["provider_task_id"], updates["deadline"] = providerTaskID, current.Add(timeout)
 		}
 		updates["status"] = status
+		if action == "close" {
+			updates["provider_config"] = ""
+		}
 		if kind == "image" {
 			updates["error_message"], updates["updated_at"], updates["poll_failures"] = message, current.Format(time.RFC3339Nano), 0
 			if action == "close" {

@@ -39,9 +39,6 @@ func (store *memoryTaskInputStore) PresignPut(context.Context, string, string) (
 func (store *memoryTaskInputStore) Head(context.Context, string) (imageObjectMetadata, error) {
 	return imageObjectMetadata{}, errDirectUploadUnsupported
 }
-func (store *memoryTaskInputStore) ReadPrefix(context.Context, string, int64) ([]byte, error) {
-	return nil, errDirectUploadUnsupported
-}
 
 func TestImageTaskInputsRoundTripAndDelete(t *testing.T) {
 	store := &memoryTaskInputStore{}

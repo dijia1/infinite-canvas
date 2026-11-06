@@ -491,6 +491,7 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 	message := imageTaskFailureMessage(reason)
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
 		"status": model.ImageTaskFailed, "error_message": message, "claim_id": "", "lease_until": nil, "updated_at": now(), "finished_at": now(),
+		"provider_config": "",
 	}); err != nil {
 		log.Printf("image task %s failure update failed: %v", item.ID, err)
 		return

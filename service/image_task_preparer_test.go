@@ -73,16 +73,6 @@ func (store *versionedTaskInputStore) Head(_ context.Context, key string) (image
 	object, err := store.current(key)
 	return testObjectMetadata(object), err
 }
-func (store *versionedTaskInputStore) ReadPrefix(_ context.Context, key string, limit int64) ([]byte, error) {
-	object, err := store.current(key)
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(object.data)) > limit {
-		return object.data[:limit], nil
-	}
-	return append([]byte{}, object.data...), nil
-}
 func (*versionedTaskInputStore) EnsureVersioningEnabled(context.Context) error { return nil }
 func (store *versionedTaskInputStore) HeadVersion(_ context.Context, key, versionID, etag string) (imageObjectMetadata, error) {
 	if store.headVersionErr != nil {
@@ -96,19 +86,6 @@ func (store *versionedTaskInputStore) HeadVersion(_ context.Context, key, versio
 		return imageObjectMetadata{}, &oss.ServiceError{StatusCode: 412, Code: "PreconditionFailed"}
 	}
 	return testObjectMetadata(object), nil
-}
-func (store *versionedTaskInputStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, limit int64) ([]byte, error) {
-	if store.readPrefixErr != nil {
-		return nil, store.readPrefixErr
-	}
-	if _, err := store.HeadVersion(ctx, key, versionID, etag); err != nil {
-		return nil, err
-	}
-	object, _ := store.version(key, versionID)
-	if int64(len(object.data)) > limit {
-		return object.data[:limit], nil
-	}
-	return append([]byte{}, object.data...), nil
 }
 func (store *versionedTaskInputStore) CopyVersion(ctx context.Context, source, sourceVersionID, sourceETag, target string) (imageObjectMetadata, error) {
 	object, err := store.version(source, sourceVersionID)

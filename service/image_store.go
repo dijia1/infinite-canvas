@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
@@ -24,7 +25,6 @@ type imageStore interface {
 	SignedURL(context.Context, string, string) (string, time.Time, error)
 	PresignPut(context.Context, string, string) (string, time.Time, error)
 	Head(context.Context, string) (imageObjectMetadata, error)
-	ReadPrefix(context.Context, string, int64) ([]byte, error)
 }
 
 type imageObjectMetadata struct {
@@ -40,7 +40,6 @@ type versionedImageStore interface {
 	imageStore
 	EnsureVersioningEnabled(context.Context) error
 	HeadVersion(context.Context, string, string, string) (imageObjectMetadata, error)
-	ReadPrefixVersion(context.Context, string, string, string, int64) ([]byte, error)
 	CopyVersion(context.Context, string, string, string, string) (imageObjectMetadata, error)
 	SignedURLVersion(context.Context, string, string, time.Duration) (string, time.Time, error)
 	DeleteVersion(context.Context, string, string) error
@@ -126,14 +125,6 @@ func (store localImageStore) Head(_ context.Context, key string) (imageObjectMet
 	digest := sha256.Sum256(data)
 	return imageObjectMetadata{Bytes: info.Size(), ETag: fmt.Sprintf("%x", digest[:]), VersionID: "null"}, nil
 }
-func (store localImageStore) ReadPrefix(_ context.Context, key string, bytes int64) ([]byte, error) {
-	file, err := store.Open(key)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	return io.ReadAll(io.LimitReader(file, bytes))
-}
 func (store localImageStore) Open(key string) (io.ReadCloser, error) { return os.Open(store.path(key)) }
 
 func (store localImageStore) EnsureVersioningEnabled(context.Context) error { return nil }
@@ -146,12 +137,6 @@ func (store localImageStore) HeadVersion(ctx context.Context, key, versionID, et
 		return imageObjectMetadata{}, errors.New("object etag changed")
 	}
 	return metadata, err
-}
-func (store localImageStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, bytes int64) ([]byte, error) {
-	if _, err := store.HeadVersion(ctx, key, versionID, etag); err != nil {
-		return nil, err
-	}
-	return store.ReadPrefix(ctx, key, bytes)
 }
 func (store localImageStore) CopyVersion(ctx context.Context, source, versionID, etag, target string) (imageObjectMetadata, error) {
 	if _, err := store.HeadVersion(ctx, source, versionID, etag); err != nil {
@@ -268,22 +253,6 @@ func (store *ossImageStore) HeadVersion(ctx context.Context, key, versionID, eta
 	return imageObjectMetadata{ContentType: strings.TrimSpace(oss.ToString(result.ContentType)), Bytes: result.ContentLength, ETag: strings.TrimSpace(oss.ToString(result.ETag)), VersionID: oss.ToString(result.VersionId)}, nil
 }
 
-func (store *ossImageStore) ReadPrefixVersion(ctx context.Context, key, versionID, etag string, bytes int64) ([]byte, error) {
-	if bytes <= 0 {
-		return nil, nil
-	}
-	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(versionID), Range: oss.Ptr("bytes=0-" + fmt.Sprint(bytes-1))}
-	if etag != "" {
-		request.IfMatch = oss.Ptr(etag)
-	}
-	result, err := store.internal.GetObject(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	defer result.Body.Close()
-	return io.ReadAll(io.LimitReader(result.Body, bytes))
-}
-
 func (store *ossImageStore) CopyVersion(ctx context.Context, source, sourceVersionID, sourceETag, target string) (imageObjectMetadata, error) {
 	result, err := store.internal.CopyObject(ctx, &oss.CopyObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(target), SourceBucket: oss.Ptr(store.bucket), SourceKey: oss.Ptr(source), SourceVersionId: oss.Ptr(sourceVersionID), IfMatch: oss.Ptr(sourceETag), Acl: oss.ObjectACLPrivate})
 	if err != nil {
@@ -334,17 +303,15 @@ func (store *ossImageStore) DeletePrefixVersions(ctx context.Context, prefix str
 	}
 }
 
-func (store *ossImageStore) ReadPrefix(ctx context.Context, key string, bytes int64) ([]byte, error) {
-	if bytes <= 0 {
-		return nil, nil
-	}
-	rangeHeader := oss.HTTPRange{Offset: 0, Count: bytes}.FormatHTTPRange()
-	result, err := store.internal.GetObject(ctx, &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), Range: rangeHeader})
-	if err != nil {
-		return nil, err
-	}
-	defer result.Body.Close()
-	return io.ReadAll(io.LimitReader(result.Body, bytes))
+type ossStoreConfig struct {
+	region, bucket, internalEndpoint, publicEndpoint, accessKeyID, accessKeySecret string
+	ttl                                                                            time.Duration
+}
+
+var sharedOSSStore struct {
+	sync.Mutex
+	config ossStoreConfig
+	store  *ossImageStore
 }
 
 func newImageStore() (imageStore, error) {
@@ -361,10 +328,18 @@ func newImageStore() (imageStore, error) {
 	if err != nil || ttl <= 0 {
 		return nil, errors.New("OSS_SIGNED_URL_TTL 无效")
 	}
+	key := ossStoreConfig{config.Cfg.OSSRegion, config.Cfg.OSSBucket, config.Cfg.OSSInternalEndpoint, config.Cfg.OSSPublicEndpoint, config.Cfg.OSSAccessKeyID, config.Cfg.OSSAccessKeySecret, ttl}
+	sharedOSSStore.Lock()
+	defer sharedOSSStore.Unlock()
+	if sharedOSSStore.store != nil && sharedOSSStore.config == key {
+		return sharedOSSStore.store, nil
+	}
 	provider := credentials.NewStaticCredentialsProvider(config.Cfg.OSSAccessKeyID, config.Cfg.OSSAccessKeySecret)
 	internalCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSInternalEndpoint).WithCredentialsProvider(provider)
 	publicCfg := oss.LoadDefaultConfig().WithRegion(config.Cfg.OSSRegion).WithEndpoint(config.Cfg.OSSPublicEndpoint).WithUseCName(true).WithCredentialsProvider(provider)
-	return &ossImageStore{internal: oss.NewClient(internalCfg), public: oss.NewClient(publicCfg), bucket: config.Cfg.OSSBucket, ttl: ttl}, nil
+	sharedOSSStore.store = &ossImageStore{internal: oss.NewClient(internalCfg), public: oss.NewClient(publicCfg), bucket: config.Cfg.OSSBucket, ttl: ttl}
+	sharedOSSStore.config = key
+	return sharedOSSStore.store, nil
 }
 
 func (store *ossImageStore) GetVersion(ctx context.Context, key, version, etag string) (io.ReadCloser, error) {

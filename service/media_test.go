@@ -53,9 +53,6 @@ func (store *fakeImageStore) PresignPut(context.Context, string, string) (string
 func (store *fakeImageStore) Head(context.Context, string) (imageObjectMetadata, error) {
 	return imageObjectMetadata{ETag: "stored-etag", VersionID: "stored-version"}, nil
 }
-func (store *fakeImageStore) ReadPrefix(context.Context, string, int64) ([]byte, error) {
-	return nil, nil
-}
 
 func TestPrivateLibraryImageObjectKeyIsScopedToPortalUser(t *testing.T) {
 	key := privateImageObjectKey("7c001b0e-8a1b-4d65-a4b5-8ebd5c2d0011", model.MediaSourceUpload, "png", time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC))

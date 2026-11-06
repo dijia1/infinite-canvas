@@ -184,7 +184,7 @@ func FailPreparingImageGenerationTask(taskID, message, finishedAt string) error 
 		if item.Status != model.ImageTaskPreparing {
 			return nil
 		}
-		if err := transaction.Model(&item).Updates(map[string]any{"status": model.ImageTaskFailed, "error_message": message, "updated_at": finishedAt, "finished_at": finishedAt}).Error; err != nil {
+		if err := transaction.Model(&item).Updates(map[string]any{"status": model.ImageTaskFailed, "error_message": message, "updated_at": finishedAt, "finished_at": finishedAt, "provider_config": ""}).Error; err != nil {
 			return err
 		}
 		if item.OperationLogID != "" {
@@ -421,7 +421,8 @@ func CompleteImageGenerationTask(item model.ImageGenerationTask, media []model.M
 			Where("id = ? AND claim_id = ? AND lease_until > ?", task.ID, task.ClaimID, current).
 			Updates(map[string]any{
 				"status": model.ImageTaskSucceeded, "progress": 100, "result_media_ids_json": string(encoded),
-				"error_message": "", "claim_id": "", "lease_until": nil, "updated_at": current.Format(time.RFC3339Nano), "finished_at": current.Format(time.RFC3339Nano),
+				"provider_config": "",
+				"error_message":   "", "claim_id": "", "lease_until": nil, "updated_at": current.Format(time.RFC3339Nano), "finished_at": current.Format(time.RFC3339Nano),
 			})
 		if updated.Error != nil {
 			return updated.Error

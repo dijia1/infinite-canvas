@@ -80,10 +80,6 @@ func (*generationIdempotencyInputStore) Head(context.Context, string) (imageObje
 	return imageObjectMetadata{}, errDirectUploadUnsupported
 }
 
-func (*generationIdempotencyInputStore) ReadPrefix(context.Context, string, int64) ([]byte, error) {
-	return nil, errDirectUploadUnsupported
-}
-
 func (generationIdempotencyProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
 	options := ai.ImageRequestOptions{}
 	for key, value := range request.Request.Options {
