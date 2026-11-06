@@ -3,16 +3,14 @@ import type { ImageRequestSchema } from "@/lib/image-request-schema";
 import type { ImageResolutionPrice } from "@/lib/image-pricing";
 import type { VideoRequestSchema } from "@/lib/model-selection";
 
-export const ADMIN_AUTH_TOKEN_KEY = "infinite-canvas-admin-auth-token-v1";
-
 export type AdminUser = {
     id: string;
     username: string;
     role: "admin";
 };
 
-export async function fetchCurrentAdmin(token: string) {
-    return apiGet<AdminUser>("/api/admin/me", undefined, token);
+export async function fetchCurrentAdmin() {
+    return apiGet<AdminUser>("/api/admin/me");
 }
 
 export type AdminAIProvider = {
@@ -46,14 +44,14 @@ export type AdminSettings = {
     ai: AdminAISettings;
 };
 
-export async function fetchAdminSettings(token: string) {
-    return apiGet<AdminSettings>("/api/admin/settings", undefined, token);
+export async function fetchAdminSettings() {
+    return apiGet<AdminSettings>("/api/admin/settings");
 }
 
-export async function saveAdminSettings(token: string, settings: AdminSettings) {
-    return apiPost<AdminSettings>("/api/admin/settings", settings, token);
+export async function saveAdminSettings(settings: AdminSettings) {
+    return apiPost<AdminSettings>("/api/admin/settings", settings);
 }
 
-export async function fetchAIProviderTypes(token: string) {
-    return apiGet<AdminAIProviderType[]>("/api/admin/ai/provider-types", undefined, token);
+export async function fetchAIProviderTypes() {
+    return apiGet<AdminAIProviderType[]>("/api/admin/ai/provider-types");
 }

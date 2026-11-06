@@ -1,6 +1,6 @@
 import axios from "axios";
 import { nanoid } from "nanoid";
-import { aiApiPath, apiRequestError } from "@/services/api/request";
+import { aiApiPath, apiRequestError, type ApiResponse } from "@/services/api/request";
 import type { AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
 
@@ -25,7 +25,7 @@ function queryError(error: unknown, fallback: string): never {
 
 function unwrap(payload: unknown): VideoGenerationTask {
     if (!payload || typeof payload !== "object") throw new Error("接口没有返回视频任务");
-    const envelope = payload as { code?: number; msg?: string; data?: unknown };
+    const envelope = payload as ApiResponse<unknown>;
     if (typeof envelope.code === "number" && envelope.code !== 0) throw new VideoRequestRejectedError(envelope.msg || "视频请求失败");
     const task = (envelope.data || payload) as VideoGenerationTask;
     if (!task.id || !["queued", "submitting", "running", "saving", "succeeded", "failed", "uncertain", "paused"].includes(task.status)) throw new Error("接口返回无效视频任务");

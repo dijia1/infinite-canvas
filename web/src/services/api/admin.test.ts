@@ -20,8 +20,8 @@ test("admin settings API sends the loaded revision and retains the next revision
         return { status: 200, data: { code: 0, data: { ...settings, revision }, msg: "ok" } } as never;
     }) as typeof axios.request;
     try {
-        const loaded = await fetchAdminSettings("admin-token");
-        const saved = await saveAdminSettings("admin-token", loaded);
+        const loaded = await fetchAdminSettings();
+        const saved = await saveAdminSettings(loaded);
         assert.equal(loaded.revision, 7);
         assert.equal(saved.revision, 8);
         assert.deepEqual(requests.map(({ method, data }) => ({ method, data })), [
@@ -41,7 +41,7 @@ test("admin settings API exposes only structured revision conflict data", async 
     })) as typeof axios.request;
     try {
         await assert.rejects(
-            saveAdminSettings("admin-token", settings),
+            saveAdminSettings(settings),
             (error: unknown) =>
                 error instanceof ApiRequestError &&
                 error.status === 409 &&

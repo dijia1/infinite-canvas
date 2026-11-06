@@ -3,15 +3,7 @@ import test from "node:test";
 
 import axios from "axios";
 
-import { ApiRequestError, aiApiPath, apiDelete, apiPut, apiRequestError, authorizationHeaders, jsonRequestHeaders } from "./request.ts";
-
-test("does not send the legacy Portal placeholder as an Authorization header", () => {
-    assert.equal(authorizationHeaders("portal"), undefined);
-});
-
-test("keeps Authorization headers for non-Portal tokens", () => {
-    assert.deepEqual(authorizationHeaders("token-value"), { Authorization: "Bearer token-value" });
-});
+import { ApiRequestError, aiApiPath, apiDelete, apiPut, apiRequestError, jsonRequestHeaders } from "./request.ts";
 
 test("does not attach JSON content type when a POST has no request body", () => {
     assert.deepEqual(jsonRequestHeaders(undefined), {});
@@ -38,7 +30,7 @@ test("sends PUT and DELETE JSON bodies and preserves conflict status", async () 
     try {
         assert.deepEqual(await apiPut("/api/v1/canvas/projects/project-1", { revision: 1 }), { revision: 2 });
         await assert.rejects(
-            () => apiDelete("/api/v1/canvas/projects/project-1", undefined, { revision: 1 }),
+            () => apiDelete("/api/v1/canvas/projects/project-1", { revision: 1 }),
             (error) => error instanceof ApiRequestError && error.status === 409,
         );
         assert.deepEqual(

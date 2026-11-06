@@ -14,13 +14,13 @@ import { StatisticsRangeFilter } from "./statistics-range-filter";
 import { StatisticsReportTabs } from "./statistics-report-tabs";
 
 export default function AdminStatisticsPage() {
-    const token = useAdminStore((state) => state.token);
+    const user = useAdminStore((state) => state.user);
     const [range, setRange] = useState<StatisticsRange>(() => statisticsPresetRange("today"));
     const [selectedRange, setSelectedRange] = useState<StatisticsRange>(() => statisticsPresetRange("today"));
     const statistics = useQuery({
         queryKey: ["admin-statistics", range.start, range.end],
-        queryFn: () => fetchStatistics(token, range),
-        enabled: Boolean(token),
+        queryFn: () => fetchStatistics(range),
+        enabled: Boolean(user),
         retry: false,
     });
 

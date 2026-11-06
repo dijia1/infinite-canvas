@@ -131,11 +131,11 @@ function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {
 }
 
 export function updateCanvasProject(id: string, input: UpdateCanvasProjectInput, trace?: CanvasProjectWriteTrace) {
-    return apiPut<CanvasProjectSaveResult>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, undefined, { ...canvasProjectWriteHeaders(trace), "X-Canvas-Save-Response": "summary" });
+    return apiPut<CanvasProjectSaveResult>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { ...input, document: sanitizeCanvasProjectDocument(input.document) }, { ...canvasProjectWriteHeaders(trace), "X-Canvas-Save-Response": "summary" });
 }
 
 export async function deleteCanvasProject(id: string, revision: number, trace?: CanvasProjectWriteTrace) {
-    await apiDelete<true>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, undefined, { revision }, canvasProjectWriteHeaders(trace));
+    await apiDelete<true>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, { revision }, canvasProjectWriteHeaders(trace));
 }
 
 export const canvasProjectsApi: CanvasProjectsApi = {

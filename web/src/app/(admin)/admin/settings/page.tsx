@@ -15,7 +15,7 @@ const emptySettings: AdminSettings = { revision: 0, ai: { providers: [], imagePr
 type ProviderFormValues = Omit<AdminAIProvider, "config"> & { config: string; fields?: Record<string, string> };
 
 export default function AdminSettingsPage() {
-    const token = useAdminStore((state) => state.token);
+    const hasAdmin = useAdminStore((state) => Boolean(state.user));
     const { message } = App.useApp();
     const [settings, setSettings] = useState<AdminSettings>(emptySettings);
     const [types, setTypes] = useState<AdminAIProviderType[]>([]);
@@ -31,15 +31,15 @@ export default function AdminSettingsPage() {
     const acceptsOpaqueAspectRatios = selectedProviderType?.capabilities.includes("video_generate") ?? false;
 
     useEffect(() => {
-        if (!token) return;
-        void Promise.all([fetchAdminSettings(token), fetchAIProviderTypes(token)])
+        if (!hasAdmin) return;
+        void Promise.all([fetchAdminSettings(), fetchAIProviderTypes()])
             .then(([nextSettings, nextTypes]) => {
                 setSettings(nextSettings);
                 setTypes(nextTypes);
             })
             .catch((error) => message.error(error instanceof Error ? error.message : "读取 AI 配置失败"))
             .finally(() => setLoading(false));
-    }, [message, token]);
+    }, [message, hasAdmin]);
 
     const providers = settings.ai.providers;
     const scopedTypes = types.filter((item) => (activeTab === "video" ? item.capabilities.includes("video_generate") : supportsImagePricing(types, item.id)));
@@ -106,10 +106,10 @@ export default function AdminSettingsPage() {
         }));
     };
     const save = async () => {
-        if (!token) return;
+        if (!hasAdmin) return;
         setSaving(true);
         try {
-            setSettings(await saveAdminSettings(token, settings));
+            setSettings(await saveAdminSettings(settings));
             message.success("AI 配置已保存");
         } catch (error) {
             message.error(error instanceof Error ? error.message : "保存失败");

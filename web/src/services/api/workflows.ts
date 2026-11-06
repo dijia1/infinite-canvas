@@ -65,7 +65,7 @@ export function copyWorkflow(id: string, name?: string) {
 }
 
 export async function deleteWorkflow(id: string, revision: number) {
-    await apiDelete<true>(`/api/v1/workflows/${encodeURIComponent(id)}`, undefined, { revision });
+    await apiDelete<true>(`/api/v1/workflows/${encodeURIComponent(id)}`, { revision });
 }
 
 export function createWorkflowRun(workflowId: string, requestId: string, revision?: number, scope?: WorkflowRunScope) {
@@ -81,15 +81,15 @@ export function fetchWorkflowRuns(page = 1, pageSize = 20, workflowIdOrOptions?:
         ...(options.scope ? { scopeType: options.scope.type } : {}),
         ...(options.scope?.type === "frame" ? { frameId: options.scope.frameId } : {}),
         ...(options.active === undefined ? {} : { active: options.active ? 1 : 0 }),
-    }, undefined, { signal: options.signal });
+    }, { signal: options.signal });
 }
 
 export function fetchWorkflowRunState(workflowId: string, activePage = 1, activePageSize = 20, signal?: AbortSignal) {
-    return apiGet<WorkflowRunState>(`/api/v1/workflows/${encodeURIComponent(workflowId)}/run-state`, { activePage, activePageSize }, undefined, { signal });
+    return apiGet<WorkflowRunState>(`/api/v1/workflows/${encodeURIComponent(workflowId)}/run-state`, { activePage, activePageSize }, { signal });
 }
 
 export function fetchWorkflowRun(id: string, signal?: AbortSignal) {
-    return apiGet<WorkflowRunDetail>(`/api/v1/workflow-runs/${encodeURIComponent(id)}`, undefined, undefined, { signal });
+    return apiGet<WorkflowRunDetail>(`/api/v1/workflow-runs/${encodeURIComponent(id)}`, undefined, { signal });
 }
 
 export function stopWorkflowRun(id: string) {

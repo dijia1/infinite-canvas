@@ -32,5 +32,5 @@ export function fetchCanvasShareRecipients(query: { page?: number; pageSize?: nu
 }
 
 export function shareCanvasProject(id: string, input: CanvasShareInput) {
-    return apiPost<CanvasShareResult>(`/api/v1/canvas/projects/${encodeURIComponent(id)}/share`, input, undefined, 120_000);
+    return apiPost<CanvasShareResult>(`/api/v1/canvas/projects/${encodeURIComponent(id)}/share`, input, 120_000);
 }

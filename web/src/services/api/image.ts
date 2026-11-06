@@ -5,18 +5,13 @@ import type { AiConfig } from "@/stores/use-config-store";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
-import { aiApiPath, apiDelete, apiRequestError, debugApiRequest } from "@/services/api/request";
+import { aiApiPath, apiDelete, apiRequestError, debugApiRequest, type ApiResponse } from "@/services/api/request";
 import type { ReferenceImage } from "@/types/image";
 import { imageOutputSettings } from "@/lib/image-output-config";
 import { imageEditReferenceError } from "@/lib/image-edit-validation";
 import { createImageMaskFile } from "@/lib/image-mask/mask-raster";
 
-type ImageApiResponse = {
-    data?: Record<string, unknown> | Array<Record<string, unknown>>;
-    error?: { message?: string };
-    code?: number;
-    msg?: string;
-};
+type ImageApiResponse = ApiResponse<Record<string, unknown> | Array<Record<string, unknown>>> & { error?: { message?: string } };
 
 function normalizeQuality(quality: string) {
     const value = (quality || "").trim();

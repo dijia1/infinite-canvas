@@ -4,7 +4,7 @@ import { appApiPath } from "@/lib/app-path";
 
 export type ApiParams = Record<string, string | string[] | number | number[] | undefined>;
 
-type ApiResponse<T> = {
+export type ApiResponse<T> = {
     code: number;
     data: T;
     msg: string;
@@ -56,62 +56,54 @@ export function debugApiRequest(label: string, payload: Record<string, unknown>)
     console.groupEnd();
 }
 
-export function authorizationHeaders(token?: string) {
-    if (!token || token === "portal") return undefined;
-    return { Authorization: `Bearer ${token}` };
+export function jsonRequestHeaders(body: unknown): Record<string, string> {
+    return body === undefined ? {} : { "Content-Type": "application/json" };
 }
 
-export function jsonRequestHeaders(body: unknown, token?: string) {
-    return {
-        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-        ...authorizationHeaders(token),
-    };
-}
-
-export async function apiGet<T>(url: string, params?: ApiParams, token?: string, options?: { timeout?: number; signal?: AbortSignal }) {
+export async function apiGet<T>(url: string, params?: ApiParams, options?: { timeout?: number; signal?: AbortSignal }) {
     return apiRequest<T>({
         ...options,
         url,
         method: "GET",
         params: params || undefined,
-        headers: authorizationHeaders(token),
+        headers: undefined,
     });
 }
 
-export async function apiPost<T>(url: string, body?: unknown, token?: string, timeout?: number) {
+export async function apiPost<T>(url: string, body?: unknown, timeout?: number) {
     return apiRequest<T>({
         url,
         method: "POST",
         timeout,
         data: body,
-        headers: jsonRequestHeaders(body, token),
+        headers: jsonRequestHeaders(body),
     });
 }
 
-export async function apiDelete<T>(url: string, token?: string, body?: unknown, headers?: Record<string, string>) {
+export async function apiDelete<T>(url: string, body?: unknown, headers?: Record<string, string>) {
     return apiRequest<T>({
         url,
         method: "DELETE",
         data: body,
-        headers: { ...jsonRequestHeaders(body, token), ...headers },
+        headers: { ...jsonRequestHeaders(body), ...headers },
     });
 }
 
-export async function apiPatch<T>(url: string, body: unknown, token?: string) {
+export async function apiPatch<T>(url: string, body: unknown) {
     return apiRequest<T>({
         url,
         method: "PATCH",
         data: body,
-        headers: jsonRequestHeaders(body, token),
+        headers: jsonRequestHeaders(body),
     });
 }
 
-export async function apiPut<T>(url: string, body: unknown, token?: string, headers?: Record<string, string>) {
+export async function apiPut<T>(url: string, body: unknown, headers?: Record<string, string>) {
     return apiRequest<T>({
         url,
         method: "PUT",
         data: body,
-        headers: { ...jsonRequestHeaders(body, token), ...headers },
+        headers: { ...jsonRequestHeaders(body), ...headers },
     });
 }
 

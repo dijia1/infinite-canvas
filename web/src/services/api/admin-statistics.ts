@@ -42,8 +42,8 @@ export type Statistics = {
     users: StatisticsUser[];
 };
 
-export async function fetchStatistics(token: string, range: StatisticsRange) {
-    return apiGet<Statistics>("/api/admin/statistics", range, token);
+export async function fetchStatistics(range: StatisticsRange) {
+    return apiGet<Statistics>("/api/admin/statistics", range);
 }
 
 export type VideoStatisticsTotals = {

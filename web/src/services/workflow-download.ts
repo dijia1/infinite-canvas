@@ -7,7 +7,7 @@ export async function downloadWorkflowImages(runId: string, signal?: AbortSignal
     pendingDownloads.add(runId);
     try {
         const path = `/api/v1/workflow-runs/${encodeURIComponent(runId)}/images/download`;
-        const result = await apiGet<{ count: number; filename: string }>(path, { check: "1" }, undefined, { timeout: 120_000, signal });
+        const result = await apiGet<{ count: number; filename: string }>(path, { check: "1" }, { timeout: 120_000, signal });
         signal?.throwIfAborted();
         if (!result.count) throw new Error("当前运行没有可下载的成功图片");
         const frame = document.createElement("iframe");

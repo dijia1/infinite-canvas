@@ -10,7 +10,7 @@ test("admin authentication only uses the Portal session", async () => {
 
     assert.doesNotMatch(api, /\/api\/admin\/login/);
     assert.doesNotMatch(store, /login:\s*async/);
-    assert.match(store, /fetchCurrentAdmin\(""\)/);
+    assert.match(store, /fetchCurrentAdmin\(\)/);
 });
 
 import { create } from "zustand";
@@ -23,12 +23,12 @@ test("admin access errors distinguish identity, permission and dependency failur
             zustand: { create },
             "zustand/middleware": { persist: (initializer: unknown) => initializer },
             "@/services/api/request": { ApiRequestError },
-            "@/services/api/admin": { ADMIN_AUTH_TOKEN_KEY: "test", fetchCurrentAdmin: async () => { throw new ApiRequestError("denied", status, 1); } },
+            "@/services/api/admin": { fetchCurrentAdmin: async () => { throw new ApiRequestError("denied", status, 1); } },
         });
         await module.useAdminStore.getState().hydrateAdmin();
         const state = module.useAdminStore.getState();
         assert.equal(state.accessError, expected);
-        assert.equal(state.token, "");
+        assert.equal("token" in state, false);
         assert.equal(state.user, null);
         assert.equal(state.isReady, true);
     }

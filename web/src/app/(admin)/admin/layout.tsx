@@ -22,7 +22,6 @@ const adminMenus = [
 export default function AdminLayout({ children }: { children: ReactNode }) {
     const { token: antToken } = theme.useToken();
     const pathname = usePathname();
-    const token = useAdminStore((state) => state.token);
     const user = useAdminStore((state) => state.user);
     const isReady = useAdminStore((state) => state.isReady);
     const accessError = useAdminStore((state) => state.accessError);
@@ -36,7 +35,7 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
     }, [hydrateAdmin]);
 
     if (!isReady) return <div className="grid min-h-dvh place-items-center" aria-busy="true" />;
-    if (!token || user?.role !== "admin") {
+    if (user?.role !== "admin") {
         const text = accessError === "identity" ? "Portal 身份无效或已过期，请返回工作台重新进入。" : accessError === "forbidden" ? "当前账号没有管理权限。" : "无法读取管理权限，请稍后重试。";
         return (
             <main className="flex min-h-dvh flex-col items-center justify-center gap-4 p-6" style={{ background: antToken.colorBgLayout }}>

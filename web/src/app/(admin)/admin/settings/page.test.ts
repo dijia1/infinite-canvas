@@ -146,11 +146,11 @@ function settingsPage() {
         "@/services/api/admin": {
             fetchAdminSettings: async () => initial,
             fetchAIProviderTypes: async () => [],
-            saveAdminSettings: (token: string, value: AdminSettings) => { void token; saves.push(value); return saveResult.promise; },
+            saveAdminSettings: (value: AdminSettings) => { saves.push(value); return saveResult.promise; },
         },
         "@/lib/money": { isCNYAmountInput: () => true },
         "@/lib/image-pricing": { formatImagePrices: () => "", isImageResolutionInput: () => true },
-        "@/stores/use-admin-store": { useAdminStore: (selector: (state: { token: string }) => unknown) => selector({ token: "admin-token" }) },
+        "@/stores/use-admin-store": { useAdminStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "admin" } }) },
     });
     const harness = hookHarness();
     const render = () => harness.render(() => { currentHooks = harness.hooks; return module.default(); });
