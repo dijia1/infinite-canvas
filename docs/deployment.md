@@ -53,7 +53,8 @@ Portal 停用用户或撤回入口权限时，目录同步会正常记录停用�
    - `DEPLOY_USER`
    - `DEPLOY_SSH_PRIVATE_KEY`
    - `DEPLOY_KNOWN_HOSTS`
-   - `GHCR_READ_TOKEN`：可读取私有 `ghcr.io/dijia1/infinite-canvas` 包的最小权限 Token。
+
+镜像读取使用 GitHub 为部署 Job 自动生成的 `GITHUB_TOKEN`，该 Job 仅授予 `contents: read` 和 `packages: read`。令牌通过 SSH 标准输入用于临时登录 GHCR，部署退出时注销。
 
 ## 首次发布基线
 
