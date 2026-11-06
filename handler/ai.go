@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"strings"
 
@@ -13,9 +11,6 @@ import (
 	"github.com/basketikun/infinite-canvas/service"
 )
 
-const maxMultipartImageBytes int64 = 50 << 20
-const multipartRequestOverheadBytes int64 = 1 << 20
-const maxImageEditRequestBytes int64 = maxMultipartImageBytes*2 + multipartRequestOverheadBytes
 const workflowRequestIDPrefix = "workflow-"
 
 type imageRequest struct {
@@ -89,13 +84,6 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 	OK(w, task)
 }
 
-func imageRequestOptionsFromForm(value string) (ai.ImageRequestOptions, error) {
-	if value == "" {
-		return ai.ImageRequestOptions{}, nil
-	}
-	return imageRequestOptionsFromJSON(json.RawMessage(value))
-}
-
 func imageRequestOptionsFromJSON(raw json.RawMessage) (ai.ImageRequestOptions, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ai.ImageRequestOptions{}, nil
@@ -105,21 +93,6 @@ func imageRequestOptionsFromJSON(raw json.RawMessage) (ai.ImageRequestOptions, e
 		return nil, fmt.Errorf("provider options must be an object")
 	}
 	return options, nil
-}
-
-func imageMaskFromForm(r *http.Request) (*ai.ImageReference, error) {
-	files := r.MultipartForm.File["mask"]
-	if len(files) == 0 {
-		return nil, nil
-	}
-	if len(files) != 1 {
-		return nil, fmt.Errorf("multiple masks")
-	}
-	reference, err := readMultipartImageReference(files[0])
-	if err != nil {
-		return nil, err
-	}
-	return &reference, nil
 }
 
 func AIImageTask(w http.ResponseWriter, r *http.Request, id string) {
@@ -191,10 +164,6 @@ func AIVideoResume(w http.ResponseWriter, r *http.Request, id string) {
 	OK(w, task)
 }
 
-func limitMultipartRequestBody(w http.ResponseWriter, r *http.Request, maxBytes int64) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-}
-
 func AIVideo(w http.ResponseWriter, r *http.Request, id string) {
 	result, err := service.GetVideoGenerationTask(r.Context(), id)
 	if err != nil {
@@ -215,48 +184,6 @@ func AIVideoContent(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	http.Redirect(w, r, task.Videos[0].URL, http.StatusTemporaryRedirect)
-}
-
-func readMultipartImageReferences(files []*multipart.FileHeader, maxTotalBytes int64) ([]ai.ImageReference, error) {
-	references := make([]ai.ImageReference, 0, len(files))
-	totalBytes := int64(0)
-	for _, file := range files {
-		reference, err := readMultipartImageReference(file)
-		if err != nil {
-			return nil, err
-		}
-		totalBytes += int64(len(reference.Data))
-		if totalBytes > maxTotalBytes {
-			return nil, fmt.Errorf("reference images exceed total size limit")
-		}
-		references = append(references, reference)
-	}
-	return references, nil
-}
-
-func readMultipartImageReference(file *multipart.FileHeader) (ai.ImageReference, error) {
-	input, err := file.Open()
-	if err != nil {
-		return ai.ImageReference{}, err
-	}
-	defer input.Close()
-	data, err := io.ReadAll(io.LimitReader(input, maxMultipartImageBytes+1))
-	if err != nil {
-		return ai.ImageReference{}, err
-	}
-	if int64(len(data)) > maxMultipartImageBytes {
-		return ai.ImageReference{}, fmt.Errorf("reference image exceeds size limit")
-	}
-	return ai.ImageReference{Name: file.Filename, ContentType: file.Header.Get("Content-Type"), Data: data}, nil
-}
-
-func number(value string) int {
-	var result int
-	_, _ = fmt.Sscan(value, &result)
-	if result < 1 {
-		return 1
-	}
-	return result
 }
 
 func AIVideoByClient(w http.ResponseWriter, r *http.Request, client string) {

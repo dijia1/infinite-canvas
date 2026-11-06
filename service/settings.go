@@ -272,47 +272,6 @@ func providerAvailable(settings model.AISettings, id string, capability ai.Capab
 	return (capability != ai.CapabilityImageGenerate && capability != ai.CapabilityImageEdit) || (len(provider.ImagePrices) > 0 && (!requiresImageAspectRatios(typeInfo) || len(provider.AspectRatios) > 0))
 }
 
-func resolveProviderForID(capability ai.Capability, requestedProviderID string) (ai.Provider, error) {
-	provider, _, err := resolveProviderAndID(capability, requestedProviderID)
-	return provider, err
-}
-
-func resolveProviderAndID(capability ai.Capability, requestedProviderID string) (ai.Provider, string, error) {
-	settings, err := AdminSettings()
-	if err != nil {
-		return nil, "", err
-	}
-	id := strings.TrimSpace(requestedProviderID)
-	if id == "" {
-		id = settings.AI.ImageProviderID
-		if capability == ai.CapabilityVideoGenerate {
-			id = settings.AI.VideoProviderID
-		}
-	}
-	if id == "" {
-		return nil, "", errors.New("管理员尚未配置可用供应商")
-	}
-	provider, ok := findProvider(settings.AI, id)
-	if !ok || !provider.Enabled {
-		return nil, "", errors.New("当前供应商不可用")
-	}
-	typeInfo, ok := ai.Type(provider.Type)
-	if !ok || !typeInfo.Supports(capability) {
-		if capability == ai.CapabilityImageEdit {
-			return nil, "", errors.New("当前生图供应商不支持图像编辑")
-		}
-		return nil, "", errors.New("当前供应商不支持此能力")
-	}
-	if typeInfo.New == nil {
-		return nil, "", errors.New("当前供应商未实现")
-	}
-	instance, err := typeInfo.New(provider.Config)
-	if err != nil {
-		return nil, "", err
-	}
-	return instance, provider.ID, nil
-}
-
 func findProvider(settings model.AISettings, id string) (model.AIProvider, bool) {
 	for _, provider := range settings.Providers {
 		if provider.ID == id {

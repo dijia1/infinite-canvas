@@ -68,14 +68,6 @@ func UpdatePrivateFolderTitle(ownerUID, id, title string) (model.PrivateFolder, 
 	return GetPrivateFolder(ownerUID, id)
 }
 
-func PrivateFolderHasContents(ownerUID, id string) (bool, error) {
-	db, err := DB()
-	if err != nil {
-		return false, err
-	}
-	return privateFolderHasContents(db, ownerUID, id)
-}
-
 func privateFolderHasContents(db *gorm.DB, ownerUID, id string) (bool, error) {
 	var count int64
 	if err := db.Model(&model.PrivateFolder{}).Where("owner_uid = ? AND parent_id = ?", ownerUID, id).Count(&count).Error; err != nil {

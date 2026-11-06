@@ -225,7 +225,7 @@ func resolveVideoTaskInputs(ctx context.Context, user PortalUser, request Create
 	if err != nil {
 		return ai.VideoRequest{}, err
 	}
-	result := ai.VideoRequest{ProviderID: request.ProviderID, Prompt: request.Prompt, Seconds: strconv.Itoa(request.Seconds), Size: request.Size, Resolution: request.Resolution, GenerateAudio: request.GenerateAudio}
+	result := ai.VideoRequest{Prompt: request.Prompt, Seconds: strconv.Itoa(request.Seconds), Size: request.Size, Resolution: request.Resolution, GenerateAudio: request.GenerateAudio}
 	if _, ok := store.(*ossImageStore); !ok {
 		return result, safeMessageError{message: "视频生成需要 OSS 存储"}
 	}

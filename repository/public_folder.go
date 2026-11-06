@@ -61,13 +61,6 @@ func UpdatePublicFolderTitle(id, title string) (model.PublicFolder, bool, error)
 	return GetPublicFolder(id)
 }
 
-func PublicFolderHasContents(id string) (bool, error) {
-	db, err := DB()
-	if err != nil {
-		return false, err
-	}
-	return publicFolderHasContents(db, id)
-}
 func publicFolderHasContents(db *gorm.DB, id string) (bool, error) {
 	var count int64
 	if err := db.Model(&model.PublicFolder{}).Where("parent_id = ?", id).Count(&count).Error; err != nil {

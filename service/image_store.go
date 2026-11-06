@@ -342,18 +342,6 @@ func newImageStore() (imageStore, error) {
 	return sharedOSSStore.store, nil
 }
 
-func (store *ossImageStore) GetVersion(ctx context.Context, key, version, etag string) (io.ReadCloser, error) {
-	request := &oss.GetObjectRequest{Bucket: oss.Ptr(store.bucket), Key: oss.Ptr(key), VersionId: oss.Ptr(version)}
-	if etag != "" {
-		request.IfMatch = oss.Ptr(etag)
-	}
-	result, err := store.internal.GetObject(ctx, request)
-	if err != nil {
-		return nil, err
-	}
-	return result.Body, nil
-}
-
 func (store *ossImageStore) SignedMediaURL(ctx context.Context, key, version, process, disposition string) (string, time.Time, error) {
 	return store.signedAccessURLVersion(ctx, key, version, process, disposition)
 }

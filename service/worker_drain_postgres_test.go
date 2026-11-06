@@ -47,9 +47,6 @@ func (p *drainingProvider) GetVideo(ctx context.Context, _ string) (ai.VideoTask
 	p.await(ctx)
 	return ai.VideoTask{Status: "running"}, nil
 }
-func (p *drainingProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
-	return ai.VideoContent{}, errors.New("unused")
-}
 
 func TestImageWorkerDrainRetainsLeaseAndCompletesCurrentProviderCall(t *testing.T) {
 	workerShutdown.Store(false)

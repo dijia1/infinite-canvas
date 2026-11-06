@@ -124,10 +124,6 @@ func (generationIdempotencyProvider) GetVideo(context.Context, string) (ai.Video
 	return ai.VideoTask{}, errors.New("not used")
 }
 
-func (generationIdempotencyProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
-	return ai.VideoContent{}, errors.New("not used")
-}
-
 func registerGenerationIdempotencyProvider(t *testing.T) {
 	t.Helper()
 	const providerType = "generation-idempotency-test"

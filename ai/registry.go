@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 type Capability string
@@ -119,8 +118,6 @@ type ImageResult struct {
 	Data        []byte
 	ContentType string
 	URL         string
-	MediaID     string
-	ExpiresAt   time.Time
 }
 
 type ImageTaskRequest struct {
@@ -194,7 +191,6 @@ type ImageTaskRequestSummarizer interface {
 }
 
 type VideoRequest struct {
-	ProviderID    string
 	Prompt        string
 	Seconds       string
 	Size          string
@@ -235,13 +231,7 @@ type VideoTask struct {
 	Error      string   `json:"error,omitempty"`
 }
 
-type VideoContent struct {
-	Data        []byte
-	ContentType string
-}
-
 type VideoGenerator interface {
 	CreateVideo(context.Context, VideoRequest) (VideoTask, error)
 	GetVideo(context.Context, string) (VideoTask, error)
-	GetVideoContent(context.Context, string) (VideoContent, error)
 }

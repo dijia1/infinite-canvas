@@ -319,13 +319,6 @@ func TestImageTaskWorkerSignsThePreparedSnapshotVersion(t *testing.T) {
 	}
 }
 
-func (store *versionedTaskInputStore) GetVersion(ctx context.Context, key, version, etag string) (io.ReadCloser, error) {
-	if _, err := store.HeadVersion(ctx, key, version, etag); err != nil {
-		return nil, err
-	}
-	object, _ := store.version(key, version)
-	return io.NopCloser(bytes.NewReader(object.data)), nil
-}
 func (store *versionedTaskInputStore) SignedMediaURL(ctx context.Context, key, version, process, disposition string) (string, time.Time, error) {
 	address, expires, err := store.SignedURLVersion(ctx, key, version, time.Hour)
 	return address + "&x-oss-process=" + url.QueryEscape(process) + "&response-content-disposition=" + url.QueryEscape(disposition), expires, err

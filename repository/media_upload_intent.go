@@ -97,24 +97,6 @@ func DeleteMediaUploadIntent(id string) error {
 	return database.Delete(&model.MediaUploadIntent{}, "id = ?", id).Error
 }
 
-func DeleteCompletedMediaUploadIntentsBefore(before string) error {
-	database, err := DB()
-	if err != nil {
-		return err
-	}
-	return database.Where("completed_media_id <> '' AND completed_at < ?", before).Delete(&model.MediaUploadIntent{}).Error
-}
-
-func ListExpiredVideoUploadIntents(before string) ([]model.MediaUploadIntent, error) {
-	database, err := DB()
-	if err != nil {
-		return nil, err
-	}
-	var items []model.MediaUploadIntent
-	err = database.Where("content_type = ? AND completed_media_id <> '' AND expires_at < ?", "video/mp4", before).Find(&items).Error
-	return items, err
-}
-
 // A single leased publisher owns the immutable final object. Reservation is
 // durable before PUT so expired/incomplete intents can clean both objects.
 func ClaimVideoUploadCompletion(id, owner, key string, current time.Time) (model.MediaUploadIntent, error) {

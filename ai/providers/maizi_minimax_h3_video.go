@@ -90,10 +90,6 @@ func (provider *maiziMiniMaxH3VideoProvider) GetVideo(ctx context.Context, id st
 	return provider.transport().GetVideo(ctx, id)
 }
 
-func (provider *maiziMiniMaxH3VideoProvider) GetVideoContent(ctx context.Context, id string) (ai.VideoContent, error) {
-	return provider.transport().GetVideoContent(ctx, id)
-}
-
 func (provider *maiziMiniMaxH3VideoProvider) transport() *maiziVideoProvider {
 	return &maiziVideoProvider{config: provider.config, client: provider.client}
 }

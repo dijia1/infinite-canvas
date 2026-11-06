@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
-	"io"
 	"time"
 )
 
@@ -13,7 +12,6 @@ import (
 // version-aware reads and signatures, including processing/download parameters.
 type mediaVersionStore interface {
 	versionedImageStore
-	GetVersion(context.Context, string, string, string) (io.ReadCloser, error)
 	SignedMediaURL(context.Context, string, string, string, string) (string, time.Time, error)
 }
 
@@ -47,17 +45,6 @@ func bindMediaVersion(ctx context.Context, store versionedImageStore, item model
 		return model.Media{}, err
 	}
 	return bound, nil
-}
-
-func readMediaObject(ctx context.Context, store imageStore, item model.Media) (io.ReadCloser, error) {
-	if versioned, ok := store.(mediaVersionStore); ok {
-		bound, err := bindMediaVersion(ctx, versioned, item)
-		if err != nil {
-			return nil, err
-		}
-		return versioned.GetVersion(ctx, bound.ObjectKey, bound.ObjectVersionID, bound.ObjectETag)
-	}
-	return store.Get(ctx, item.ObjectKey)
 }
 
 func persistMediaCopyIdentity(ctx context.Context, item model.Media, metadata imageObjectMetadata) (model.Media, error) {

@@ -206,10 +206,6 @@ func (p *retryBudgetVideoProvider) GetVideo(context.Context, string) (ai.VideoTa
 	return ai.VideoTask{}, errors.New("transient provider poll failure")
 }
 
-func (p *retryBudgetVideoProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
-	return ai.VideoContent{}, errors.New("not used")
-}
-
 func pauseVideoAfterFivePollFailures(t *testing.T, id string, ownerUID string, clientRequestID string) (model.VideoGenerationTask, *retryBudgetVideoProvider) {
 	t.Helper()
 	current := time.Now().UTC().Truncate(time.Microsecond)
@@ -280,9 +276,6 @@ func (p workerVideoProvider) CreateVideo(context.Context, ai.VideoRequest) (ai.V
 func (p workerVideoProvider) GetVideo(context.Context, string) (ai.VideoTask, error) {
 	*p.calls++
 	return p.task, p.err
-}
-func (p workerVideoProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
-	return ai.VideoContent{}, errors.New("not used")
 }
 func seedWorkerVideo(t *testing.T, status string, p workerVideoProvider) (model.VideoGenerationTask, time.Time) {
 	t.Helper()

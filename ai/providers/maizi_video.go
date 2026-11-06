@@ -96,9 +96,6 @@ func (p *maiziVideoProvider) GetVideo(ctx context.Context, id string) (ai.VideoT
 }
 
 // Result media is streamed into managed storage by the task worker.
-func (p *maiziVideoProvider) GetVideoContent(context.Context, string) (ai.VideoContent, error) {
-	return ai.VideoContent{}, maiziError{"请通过已保存的视频媒体下载结果"}
-}
 
 func (p *maiziVideoProvider) request(ctx context.Context, method, path string, body []byte, create bool) (ai.VideoTask, error) {
 	fail := func(message string, uncertain bool) (ai.VideoTask, error) {
