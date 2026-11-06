@@ -74,6 +74,7 @@ func ReplaceWorkflowMediaRefs(tx *gorm.DB, ownerUID, scope, scopeID string, medi
 			}
 		}
 	}
+	canvasRefsByOwner := make(map[string]map[string]struct{})
 	for _, id := range ids {
 		item, exists := byID[id]
 		if !exists {
@@ -97,9 +98,13 @@ func ReplaceWorkflowMediaRefs(tx *gorm.DB, ownerUID, scope, scopeID string, medi
 			if err != nil {
 				return err
 			}
-			refs, err := canvasMediaReferences(tx, item.OwnerUID)
-			if err != nil {
-				return err
+			refs, loaded := canvasRefsByOwner[item.OwnerUID]
+			if !loaded {
+				refs, err = canvasMediaReferences(tx, item.OwnerUID)
+				if err != nil {
+					return err
+				}
+				canvasRefsByOwner[item.OwnerUID] = refs
 			}
 			_, canvasHeld := refs[id]
 			taskHeld, err := videoTaskReferences(tx, id, time.Now().UTC())

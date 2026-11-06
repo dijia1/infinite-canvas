@@ -318,28 +318,17 @@ func processWorkflowAttempt(ctx context.Context, attempt model.WorkflowOutputAtt
 	userContext := WithPortalUser(ctx, PortalUser{UID: attempt.OwnerUID})
 	var view ImageTaskView
 	if attempt.TaskID == "" {
-		if existing, found, lookupErr := repository.GetImageGenerationTaskByClientRequest(attempt.OwnerUID, attempt.RequestID); lookupErr != nil {
+		if found, lookupErr := recoverWorkflowTask(&attempt, "image"); lookupErr != nil {
 			return deferWorkflowAttempt(attempt)
 		} else if found {
-			attempt.TaskID, attempt.TaskType = existing.ID, "image"
-			logWorkflowAttempt(attempt, "recovered")
 			view, err = workflowGetImageTask(userContext, attempt.RequestID)
 			if err != nil {
 				return deferWorkflowAttempt(attempt)
 			}
 			return applyWorkflowImageView(attempt, view)
 		}
-		if attempt.Error != "" && workflowTaskCreationExpired(attempt, time.Now().UTC()) {
-			return failWorkflowAttempt(attempt, safeMessageError{message: "创建生成任务超时，尚未提交供应商；请检查参考素材或网络后重试"})
-		}
-		if err := requireEnabledWorkflowMember(attempt.OwnerUID); err != nil {
-			return failWorkflowAttempt(attempt, err)
-		}
-		resolved, err := resolveWorkflowInputs(graph, node.ID, record.Outputs)
-		if err != nil || resolved.State != "ready" {
-			if err == nil {
-				err = fmt.Errorf("workflow inputs are no longer ready")
-			}
+		resolved, err := workflowAttemptInputs(attempt, graph, node.ID, record.Outputs)
+		if err != nil {
 			return failWorkflowAttempt(attempt, err)
 		}
 		request, err := workflowImageRequest(node, resolved, attempt.RequestID)
@@ -350,18 +339,7 @@ func processWorkflowAttempt(ctx context.Context, attempt model.WorkflowOutputAtt
 		view, err = workflowCreateImageTask(submitContext, request)
 		cancel()
 		if err != nil {
-			if existing, found, lookupErr := repository.GetImageGenerationTaskByClientRequest(attempt.OwnerUID, attempt.RequestID); lookupErr != nil {
-				return deferWorkflowAttempt(attempt)
-			} else if found {
-				attempt.TaskID, attempt.TaskType = existing.ID, "image"
-				logWorkflowAttempt(attempt, "recovered")
-				return deferWorkflowAttempt(attempt)
-			}
-			var safe interface{ SafeMessage() string }
-			if errors.As(err, &safe) {
-				return failWorkflowAttempt(attempt, err)
-			}
-			return retryWorkflowTaskCreation(attempt, err)
+			return workflowTaskCreationError(attempt, "image", err)
 		}
 		attempt.TaskID, attempt.TaskType = view.ID, "image"
 		logWorkflowAttempt(attempt, "submitted")
@@ -379,28 +357,17 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 	var view VideoTaskView
 	var err error
 	if attempt.TaskID == "" {
-		if existing, found, lookupErr := repository.GetVideoGenerationTaskByClient(attempt.OwnerUID, attempt.RequestID); lookupErr != nil {
+		if found, lookupErr := recoverWorkflowTask(&attempt, "video"); lookupErr != nil {
 			return deferWorkflowAttempt(attempt)
 		} else if found {
-			attempt.TaskID, attempt.TaskType = existing.ID, "video"
-			logWorkflowAttempt(attempt, "recovered")
 			view, err = workflowGetVideoTask(userContext, attempt.RequestID)
 			if err != nil {
 				return deferWorkflowAttempt(attempt)
 			}
 			return applyWorkflowVideoView(attempt, view)
 		}
-		if attempt.Error != "" && workflowTaskCreationExpired(attempt, time.Now().UTC()) {
-			return failWorkflowAttempt(attempt, safeMessageError{message: "创建生成任务超时，尚未提交供应商；请检查参考素材或网络后重试"})
-		}
-		if err := requireEnabledWorkflowMember(attempt.OwnerUID); err != nil {
-			return failWorkflowAttempt(attempt, err)
-		}
-		resolved, err := resolveWorkflowInputs(graph, node.ID, record.Outputs)
-		if err != nil || resolved.State != "ready" {
-			if err == nil {
-				err = fmt.Errorf("workflow inputs are no longer ready")
-			}
+		resolved, err := workflowAttemptInputs(attempt, graph, node.ID, record.Outputs)
+		if err != nil {
 			return failWorkflowAttempt(attempt, err)
 		}
 		request, err := workflowVideoRequest(node, resolved, attempt.RequestID)
@@ -411,18 +378,7 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 		view, err = workflowCreateVideoTask(submitContext, request)
 		cancel()
 		if err != nil {
-			if existing, found, lookupErr := repository.GetVideoGenerationTaskByClient(attempt.OwnerUID, attempt.RequestID); lookupErr != nil {
-				return deferWorkflowAttempt(attempt)
-			} else if found {
-				attempt.TaskID, attempt.TaskType = existing.ID, "video"
-				logWorkflowAttempt(attempt, "recovered")
-				return deferWorkflowAttempt(attempt)
-			}
-			var safe interface{ SafeMessage() string }
-			if errors.As(err, &safe) {
-				return failWorkflowAttempt(attempt, err)
-			}
-			return retryWorkflowTaskCreation(attempt, err)
+			return workflowTaskCreationError(attempt, "video", err)
 		}
 		attempt.TaskID, attempt.TaskType = view.ID, "video"
 		logWorkflowAttempt(attempt, "submitted")
@@ -433,6 +389,52 @@ func processWorkflowVideoAttempt(ctx context.Context, attempt model.WorkflowOutp
 		}
 	}
 	return applyWorkflowVideoView(attempt, view)
+}
+
+// Both task kinds recover durable creation by client request ID before retrying.
+// Their request construction and result publication keep their own media rules.
+func recoverWorkflowTask(attempt *model.WorkflowOutputAttempt, kind string) (bool, error) {
+	var id string
+	var found bool
+	var err error
+	if kind == "image" {
+		var task model.ImageGenerationTask
+		task, found, err = repository.GetImageGenerationTaskByClientRequest(attempt.OwnerUID, attempt.RequestID)
+		id = task.ID
+	} else {
+		var task model.VideoGenerationTask
+		task, found, err = repository.GetVideoGenerationTaskByClient(attempt.OwnerUID, attempt.RequestID)
+		id = task.ID
+	}
+	if err == nil && found {
+		attempt.TaskID, attempt.TaskType = id, kind
+		logWorkflowAttempt(*attempt, "recovered")
+	}
+	return found, err
+}
+
+func workflowAttemptInputs(attempt model.WorkflowOutputAttempt, graph model.WorkflowGraph, nodeID string, outputs []model.WorkflowOutputExecution) (workflowResolvedInputs, error) {
+	if attempt.Error != "" && workflowTaskCreationExpired(attempt, time.Now().UTC()) {
+		return workflowResolvedInputs{}, safeMessageError{message: "创建生成任务超时，尚未提交供应商；请检查参考素材或网络后重试"}
+	}
+	if err := requireEnabledWorkflowMember(attempt.OwnerUID); err != nil {
+		return workflowResolvedInputs{}, err
+	}
+	resolved, err := resolveWorkflowInputs(graph, nodeID, outputs)
+	if err == nil && resolved.State != "ready" {
+		err = fmt.Errorf("workflow inputs are no longer ready")
+	}
+	return resolved, err
+}
+
+func workflowTaskCreationError(attempt model.WorkflowOutputAttempt, kind string, cause error) error {
+	if found, err := recoverWorkflowTask(&attempt, kind); err != nil || found {
+		return deferWorkflowAttempt(attempt)
+	}
+	if _, safe := SafeMessage(cause); safe {
+		return failWorkflowAttempt(attempt, cause)
+	}
+	return retryWorkflowTaskCreation(attempt, cause)
 }
 
 func deferWorkflowAttempt(attempt model.WorkflowOutputAttempt) error {

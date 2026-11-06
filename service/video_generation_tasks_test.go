@@ -67,16 +67,23 @@ func TestVideoReferencesUseSavedDurationWithoutDownloading(t *testing.T) {
 }
 
 func TestVideoRequestBoundariesAndPriceSnapshot(t *testing.T) {
+	provider := model.AIProvider{AspectRatios: []string{"16:9"}, VideoPrices: []model.ImageResolutionPrice{{Resolution: "720p", Amount: decimal.RequireFromString("0.1234")}}}
+	validate := func(request CreateVideoTaskRequest) error {
+		if err := validateVideoTaskRequest(request); err != nil {
+			return err
+		}
+		return validateVideoRequestCapabilities(request, provider, ai.ProviderType{})
+	}
 	request := CreateVideoTaskRequest{ClientRequestID: "client", Prompt: "test", Seconds: 4, Size: "16:9", Resolution: "720p"}
 	for _, seconds := range []int{4, 15} {
 		request.Seconds = seconds
-		if err := validateVideoTaskRequest(request); err != nil {
+		if err := validate(request); err != nil {
 			t.Fatal(err)
 		}
 	}
 	for _, seconds := range []int{0, 3, 16} {
 		request.Seconds = seconds
-		if err := validateVideoTaskRequest(request); err == nil {
+		if err := validate(request); err == nil {
 			t.Fatal("invalid seconds accepted")
 		}
 	}
@@ -86,19 +93,18 @@ func TestVideoRequestBoundariesAndPriceSnapshot(t *testing.T) {
 		request.ImageMediaIDs[i] = "image"
 	}
 	request.VideoMediaIDs = []string{"v1", "v2", "v3"}
-	if err := validateVideoTaskRequest(request); err != nil {
+	if err := validate(request); err != nil {
 		t.Fatal(err)
 	}
 	request.ImageMediaIDs = append(request.ImageMediaIDs, "tenth")
-	if err := validateVideoTaskRequest(request); err == nil {
+	if err := validate(request); err == nil {
 		t.Fatal("ten images accepted")
 	}
 	request.ImageMediaIDs = nil
 	request.VideoMediaIDs = append(request.VideoMediaIDs, "fourth")
-	if err := validateVideoTaskRequest(request); err == nil {
+	if err := validate(request); err == nil {
 		t.Fatal("four videos accepted")
 	}
-	provider := model.AIProvider{AspectRatios: []string{"16:9"}, VideoPrices: []model.ImageResolutionPrice{{Resolution: "720p", Amount: decimal.RequireFromString("0.1234")}}}
 	amount, err := videoTaskAmount(provider, request)
 	if err != nil || !amount.Equal(decimal.RequireFromString("0.617")) {
 		t.Fatal(amount, err)

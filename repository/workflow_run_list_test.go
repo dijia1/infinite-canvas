@@ -82,8 +82,8 @@ func TestListWorkflowRunsOmitsSnapshotWithoutChangingResults(t *testing.T) {
 		t.Fatalf("scheduler run list count=%d err=%v", len(open), err)
 	}
 	for _, item := range open {
-		if item.Snapshot != snapshot {
-			t.Fatalf("scheduler snapshot lost for %s", item.ID)
+		if item.OwnerUID != stored[item.ID].OwnerUID {
+			t.Fatalf("scheduler owner lost for %s", item.ID)
 		}
 	}
 }

@@ -99,7 +99,7 @@ func ListPreparingImageGenerationTasks() ([]model.ImageGenerationTask, error) {
 		return nil, err
 	}
 	var items []model.ImageGenerationTask
-	err = database.Where("status = ?", model.ImageTaskPreparing).Order("created_at asc").Order("id asc").Find(&items).Error
+	err = database.Select("id", "created_at", "deadline").Where("status = ?", model.ImageTaskPreparing).Order("created_at asc").Order("id asc").Find(&items).Error
 	return items, err
 }
 

@@ -54,13 +54,13 @@ func newMaiziVideoHTTPClient() *http.Client {
 
 func (p *maiziVideoProvider) CreateVideo(ctx context.Context, r ai.VideoRequest) (ai.VideoTask, error) {
 	duration, err := strconv.Atoi(r.Seconds)
-	if err != nil || duration < 4 || duration > 15 {
+	if err != nil || duration < maiziSeedanceVideoRequestSchema.MinDuration || duration > maiziSeedanceVideoRequestSchema.MaxDuration {
 		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频时长必须为 4 至 15 秒整数"}
 	}
 	if strings.TrimSpace(r.Prompt) == "" || strings.TrimSpace(r.Size) == "" || strings.TrimSpace(r.Resolution) == "" {
 		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频提示词、比例和分辨率不能为空"}
 	}
-	if len(r.ImageURLs) > 9 || len(r.VideoURLs) > 3 || len(r.References) > 0 {
+	if len(r.ImageURLs) > maiziSeedanceVideoRequestSchema.MaxReferenceImages || len(r.VideoURLs) > maiziSeedanceVideoRequestSchema.MaxReferenceVideos || len(r.References) > 0 {
 		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频最多支持 9 张图片和 3 个视频，参考素材必须使用远端地址"}
 	}
 	for _, refs := range [][]string{r.ImageURLs, r.VideoURLs} {

@@ -557,8 +557,8 @@ func validateWorkflowRunInputs(ctx context.Context, user PortalUser, graph model
 			if _, ok := instance.(ai.VideoGenerator); !ok {
 				return workflowValidationError{message: "视频模型不可用"}
 			}
-			if _, err := videoTaskAmount(provider, request); err != nil {
-				return workflowRunValidationError(err, "视频生成节点价格未配置")
+			if err := validateVideoRequestCapabilities(request, provider, typeInfo); err != nil {
+				return workflowRunValidationError(err, "视频生成节点参数无效")
 			}
 			if err := validateWorkflowVideoReferenceDuration(ctx, graph, node.ID); err != nil {
 				return err

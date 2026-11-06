@@ -72,40 +72,10 @@ func AdmitWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution
 		if definition.Revision != expectedRevision {
 			return ErrWorkflowRevisionConflict
 		}
-		active := []model.WorkflowRun{}
-		if err := tx.Where("owner_uid = ? AND workflow_id = ? AND status IN ?", run.OwnerUID, run.WorkflowID, workflowActiveStatuses()).Order("created_at DESC, id DESC").Find(&active).Error; err != nil {
+		if conflict, err := workflowRunConflict(tx, run, steps, ""); err != nil {
 			return err
-		}
-		for _, other := range active {
-			if normalizeWorkflowRunScopeType(run.ScopeType) == model.WorkflowRunScopeWorkflow || normalizeWorkflowRunScopeType(other.ScopeType) == model.WorkflowRunScopeWorkflow || (run.FrameID != "" && run.FrameID == other.FrameID) {
-				return &WorkflowRunAdmissionConflict{Code: "workflow_run_scope_active", RunID: other.ID}
-			}
-		}
-		if len(active) > 0 && len(steps) > 0 {
-			candidate := make(map[string]struct{}, len(steps))
-			for _, step := range steps {
-				candidate[step.NodeID] = struct{}{}
-			}
-			activeIDs := make([]string, 0, len(active))
-			for _, other := range active {
-				activeIDs = append(activeIDs, other.ID)
-			}
-			var activeSteps []model.WorkflowStepExecution
-			if err := tx.Where("run_id IN ?", activeIDs).Order("run_id, node_id").Find(&activeSteps).Error; err != nil {
-				return err
-			}
-			byRun := make(map[string][]string)
-			for _, step := range activeSteps {
-				if _, overlaps := candidate[step.NodeID]; overlaps {
-					byRun[step.RunID] = append(byRun[step.RunID], step.NodeID)
-				}
-			}
-			for _, other := range active {
-				if ids := byRun[other.ID]; len(ids) > 0 {
-					sort.Strings(ids)
-					return &WorkflowRunAdmissionConflict{Code: "workflow_run_nodes_active", RunID: other.ID, NodeIDs: ids}
-				}
-			}
+		} else if conflict != nil {
+			return conflict
 		}
 		result = tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "owner_uid"}, {Name: "request_id"}}, DoNothing: true}).Create(&run)
 		if result.Error != nil {
@@ -225,20 +195,22 @@ func ListWorkflowRunsFiltered(ownerUID string, filter WorkflowRunListFilter, pag
 	return items, total, err
 }
 
-func ListOpenWorkflowRuns(afterID string, limit int) ([]model.WorkflowRun, error) {
+type WorkflowRunIdentity struct {
+	ID       string
+	OwnerUID string
+}
+
+func ListOpenWorkflowRuns(afterID string, limit int) ([]WorkflowRunIdentity, error) {
 	database, err := DB()
 	if err != nil {
 		return nil, err
 	}
-	items := []model.WorkflowRun{}
-	query := database.Where("status IN ?", []string{"pending", "running", "stopping", "attention_required"})
+	items := []WorkflowRunIdentity{}
+	query := database.Model(&model.WorkflowRun{}).Select("id", "owner_uid").Where("status IN ?", workflowActiveStatuses())
 	if afterID != "" {
 		query = query.Where("id > ?", afterID)
 	}
 	err = query.Order("id").Limit(limit).Find(&items).Error
-	for index := range items {
-		canonicalizeWorkflowRunScope(&items[index])
-	}
 	return items, err
 }
 
@@ -270,7 +242,7 @@ func UpdateWorkflowEvaluation(runID string, expectedStateVersion int64, outputUp
 			}
 		}
 		updates := map[string]any{"status": status, "updated_at": current, "finished_at": finishedAt, "state_version": gorm.Expr("state_version + 1")}
-		return tx.Model(&model.WorkflowRun{}).Where("id = ? AND status IN ?", runID, []string{"pending", "running", "stopping", "attention_required"}).Updates(updates).Error
+		return tx.Model(&model.WorkflowRun{}).Where("id = ? AND status IN ?", runID, workflowActiveStatuses()).Updates(updates).Error
 	})
 }
 
@@ -488,7 +460,7 @@ func RequestWorkflowRunStop(ownerUID, id string, current time.Time) (bool, error
 	if err != nil {
 		return false, err
 	}
-	result := database.Model(&model.WorkflowRun{}).Where("owner_uid = ? AND id = ? AND status IN ?", ownerUID, id, []string{"pending", "running", "attention_required", "stopping"}).
+	result := database.Model(&model.WorkflowRun{}).Where("owner_uid = ? AND id = ? AND status IN ?", ownerUID, id, workflowActiveStatuses()).
 		Updates(map[string]any{"stop_requested": true, "status": "stopping", "updated_at": current, "state_version": gorm.Expr("state_version + 1")})
 	return result.RowsAffected > 0, result.Error
 }

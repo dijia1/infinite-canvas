@@ -52,11 +52,8 @@ func normalizeVideoTaskRequest(request CreateVideoTaskRequest) (CreateVideoTaskR
 	if request.Prompt == "" || len(request.Prompt) > 20000 {
 		return CreateVideoTaskRequest{}, safeMessageError{message: "请填写有效的视频提示词"}
 	}
-	if request.Seconds < 4 || request.Seconds > 15 {
-		return CreateVideoTaskRequest{}, safeMessageError{message: "生成视频时长必须为 4–15 秒"}
-	}
-	if len(request.ImageMediaIDs) > 9 || len(request.VideoMediaIDs) > 3 {
-		return CreateVideoTaskRequest{}, safeMessageError{message: "最多支持 9 张参考图片和 3 个参考视频"}
+	if request.Seconds < 1 {
+		return CreateVideoTaskRequest{}, safeMessageError{message: "生成视频时长必须为正整数"}
 	}
 	for _, ids := range [][]string{request.ImageMediaIDs, request.VideoMediaIDs} {
 		for index, id := range ids {
