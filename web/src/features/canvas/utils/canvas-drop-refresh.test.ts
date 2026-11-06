@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
-import { collectDroppedImageFiles, importDroppedImageFiles } from "./canvas-file-drop.ts";
+import { collectDroppedImageFiles, collectDroppedMediaFiles, importDroppedImageFiles, layoutDroppedImageGrid } from "./canvas-file-drop.ts";
 
 // Execute the actual page callback with UI dependencies supplied, without mounting
 // the entire canvas/WebGL editor. This catches a refresh reintroduced in handleDrop.
@@ -28,6 +28,8 @@ test("batch local node completion selects nodes without requesting a remote cata
         PRIVATE_IMAGE_DRAG_TYPE: "private",
         PUBLIC_IMAGE_DRAG_TYPE: "public",
         collectDroppedImageFiles,
+        collectDroppedMediaFiles,
+        layoutDroppedImageGrid,
         importDroppedImageFiles,
         createImageFileNode: async (file: File) => file.name,
         setSelectedNodeIds: (ids: Set<string>) => {

@@ -33,7 +33,10 @@ export function ScopedVideoResourceProvider({ scope, nodeIds, children, resetOnC
     return <Context.Provider value={resources}>{children}</Context.Provider>;
 }
 
-export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean }) {
+export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, onDimensions }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean; onDimensions?: (dimensions: { width: number; height: number }) => void }) {
+    const naturalSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
+    const dimensionsRef = useRef(onDimensions);
+    dimensionsRef.current = onDimensions;
     const resources = useContext(Context);
     const videoRef = useRef<HTMLVideoElement>(null);
     const leaseRef = useRef<VideoResourceLease | undefined>(undefined);
@@ -57,6 +60,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
     };
     useLayoutEffect(() => {
         setSource(undefined);
+        naturalSizeRef.current = undefined;
         setPoster(undefined);
         setBusy(false);
         setError("");
@@ -70,6 +74,11 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
             clearTimeout(recoveryTimer.current);
         };
     }, [resources, mediaId, nodeId]);
+    // Editing permission may arrive after cached metadata. Deliver it once the
+    // caller can accept layout changes without fetching the resource again.
+    useEffect(() => {
+        if (onDimensions && naturalSizeRef.current) dimensionsRef.current?.(naturalSizeRef.current);
+    }, [Boolean(onDimensions), mediaId]);
     useEffect(() => {
         if (!resources || !mediaId || (!visible && !source && !external)) return;
         const lease = resources.manager.acquire(mediaId);
@@ -79,7 +88,13 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
             void lease
                 .getAccess()
                 .then((value) => {
-                    if (live) setSource(value.url);
+                    if (live) {
+                        setSource(value.url);
+                        if (value.width > 0 && value.height > 0) {
+                            naturalSizeRef.current = { width: value.width, height: value.height };
+                            dimensionsRef.current?.(naturalSizeRef.current);
+                        }
+                    }
                 })
                 .catch((e) => {
                     if (live) setError(e instanceof Error ? e.message : "视频地址加载失败");
@@ -101,6 +116,23 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
     useEffect(() => {
         if (visible && !mediaId && legacyURL) setSource(legacyURL);
     }, [visible, mediaId, legacyURL]);
+    // Generated videos can lack stored dimensions. The cached first frame gives
+    // their aspect ratio without preloading the video just to measure it.
+    useEffect(() => {
+        if (!onDimensions || !poster || naturalSizeRef.current) return;
+        const image = new Image();
+        image.onload = () => {
+            naturalSizeRef.current = { width: image.naturalWidth, height: image.naturalHeight };
+            dimensionsRef.current?.(naturalSizeRef.current);
+        };
+        image.onerror = () => console.warn("读取视频封面尺寸失败", { mediaId });
+        image.src = poster;
+        return () => {
+            image.onload = null;
+            image.onerror = null;
+            image.removeAttribute("src");
+        };
+    }, [poster, Boolean(onDimensions), mediaId]);
     useEffect(() => {
         if (source && switching.current) videoRef.current?.load();
     }, [source]);
@@ -118,7 +150,10 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
     useLayoutEffect(
         () => () => {
             save();
-            videoRef.current?.pause();
+            const video = videoRef.current;
+            video?.pause();
+            video?.removeAttribute("src");
+            video?.load();
         },
         [resources, nodeId, mediaId],
     );
@@ -184,6 +219,8 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true 
     const loaded = () => {
         const video = videoRef.current;
         if (!video || failed.current) return;
+        naturalSizeRef.current = { width: video.videoWidth, height: video.videoHeight };
+        dimensionsRef.current?.(naturalSizeRef.current);
         const value = snapshot.current;
         if (!restored.current && value) {
             restored.current = true;

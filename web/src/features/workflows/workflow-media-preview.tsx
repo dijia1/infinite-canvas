@@ -16,7 +16,7 @@ export function WorkflowMediaPreview({
     imageError,
     onRetryImage,
     onImageLoaded,
-    onImageDimensions,
+    onMediaDimensions,
     onChoose,
 }: {
     nodeId: string;
@@ -29,7 +29,7 @@ export function WorkflowMediaPreview({
     imageError?: string;
     onRetryImage?: () => void;
     onImageLoaded?: (storageKey: string) => void;
-    onImageDimensions?: (dimensions: { width: number; height: number }) => void;
+    onMediaDimensions?: (dimensions: { width: number; height: number }) => void;
     onChoose?: () => void;
 }) {
     if (!mediaId && !(type === "image" && imageUrl)) {
@@ -42,7 +42,7 @@ export function WorkflowMediaPreview({
             </div>
         );
     }
-    if (type === "video") return <CanvasVideoContent nodeId={nodeId} mediaId={mediaId} visible={visible} />;
+    if (type === "video") return <CanvasVideoContent nodeId={nodeId} mediaId={mediaId} visible={visible} onDimensions={readOnly ? undefined : onMediaDimensions} />;
     return (
         <CanvasReadyImage
             key={mediaId}
@@ -52,7 +52,7 @@ export function WorkflowMediaPreview({
             onRetry={onRetryImage}
             onReady={(image) => {
                 if (imageStorageKey) onImageLoaded?.(imageStorageKey);
-                onImageDimensions?.({ width: image.naturalWidth, height: image.naturalHeight });
+                onMediaDimensions?.({ width: image.naturalWidth, height: image.naturalHeight });
             }}
         />
     );

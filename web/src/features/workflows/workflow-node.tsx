@@ -1,12 +1,16 @@
 "use client";
 
 import { Button } from "antd";
-import { Image as ImageIcon, LoaderCircle, Maximize2, Pencil, RefreshCw, Trash2, Upload, Video, X } from "lucide-react";
+import { Image as ImageIcon, LoaderCircle, Maximize2, Pencil, RefreshCw, Trash2, Upload, Video } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
 import { CanvasConnectionHandle, CanvasNodeFrame, CanvasResizeHandle, canvasNodeSelectionColor, canvasResizeCorners, type CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
+import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "@/lib/canvas-config-card";
+import { CanvasMediaUploadStatus } from "@/features/canvas/components/canvas-media-upload-status";
+import { CanvasVideoUploadContent } from "@/features/canvas/components/canvas-video-upload-content";
+import type { LocalVideoUploadView } from "@/features/canvas/media/canvas-local-video-upload-controller";
 import { CanvasNodeToolbarAction, CanvasNodeToolbarIconAction, CanvasNodeToolbarShell } from "@/components/canvas-node-toolbar-shell";
 import type { CanvasRenderDetail } from "@/features/canvas/media/canvas-media-policy";
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -24,6 +28,8 @@ export function WorkflowNodeCard({
     node,
     canvasNodeId,
     renderDetail = "full",
+    scale = 1,
+    videoUpload, onRetryVideoUpload, onCancelVideoUpload,
     selected,
     readOnly = false,
     connecting,
@@ -35,7 +41,7 @@ export function WorkflowNodeCard({
     localUpload, onRetryUpload, onCancelReplacement,
     onRetryImage,
     onImageLoaded,
-    onImageDimensions,
+    onMediaDimensions,
     onDragStart,
     onContextMenu,
     onResizeStart,
@@ -44,7 +50,6 @@ export function WorkflowNodeCard({
     onTextChange,
     onConfigChange,
     onModeChange,
-    onLayoutHeightChange,
     onOutputCountChange,
     onPreview,
     onPreviewMedia,
@@ -54,6 +59,10 @@ export function WorkflowNodeCard({
     node: WorkflowNode;
     canvasNodeId?: string;
     renderDetail?: CanvasRenderDetail;
+    scale?: number;
+    videoUpload?: LocalVideoUploadView;
+    onRetryVideoUpload?: () => void;
+    onCancelVideoUpload?: () => void;
     selected: boolean;
     readOnly?: boolean;
     connecting: boolean;
@@ -67,7 +76,7 @@ export function WorkflowNodeCard({
     onCancelReplacement?: () => void;
     onRetryImage: () => void;
     onImageLoaded: (storageKey: string) => void;
-    onImageDimensions?: (dimensions: { width: number; height: number }) => void;
+    onMediaDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, node: WorkflowNode) => void;
     onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
     onResizeStart?: ResizeStart;
@@ -76,7 +85,6 @@ export function WorkflowNodeCard({
     onTextChange: (value: string) => void;
     onConfigChange: (config: WorkflowGenerationConfig) => void;
     onModeChange?: (mode: "image" | "video") => void;
-    onLayoutHeightChange?: (height: number) => void;
     onOutputCountChange: (count: number) => void;
     onPreview: () => void;
     onPreviewMedia?: () => void;
@@ -91,6 +99,7 @@ export function WorkflowNodeCard({
     const width = node.width || 340;
     const height = node.height || 240;
     const generation = node.type === "image_generation" || node.type === "video_generation";
+    const configCard = generation && scale < CONFIG_COMPACT_MAX_SCALE ? getConfigCardView({ width, height }, scale) : undefined;
     const mediaType = node.type === "image_input" ? "image" : node.type === "video_input" ? "video" : undefined;
     const hasMedia = Boolean(mediaType && (node.mediaId || imageUrl));
     useEffect(() => {
@@ -99,18 +108,8 @@ export function WorkflowNodeCard({
     useEffect(() => {
         if (!selected || readOnly) setEditing(false);
     }, [selected, readOnly]);
-    const uploadStatus = localUpload && localUpload.state !== "completed" ? (
-        <div data-local-image-upload={localUpload.state} title={localUpload.error || `${localUpload.fileName}：上传中 ${localUpload.progress}%`}
-            className="absolute inset-x-0 bottom-0 z-[45] flex items-center gap-1 overflow-hidden bg-stone-100/95 px-2 py-1 text-stone-700 dark:bg-stone-900/95 dark:text-stone-200"
-            style={{ fontSize: "calc(11px * max(1, var(--canvas-inverse-scale, 1)))", gap: "calc(4px * max(1, var(--canvas-inverse-scale, 1)))" }}
-            onPointerDown={event => event.stopPropagation()} onMouseDown={event => event.stopPropagation()}>
-            <span className={`inline-block shrink-0 rounded-full ${localUpload.state === "failed" ? "bg-red-500" : "bg-amber-500 animate-pulse"}`} style={{ width: ".55em", height: ".55em" }} />
-            <span className="min-w-0 flex-1 truncate">{localUpload.state === "failed" ? "上传失败" : `${localUpload.progress}%`}</span>
-            {localUpload.state === "failed" && !readOnly ? <button type="button" aria-label="重试上传" title="重试上传" onClick={onRetryUpload} className="shrink-0"><RefreshCw style={{ width: "1.2em", height: "1.2em" }} /></button> : null}
-            {localUpload.original && !readOnly ? <button type="button" aria-label="取消替换" title="取消替换" onClick={onCancelReplacement} className="shrink-0"><X style={{ width: "1.2em", height: "1.2em" }} /></button> : null}
-        </div>
-    ) : null;
-    if (renderDetail === "overview") {
+    const uploadStatus = localUpload && localUpload.state !== "completed" ? <CanvasMediaUploadStatus stage={localUpload.state === "failed" ? "failed" : "uploading"} progress={localUpload.progress} error={localUpload.error} onRetry={readOnly ? undefined : onRetryUpload} onCancel={readOnly ? undefined : onCancelReplacement} /> : null;
+    if (renderDetail === "overview" && !generation && !videoUpload) {
         return <CanvasOverviewNode
             nodeId={canvasNodeId || node.id}
             title={node.text || (generation ? "生成配置" : mediaType === "image" ? "图片" : mediaType === "video" ? "视频" : "节点")}
@@ -139,8 +138,9 @@ export function WorkflowNodeCard({
             data-workflow-object
             data-node-id={canvasNodeId || node.id}
             data-workflow-node-id={node.id}
+            data-config-form={generation ? configCard?.form || "full" : undefined}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${selected ? "z-50" : "z-10"}`}
-            style={{ transform: `translate(${node.position.x}px, ${node.position.y}px)`, width, height, contain: "layout style" }}
+            style={{ ...(configCard ? { "--config-card-design-scale": configCard.designScale } : {}), transform: `translate(${node.position.x}px, ${node.position.y}px)`, width, height, contain: "layout style" }}
             onPointerDown={(event) => onDragStart(event, node)}
             onContextMenu={onContextMenu}
             onMouseEnter={keepHover}
@@ -184,6 +184,8 @@ export function WorkflowNodeCard({
                                 {node.text || <span style={{ color: theme.node.placeholder }}>双击编辑文字</span>}
                             </div>
                         )
+                    ) : videoUpload ? (
+                        <CanvasVideoUploadContent nodeId={node.id} upload={videoUpload} visible={videoVisible} onRetry={() => onRetryVideoUpload?.()} onCancel={() => onCancelVideoUpload?.()} />
                     ) : mediaType ? (
                         <WorkflowMediaPreview
                             nodeId={node.id}
@@ -196,7 +198,7 @@ export function WorkflowNodeCard({
                             imageError={imageError}
                             onRetryImage={onRetryImage}
                             onImageLoaded={onImageLoaded}
-                            onImageDimensions={onImageDimensions}
+                            onMediaDimensions={onMediaDimensions}
                             onChoose={readOnly ? undefined : onChooseMedia}
                         />
                     ) : generation ? (
@@ -206,7 +208,7 @@ export function WorkflowNodeCard({
                             inputs={inputs}
                             onConfigChange={onConfigChange}
                             onModeChange={onModeChange}
-                            onLayoutHeightChange={onLayoutHeightChange}
+                            compact={Boolean(configCard)}
                             onOutputCountChange={onOutputCountChange}
                             onPreview={onPreview}
                         />
@@ -229,7 +231,7 @@ export function WorkflowNodeCard({
             ) : !readOnly ? (
                 <CanvasConnectionHandle
                     side="right"
-                    visible={hovered || selected || connecting}
+                    visible={mediaType === "image" ? hovered : hovered || selected || connecting}
                     label="开始连接"
                     onPointerDown={(event) => {
                         if (event.button !== 0) return;
@@ -280,7 +282,7 @@ export function WorkflowOutputCard({
     onReloadMedia,
     onRetryOutput,
     onImageLoaded,
-    onImageDimensions,
+    onMediaDimensions,
     onDragStart,
     onContextMenu,
     onResizeStart,
@@ -308,7 +310,7 @@ export function WorkflowOutputCard({
     onReloadMedia?: () => void;
     onRetryOutput?: () => void;
     onImageLoaded?: (storageKey: string) => void;
-    onImageDimensions?: (dimensions: { width: number; height: number }) => void;
+    onMediaDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, parent: WorkflowNode, slot: WorkflowOutputSlot) => void;
     onContextMenu?: React.MouseEventHandler<HTMLDivElement>;
     onResizeStart?: ResizeStart;
@@ -372,6 +374,7 @@ export function WorkflowOutputCard({
                     {hasMedia ? (
                         <WorkflowMediaPreview
                             nodeId={resourceNodeId!}
+                            readOnly={readOnly}
                             type={slot.type}
                             mediaId={execution!.mediaId}
                             visible={videoVisible}
@@ -380,7 +383,7 @@ export function WorkflowOutputCard({
                             imageError={imageError}
                             onRetryImage={onReloadMedia}
                             onImageLoaded={onImageLoaded}
-                            onImageDimensions={onImageDimensions}
+                            onMediaDimensions={onMediaDimensions}
                         />
                     ) : (
                         <div className={`flex max-w-[85%] flex-col items-center gap-2 text-center text-xs ${execution?.status === "failed" || execution?.status === "blocked" ? "text-red-500" : "opacity-55"}`}>
@@ -419,7 +422,7 @@ export function WorkflowOutputCard({
             {!readOnly ? (
                 <CanvasConnectionHandle
                     side="right"
-                    visible={hovered || selected || connecting}
+                    visible={slot.type === "image" ? hovered : hovered || selected || connecting}
                     label="从输出开始连接"
                     onPointerDown={(event) => {
                         if (event.button !== 0) return;

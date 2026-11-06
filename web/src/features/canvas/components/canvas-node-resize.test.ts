@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { sourceBehavior } from "@/test-utils/source-behavior";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
-import { CONFIG_NODE_MIN_SIZE } from "../utils/canvas-config-card";
+import { CONFIG_NODE_MIN_SIZE } from "@/lib/canvas-config-card";
 import { resizeCanvasNode } from "@/lib/canvas-resize";
 
 function startResize(type: CanvasNodeType, compact = false, freeResize = false) {

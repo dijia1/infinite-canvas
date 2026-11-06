@@ -2,7 +2,7 @@ import type { UploadedImage } from "@/services/image-storage";
 import type { WorkflowEditorDocument } from "./workflow-editor-state";
 import type { WorkflowGraph, WorkflowNode, WorkflowRunScope } from "./types";
 import { expandWorkflowFrames } from "./workflow-frames";
-import { fitWorkflowImage } from "./workflow-graph";
+import { fitWorkflowImage, workflowInputNodeIdsForScope } from "./workflow-graph";
 import { canvasFrameRectsOverlap } from "@/lib/canvas-frame";
 
 export type LocalImageOperation = {
@@ -55,9 +55,7 @@ export function replaceLocalImageSize(graph: WorkflowGraph, nodeId: string, imag
 }
 export function pendingRunImages(graph: WorkflowGraph, scope: WorkflowRunScope, bindings: LocalImageBindings, operations: LocalImageOperations): LocalImageOperation[] {
     const active = currentImageBindings(graph, bindings, operations);
-    const members = scope.type === "frame" ? new Set(graph.frames?.find(frame => frame.id === scope.frameId)?.nodeIds || []) : new Set(graph.nodes.map(node => node.id));
-    const inputs = new Set(members);
-    for (const connection of graph.connections) if (members.has(connection.targetNodeId)) inputs.add(connection.sourceNodeId);
+    const inputs = workflowInputNodeIdsForScope(graph, scope);
     return [...inputs].flatMap(id => { const op = operations[active[id]]; return op && op.state !== "completed" ? [op] : []; });
 }
 export function localImageRecoveryKey(uid: string, workflowId: string) { return `infinite-canvas:workflow-images:${encodeURIComponent(uid)}:${encodeURIComponent(workflowId)}`; }

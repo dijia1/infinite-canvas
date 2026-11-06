@@ -17,7 +17,7 @@ import { CanvasNodeType, type CanvasNodeData, type Position } from "../types";
 import { CanvasImageMaskOverlay } from "../image-mask/canvas-image-mask-overlay";
 import type { CanvasRenderDetail } from "../media/canvas-media-policy";
 import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
-import { CONFIG_NODE_MIN_SIZE, type ConfigCardView } from "../utils/canvas-config-card";
+import { CONFIG_NODE_MIN_SIZE, type ConfigCardView } from "@/lib/canvas-config-card";
 
 import { CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";

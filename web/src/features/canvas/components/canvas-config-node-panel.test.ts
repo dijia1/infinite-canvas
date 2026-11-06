@@ -138,7 +138,7 @@ test("full-layout measurement updates only local fit height and disconnects on u
     const heights: number[] = [];
     let resized = () => {};
     let disconnected = false;
-    const source = sourceBehavior(sourceURL, {
+    const source = sourceBehavior(new URL("../../../components/canvas-config-full-frame.tsx", import.meta.url), {
         layoutRef: { current: layout },
         setLayoutHeight: (height: number) => heights.push(height),
         ResizeObserver: class {

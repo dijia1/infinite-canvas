@@ -31,10 +31,15 @@ import { useWorkflowEditorLease } from "./workflow-editor-lease";
 import { defaultWorkflowView, readWorkflowView, writeWorkflowView } from "./workflow-view-preferences";
 import { useWorkflowInteractions } from "./use-workflow-interactions";
 import { useWorkflowLocalImages } from "./use-workflow-local-images";
+import { useWorkflowLocalVideos } from "./use-workflow-local-videos";
+import { fitWorkflowVideo } from "./workflow-local-videos";
+import { collectDroppedMediaFiles } from "@/features/canvas/utils/canvas-file-drop";
+import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "@/features/canvas/components/material-image-drag";
 import { workflowImageDownloadState, workflowImageMenuSelection, type WorkflowImageMenu } from "./workflow-image-download";
 import { WorkflowImageContextMenu } from "./workflow-image-context-menu";
 import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes, parseWorkflowVisualId } from "./workflow-canvas-adapter";
 import { resizeCanvasNode } from "@/lib/canvas-resize";
+import { CONFIG_NODE_MIN_SIZE } from "@/lib/canvas-config-card";
 import type { CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { ScopedVideoResourceProvider } from "@/features/canvas/components/canvas-video-content";
 import { CanvasNodeType, type CanvasNodeData } from "@/features/canvas/types";
@@ -45,10 +50,9 @@ import { appPath } from "@/lib/app-path";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isEditableTarget } from "@/lib/editable-target";
 import { ApiRequestError } from "@/services/api/request";
-import { uploadVideoMedia } from "@/services/api/video-media";
 import { fetchWorkflow, fetchWorkflowVideos, updateWorkflow } from "@/services/api/workflows";
 import { portalSessionQuery } from "@/services/api/session";
-import { getRemoteImageAccess } from "@/services/image-storage";
+import { getImageBlob, getRemoteImageAccess } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import { reconcileProviderConfig, useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -154,7 +158,6 @@ function WorkflowEditorContent() {
     const [mediaTarget, setMediaTarget] = useState<{ nodeId?: string; type: "image" | "video" }>();
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
     const [previewNodeId, setPreviewNodeId] = useState<string>();
-    const [uploading, setUploading] = useState(false);
     const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
 
     const [runDetailOpen, setRunDetailOpen] = useState(false);
@@ -208,10 +211,19 @@ function WorkflowEditorContent() {
         beforeEdit: () => { history.pause(); history.resume(); },
         retainedHistory: () => { const retained = history.getRetainedHistory(); return [...retained.history.past, ...retained.history.future, ...(retained.lastHistory ? [retained.lastHistory] : [])]; },
     });
+    const localVideos = useWorkflowLocalVideos({
+        document: { name, graph }, readOnly: editBlocked, ready: Boolean(savedSnapshot), setGraph,
+        onSelected: ids => { canvas.setSelectedNodeIds(ids); canvas.setSelectedConnectionId(null); setTargetFrameId(undefined); },
+        notify: text => { message.error(text); },
+        onUploaded: () => { void queryClient.invalidateQueries({ queryKey: ["workflow-video-assets"] }); },
+        beforeEdit: () => { history.pause(); history.resume(); },
+        retainedHistory: () => { const retained = history.getRetainedHistory(); return [...retained.history.past, ...retained.history.future, ...(retained.lastHistory ? [retained.lastHistory] : [])]; },
+    });
+    const localSnapshot = (document: WorkflowEditorDocument) => localVideos.snapshot(localImages.historyDocument(document));
     const history = useCanvasHistory({
-        snapshot: localImages.snapshot({ name, graph }),
+        snapshot: localSnapshot({ name, graph }),
         applySnapshot: (snapshot: string) => {
-            const document = localImages.applyHistory(snapshot);
+            const document = localImages.applyHistoryDocument(localVideos.applyHistory(snapshot));
             setName(document.name);
             setGraph(document.graph);
         },
@@ -238,7 +250,7 @@ function WorkflowEditorContent() {
                         localImages.recover(imageRecovery);
                         setName(draft.document.name);
                         setGraph(draft.document.graph);
-                        history.replaceBaseline(localImages.snapshot(draft.document));
+                        history.replaceBaseline(localSnapshot(draft.document));
                         setDraftRecoveryPending(false);
                     },
                     onCancel: () => {
@@ -256,7 +268,7 @@ function WorkflowEditorContent() {
             setRevision(remoteState.revision);
             setSavedSnapshot(remoteState.savedSnapshot);
             autosave.reset(remoteState.document, remote.revision);
-            history.replaceBaseline(localImages.snapshot(restore ? draft.document : remoteState.document));
+            history.replaceBaseline(localSnapshot(restore ? draft.document : remoteState.document));
             if (restore) message.info("已恢复未保存的流程修改");
         },
         [autosave, draftOwnerUID, message],
@@ -341,13 +353,13 @@ function WorkflowEditorContent() {
         try {
             let confirmedRevision = revision;
             if (!runs.pendingByScope.has(key)) {
-                const pending = localImages.pending(scope);
-                if (pending.length) throw new Error(`图片尚未上传完成：${pending.map(image => image.fileName).join("、")}。请等待上传或重试失败图片。`);
+                const pending = [...localImages.pending(scope), ...localVideos.pending(scope)];
+                if (pending.length) throw new Error(`素材尚未上传完成：${pending.map(item => item.fileName).join("、")}。请等待上传或重试失败素材。`);
                 autosave.update(editorDocumentRef.current);
                 confirmedRevision = await autosave.flush();
             }
             if (editBlockedRef.current) throw new Error("当前流程不可编辑，请重新确认编辑权限");
-            if (!runs.pendingByScope.has(key) && localImages.pending(scope).length) throw new Error("图片仍在上传，请等待上传完成后运行");
+            if (!runs.pendingByScope.has(key) && (localImages.pending(scope).length || localVideos.pending(scope).length)) throw new Error("素材仍在上传，请等待上传完成后运行");
             await runs.start(scope, confirmedRevision);
             message.success("流程已开始运行");
         } catch (error) { message.error(error instanceof Error ? error.message : "运行请求结果待确认，可再次点击确认"); }
@@ -411,11 +423,12 @@ function WorkflowEditorContent() {
         [aiStatus, globalConfig],
     );
     const addNode = useCallback(
-        (type: WorkflowNodeType, mediaId?: string, dimensions?: { width: number; height: number }) => {
+        (type: WorkflowNodeType, mediaId?: string, dimensions?: { width: number; height: number }, dropPosition?: WorkflowPosition) => {
             if (editBlockedRef.current) return;
             let node = makeNode(type, { x: 0, y: 0 });
             if (type === "image_input" && dimensions) node = fitWorkflowImage(node, dimensions, true);
-            const center = centerPosition();
+            if (type === "video_input" && dimensions) node = fitWorkflowVideo(node, dimensions, true);
+            const center = dropPosition || centerPosition();
             const position = { x: center.x - (node.width || 340) / 2, y: center.y - (node.height || 240) / 2 };
             const dx = position.x - node.position.x;
             const dy = position.y - node.position.y;
@@ -441,28 +454,53 @@ function WorkflowEditorContent() {
         await localImages.importFiles([file], center, target);
     };
     const uploadVideo = async (file: File) => {
-        setUploading(true);
-        try {
-            const uploaded = await uploadVideoMedia(file);
-            if (mediaTarget?.nodeId) updateNode(mediaTarget.nodeId, (node) => ({ ...node, mediaId: uploaded.mediaId }));
-            else addNode("video_input", uploaded.mediaId);
-            setAssetPickerOpen(false);
-            void queryClient.invalidateQueries({ queryKey: ["workflow-video-assets"] });
-        } catch (error) {
-            message.error(error instanceof Error ? error.message : "视频上传失败");
-        } finally {
-            setUploading(false);
-            setMediaTarget(undefined);
-        }
+        const target = mediaTarget?.nodeId;
+        const center = centerPosition();
+        setAssetPickerOpen(false); setMediaTarget(undefined);
+        await localVideos.importFiles([file], center, target);
     };
+    const handleDrop = async (event: React.DragEvent<HTMLDivElement>) => {
+        event.preventDefault(); event.stopPropagation();
+        if (editBlockedRef.current) return;
+        const position = screenToWorld(event.clientX, event.clientY);
+        const privateImage = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_IMAGE_DRAG_TYPE));
+        const publicImage = readImageDropPayload<PublicImageDropPayload>(event.dataTransfer.getData(PUBLIC_IMAGE_DRAG_TYPE));
+        try {
+            if (typeof privateImage?.assetId === "string" && privateImage.assetId) {
+                const asset = assets.find(asset => asset.id === privateImage.assetId && asset.kind === "image");
+                if (!asset || asset.kind !== "image") throw new Error("素材不存在，请刷新我的素材");
+                if (typeof asset.metadata?.mediaId === "string") addNode("image_input", asset.metadata.mediaId, asset.data, position);
+                else {
+                    const key = asset.data.storageKey;
+                    if (!key) throw new Error("素材尚未就绪，请重新上传");
+                    const blob = await getImageBlob(key);
+                    if (!blob) throw new Error("本地素材不可用，请重新上传");
+                    await localImages.importFiles([new File([blob], asset.title || "image.png", { type: asset.data.mimeType })], position);
+                }
+                return;
+            }
+            if (typeof publicImage?.mediaId === "string" && publicImage.mediaId && typeof publicImage.id === "string" && publicImage.id) {
+                const access = await getRemoteImageAccess(publicImage.mediaId);
+                if (!editBlockedRef.current) addNode("image_input", publicImage.mediaId, access.width && access.height ? { width: access.width, height: access.height } : undefined, position);
+                return;
+            }
+            const { images, videos } = collectDroppedMediaFiles(event.dataTransfer.files);
+            const mixed = images.length > 0 && videos.length > 0;
+            await Promise.all([
+                localImages.importFiles(images, mixed ? { x: position.x - 336, y: position.y } : position),
+                localVideos.importFiles(videos, mixed ? { x: position.x + 336, y: position.y } : position),
+            ]);
+        } catch (error) { message.error(error instanceof Error ? error.message : "素材导入失败"); }
+    };
+
     const selectAsset = (mediaId: string) => {
-        if (mediaTarget?.nodeId) localImages.forget(mediaTarget.nodeId);
+        if (mediaTarget?.nodeId) { localImages.forget(mediaTarget.nodeId); localVideos.forget(mediaTarget.nodeId); }
         const asset = assets.find((item) => item.kind === "image" && item.metadata?.mediaId === mediaId);
-        const dimensions = asset?.kind === "image" ? asset.data : undefined;
+        const dimensions = mediaTarget?.type === "video" ? workflowVideos.data?.items.find(video => video.id === mediaId) : asset?.kind === "image" ? asset.data : undefined;
         if (mediaTarget?.nodeId)
             updateNode(mediaTarget.nodeId, (node) => {
                 const next = { ...node, mediaId };
-                return node.type === "image_input" ? fitWorkflowImage(next, dimensions || { width: 340, height: 240 }, true) : next;
+                return node.type === "image_input" ? fitWorkflowImage(next, dimensions || { width: 340, height: 240 }, true) : dimensions ? fitWorkflowVideo(next, dimensions, true) : next;
             });
         else addNode(mediaTarget?.type === "video" ? "video_input" : "image_input", mediaId, dimensions);
         setAssetPickerOpen(false);
@@ -478,17 +516,18 @@ function WorkflowEditorContent() {
         }
     };
 
-    const fitLoadedImage = (nodeId: string, mediaId: string, dimensions: { width: number; height: number }, slotId?: string) => {
+    const fitLoadedMedia = (nodeId: string, mediaId: string, dimensions: { width: number; height: number }, slotId?: string, type: "image" | "video" = "image") => {
         if (editBlockedRef.current) return;
         const asset = assets.find((item) => item.kind === "image" && item.metadata?.mediaId === mediaId);
-        dimensions = asset?.kind === "image" && asset.data.width > 0 && asset.data.height > 0 ? asset.data : imageDimensions.current.get(mediaId) || dimensions;
+        if (type === "image") dimensions = asset?.kind === "image" && asset.data.width > 0 && asset.data.height > 0 ? asset.data : imageDimensions.current.get(mediaId) || dimensions;
+        const fit = type === "video" ? fitWorkflowVideo : fitWorkflowImage;
         setGraph((current) => {
             let changed = false;
             const nodes = current.nodes.map((node) => {
                 if (node.id !== nodeId) return node;
                 if (!slotId) {
-                    if (node.mediaId !== mediaId || node.type !== "image_input") return node;
-                    const next = fitWorkflowImage(node, dimensions);
+                    if (node.mediaId !== mediaId || node.type !== `${type}_input`) return node;
+                    const next = fit(node, dimensions);
                     changed ||= next !== node;
                     return next;
                 }
@@ -496,8 +535,8 @@ function WorkflowEditorContent() {
                 const output = detail && findCompatibleWorkflowOutput(detail, current, nodeId, slotId);
                 if (output?.mediaId !== mediaId) return node;
                 const outputs = node.outputs?.map((slot) => {
-                    if (slot.id !== slotId || slot.type !== "image") return slot;
-                    const next = fitWorkflowImage(slot, dimensions);
+                    if (slot.id !== slotId || slot.type !== type) return slot;
+                    const next = fit(slot, dimensions);
                     changed ||= next !== slot;
                     return next;
                 });
@@ -743,7 +782,7 @@ function WorkflowEditorContent() {
             clientX: event.clientX,
             clientY: event.clientY,
             config,
-            start: { x: visual.position.x, y: visual.position.y, width: visual.width, height: visual.height, corner, keepRatio: !config && node.type !== "text_input", ratio: visual.width / visual.height },
+            start: { x: visual.position.x, y: visual.position.y, width: visual.width, height: visual.height, corner, keepRatio: config || node.type !== "text_input", ratio: visual.width / visual.height },
         };
         canvas.setSelectedNodeIds(new Set([id]));
         history.pause();
@@ -753,7 +792,7 @@ function WorkflowEditorContent() {
         const move = (event: PointerEvent) => {
             const resize = resizeSession.current;
             if (!resize || editBlockedRef.current) return;
-            const next = resizeCanvasNode(resize.start, { x: (event.clientX - resize.clientX) / viewport.k, y: (event.clientY - resize.clientY) / viewport.k }, resize.config ? { width: 360, height: 260 } : undefined);
+            const next = resizeCanvasNode(resize.start, { x: (event.clientX - resize.clientX) / viewport.k, y: (event.clientY - resize.clientY) / viewport.k }, resize.config ? CONFIG_NODE_MIN_SIZE : undefined);
             setGraph((current) =>
                 applyWorkflowVisualNodes(
                     current,
@@ -1005,11 +1044,7 @@ function WorkflowEditorContent() {
                         onCanvasMouseDown={readOnly ? undefined : (event) => { setTargetFrameId(undefined); interactions.handleCanvasMouseDown(event); }}
                         onCanvasDeselect={deselect}
                         onContextMenu={(event) => event.preventDefault()}
-                        onDrop={(event) => {
-                            event.preventDefault();
-                            event.stopPropagation();
-                            void localImages.importFiles(Array.from(event.dataTransfer.files), screenToWorld(event.clientX, event.clientY));
-                        }}
+                        onDrop={handleDrop}
                     >
                         {visibleFrames.map((frame) => <CanvasFrame key={frame.id} frame={frame} selected={targetFrameId === frame.id} readOnly={editBlocked}
                             onSelect={() => { setTargetFrameId(frame.id); canvas.setSelectedNodeIds(new Set()); canvas.setSelectedConnectionId(null); }}
@@ -1070,9 +1105,7 @@ function WorkflowEditorContent() {
                                 canvasNodeId={workflowVisualNodeId(node.id)}
                                 renderDetail={workflowVisualRenderDetail(renderDetail, workflowVisualNodeId(node.id), retainedVisualNodeIds)}
                                 readOnly={editBlocked}
-                                onLayoutHeightChange={(height) => {
-                                    if (height > (node.height || 240)) updateNode(node.id, (current) => ({ ...current, height }));
-                                }}
+                                scale={viewport.k}
                                 onResizeStart={startResize}
                                 onModeChange={(mode) => changeMode(node, mode)}
                                 onPreviewMedia={() => setMediaPreview({ node })}
@@ -1083,11 +1116,14 @@ function WorkflowEditorContent() {
                                 imageStorageKey={localImages.get(node.id)?.state === "completed" ? imageResources.resources.get(node.id)?.storageKey || localImages.get(node.id)?.image.storageKey : localImages.get(node.id)?.image.storageKey || imageResources.resources.get(node.id)?.storageKey}
                                 imageError={localImages.get(node.id)?.url ? undefined : imageResources.errors.get(node.id)}
                                 localUpload={localImages.get(node.id)}
+                                videoUpload={localVideos.get(node.id)}
+                                onRetryVideoUpload={() => localVideos.retry(node.id)}
+                                onCancelVideoUpload={() => localVideos.cancel(node.id)}
                                 onRetryUpload={() => localImages.retry(node.id)}
-                                onCancelReplacement={() => localImages.cancelReplacement(node.id)}
+                                onCancelReplacement={() => { if (localImages.get(node.id)?.original) localImages.cancelReplacement(node.id); else { localImages.forget(node.id); setGraph(current => removeWorkflowNode(current, node.id)); } }}
                                 onRetryImage={() => imageResources.retry(node.id)}
                                 onImageLoaded={(storageKey) => { imageResources.acknowledgeRendered(node.id, storageKey); if (imageResources.resources.get(node.id)?.storageKey === storageKey) localImages.acknowledge(node.id); }}
-                                onImageDimensions={(dimensions) => !localImages.get(node.id) && node.mediaId && fitLoadedImage(node.id, node.mediaId, dimensions)}
+                                onMediaDimensions={(dimensions) => !localImages.get(node.id) && !localVideos.get(node.id) && node.mediaId && fitLoadedMedia(node.id, node.mediaId, dimensions, undefined, node.type === "video_input" ? "video" : "image")}
                                 onDragStart={startNodeDrag}
                                 onContextMenu={node.type === "image_input" ? (event) => openImageMenu(event, workflowVisualNodeId(node.id)) : undefined}
                                 onRemove={() => {
@@ -1134,8 +1170,8 @@ function WorkflowEditorContent() {
                                     onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
                                     onRetryOutput={detail && isRetryableImageOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
                                     onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
-                                    onImageDimensions={(dimensions) => {
-                                        if (output?.mediaId) fitLoadedImage(node.id, output.mediaId, dimensions, slot.id);
+                                    onMediaDimensions={(dimensions) => {
+                                        if (output?.mediaId) fitLoadedMedia(node.id, output.mediaId, dimensions, slot.id, slot.type);
                                     }}
                                     selected={canvas.selectedNodeIds.has(workflowVisualOutputId(node.id, slot.id))}
                                     canvasNodeId={workflowVisualOutputId(node.id, slot.id)}
@@ -1281,7 +1317,6 @@ function WorkflowEditorContent() {
                     footer={
                         <Button
                             icon={mediaTarget?.type === "video" ? <Video className="size-4" /> : <ImageIcon className="size-4" />}
-                            loading={uploading}
                             onClick={() => (mediaTarget?.type === "video" ? videoInputRef.current?.click() : imageInputRef.current?.click())}
                         >
                             上传{mediaTarget?.type === "video" ? "视频" : "图片"}

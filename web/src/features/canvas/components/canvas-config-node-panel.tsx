@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Settings2, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
@@ -17,8 +17,8 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { hasImageMask } from "@/lib/image-mask/mask-utils";
 import { buildGenerationConfig } from "../utils/canvas-generation-utils";
-import { CONFIG_NODE_MIN_SIZE } from "../utils/canvas-config-card";
-import { CanvasConfigCompactCard } from "./canvas-config-compact-card";
+import { CanvasConfigFullFrame } from "@/components/canvas-config-full-frame";
+import { CanvasConfigCompactCard } from "@/components/canvas-config-compact-card";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
 import type { NodeGenerationInput } from "./canvas-node-generation";
@@ -42,18 +42,6 @@ type CanvasConfigNodePanelProps = {
 export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate, onPreviewImagesChange, imageResources, imageErrors, onRetryImage, onImageLoaded, compact = false }: CanvasConfigNodePanelProps) {
     const { message } = App.useApp();
     const previewContentRef = useRef<HTMLDivElement>(null);
-    const layoutRef = useRef<HTMLDivElement>(null);
-    const [layoutHeight, setLayoutHeight] = useState(CONFIG_NODE_MIN_SIZE.height);
-    // Measure at a fixed design width. Content changes affect its fit scale, never document geometry.
-    useLayoutEffect(() => {
-        const layout = layoutRef.current;
-        if (!layout) return;
-        const syncHeight = () => setLayoutHeight(Math.ceil(layout.offsetHeight) + 4);
-        syncHeight();
-        const observer = new ResizeObserver(syncHeight);
-        observer.observe(layout);
-        return () => observer.disconnect();
-    }, [compact]);
     const [previewOpen, setPreviewOpen] = useState(false);
     const [editingTextId, setEditingTextId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState("");
@@ -199,8 +187,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 theme={theme}
                 modeSwitch={modeSwitch}
                 modelSelect={modelSelect}
-                generateDisabled={generateDisabled}
-                onGenerate={() => onGenerate(node.id)}
+                action={{ label: "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
                 settings={renderSettings("canvas-config-compact-settings", {
                     formatSummary: shortSettingsSummary,
                     buttonIcon: (
@@ -273,44 +260,41 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         </Modal>
     );
 
-    const fullScale = Math.min((node.width - 4) / CONFIG_NODE_MIN_SIZE.width, (node.height - 4) / layoutHeight);
     return (
-        <div className="canvas-config-full-frame" style={{ width: CONFIG_NODE_MIN_SIZE.width, height: layoutHeight, transform: `translate(-50%, -50%) scale(${fullScale})`, color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
-            <div ref={layoutRef} className="canvas-config-full canvas-config-view-transition flex min-w-0 w-full shrink-0 cursor-move flex-col gap-8 px-3 py-4 text-sm">
-                <div className="flex min-w-0 shrink-0 flex-col gap-2">
-                    <div className="flex shrink-0 items-center justify-between gap-2">
-                        <div className="flex min-w-0 items-center gap-2">
-                            <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
-                                <Eye className="size-3.5" />
-                                预览
-                            </button>
-                        </div>
-                        {modeSwitch}
+        <CanvasConfigFullFrame width={node.width} height={node.height} style={{ color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
+            <div className="flex min-w-0 shrink-0 flex-col gap-2">
+                <div className="flex shrink-0 items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                        <button type="button" className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-md border px-2 text-[11px]" style={chipStyle} onMouseDown={(event) => event.stopPropagation()} onClick={() => setPreviewOpen(true)}>
+                            <Eye className="size-3.5" />
+                            预览
+                        </button>
                     </div>
-
-                    <div className="flex shrink-0 flex-wrap gap-1.5">
-                        <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
-                        <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
-                        {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
-                    </div>
+                    {modeSwitch}
                 </div>
 
-                <div className="grid min-w-0 shrink-0 gap-2">
-                    {modelSelect}
-                    <div className="grid min-w-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
-                        {renderSettings("canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2")}
-                    </div>
+                <div className="flex shrink-0 flex-wrap gap-1.5">
+                    <InputChip label="提示词" value={`${inputSummary.textCount} 个`} style={chipStyle} />
+                    <InputChip label="参考图" value={`${inputSummary.imageCount} 张`} style={chipStyle} />
+                    {mode === "video" && <InputChip label="参考视频" value={`${inputs.filter((input) => input.video).length} 个 · ${inputs.reduce((total, input) => total + (input.video?.duration || 0), 0).toFixed(1)} 秒`} style={chipStyle} />}
                 </div>
-
-                <Button type="primary" className="!h-9 !w-full shrink-0 !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
-                    <span className="inline-flex items-center gap-1.5">
-                        <Play className="size-4" />
-                        <span>开始生成</span>
-                    </span>
-                </Button>
-                {previewModal}
             </div>
-        </div>
+
+            <div className="grid min-w-0 shrink-0 gap-2">
+                {modelSelect}
+                <div className="grid min-w-0 cursor-default grid-cols-1 items-center gap-2 rounded-lg border" style={{ borderColor: theme.node.stroke }}>
+                    {renderSettings("canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2")}
+                </div>
+            </div>
+
+            <Button type="primary" className="!h-9 !w-full shrink-0 !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
+                <span className="inline-flex items-center gap-1.5">
+                    <Play className="size-4" />
+                    <span>开始生成</span>
+                </span>
+            </Button>
+            {previewModal}
+        </CanvasConfigFullFrame>
     );
 }
 

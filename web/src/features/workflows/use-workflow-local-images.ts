@@ -158,8 +158,7 @@ export function useWorkflowLocalImages(options: Options) {
         bindings.current = recovery?.document.imageImports || {};
         changed();
     };
-    const applyHistory = (snapshot: string) => {
-        const document = JSON.parse(snapshot) as LocalImageHistory;
+    const applyHistoryDocument = (document: LocalImageHistory) => {
         bindings.current = document.imageImports || {};
         for (const [nodeId, operationId] of uploadBindings.current) if (bindings.current[nodeId] !== operationId) controller.cancel(nodeId);
         changed();
@@ -240,7 +239,9 @@ export function useWorkflowLocalImages(options: Options) {
         return op ? { ...op, url: urls.current.get(op.id) } : undefined;
     };
     return {
-        version, progress, importFiles, get, persist, recover, applyHistory,
+        version, progress, importFiles, get, persist, recover, applyHistoryDocument,
+        applyHistory: (snapshot: string) => applyHistoryDocument(JSON.parse(snapshot) as LocalImageHistory),
+        historyDocument: (document: WorkflowEditorDocument) => localImageHistory(document, bindings.current, operations.current),
         acknowledge: (nodeId: string) => { const op = operations.current[activeBindings()[nodeId]]; if (op?.state === "completed" && urls.current.get(op.id)) { urls.current.set(op.id, ""); changed(); } },
         snapshot: (document: WorkflowEditorDocument) => JSON.stringify(localImageHistory(document, bindings.current, operations.current)),
         readRecovery: () => { try { return options.uid && options.workflowId ? readLocalImageRecovery(window.localStorage, options.uid, options.workflowId) : undefined; } catch (error) { latest.current.notify(error instanceof Error ? error.message : "读取本地恢复记录失败", true); } },

@@ -1,19 +1,23 @@
 "use client";
 
 import { useRef, type CSSProperties, type ReactNode } from "react";
-import { Play } from "lucide-react";
 import { Button } from "antd";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
 // CanvasNode picks the form (controls or icons) through data-config-form, and globals.css lays each one out.
-export function CanvasConfigCompactCard({ theme, modeSwitch, modelSelect, settings, generateDisabled, onGenerate }: {
+export function CanvasConfigCompactCard({
+    theme,
+    modeSwitch,
+    modelSelect,
+    settings,
+    action,
+}: {
     theme: CanvasTheme;
     modeSwitch: ReactNode;
     modelSelect: ReactNode;
     settings: ReactNode;
-    generateDisabled: boolean;
-    onGenerate: () => void;
+    action: { label: string; icon: ReactNode; disabled?: boolean; onClick: () => void };
 }) {
     const pressRef = useRef({ x: 0, y: 0 });
     const style = { color: theme.node.text, "--config-compact-control": theme.node.panel, "--config-compact-stroke": theme.node.stroke, "--config-compact-muted": theme.node.muted } as CSSProperties;
@@ -34,13 +38,11 @@ export function CanvasConfigCompactCard({ theme, modeSwitch, modelSelect, settin
             }}
         >
             <div className="canvas-config-compact-layout canvas-config-view-transition">
-                <div className="canvas-config-compact-title">
-                    {modeSwitch}
-                </div>
+                <div className="canvas-config-compact-title">{modeSwitch}</div>
                 <div className="canvas-config-compact-model">{modelSelect}</div>
                 {settings}
-                <Button type="primary" className="canvas-config-compact-run" aria-label="开始生成" icon={<Play className="size-3.5" />} disabled={generateDisabled} onClick={onGenerate}>
-                    <span>开始生成</span>
+                <Button type="primary" className="canvas-config-compact-run" aria-label={action.label} icon={action.icon} disabled={action.disabled} onClick={action.onClick}>
+                    <span>{action.label}</span>
                 </Button>
             </div>
         </div>

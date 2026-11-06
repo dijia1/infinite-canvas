@@ -1,7 +1,8 @@
 import { nanoid } from "nanoid";
 import { fitNodeSize } from "@/features/canvas/utils/canvas-node-size";
+import { CONFIG_NODE_MIN_SIZE } from "@/lib/canvas-config-card";
 
-import type { WorkflowConnection, WorkflowGraph, WorkflowMediaType, WorkflowNode, WorkflowNodeType, WorkflowPosition } from "./types";
+import type { WorkflowConnection, WorkflowGraph, WorkflowMediaType, WorkflowNode, WorkflowNodeType, WorkflowPosition, WorkflowRunScope } from "./types";
 
 const MAX_INPUTS = 9;
 const MAX_OUTPUTS = 9;
@@ -15,13 +16,12 @@ export function createWorkflowNode(type: WorkflowNodeType, position: WorkflowPos
     if (type === "video_input") return { id, type, position, width: 420, height: 236 };
     if (type === "text_input") return { id, type, position, width: 340, height: 240, text: "" };
     const outputType = type === "image_generation" ? "image" : "video";
-    const width = 360;
+    const width = CONFIG_NODE_MIN_SIZE.width;
     return {
         id,
         type,
         position,
-        width,
-        height: 260,
+        ...CONFIG_NODE_MIN_SIZE,
         inputPorts: [],
         config: {},
         outputs: [{ id: `${id}-output-1`, type: outputType, position: { x: position.x + width + 96, y: position.y + 10 }, width: outputType === "image" ? 340 : 420, height: outputType === "image" ? 240 : 236 }],
@@ -181,4 +181,11 @@ export function fitWorkflowImage<T extends { width?: number; height?: number; po
     const size = fitNodeSize(dimensions.width, dimensions.height);
     if (size.width === node.width && size.height === node.height) return node;
     return { ...node, ...size, ...(node.position ? { position: { x: node.position.x + ((node.width || 340) - size.width) / 2, y: node.position.y + ((node.height || 240) - size.height) / 2 } } : {}) };
+}
+
+export function workflowInputNodeIdsForScope(graph: WorkflowGraph, scope: WorkflowRunScope) {
+    const members = scope.type === "frame" ? new Set(graph.frames?.find(frame => frame.id === scope.frameId)?.nodeIds || []) : new Set(graph.nodes.map(node => node.id));
+    const inputs = new Set(members);
+    for (const connection of graph.connections) if (members.has(connection.targetNodeId)) inputs.add(connection.sourceNodeId);
+    return inputs;
 }

@@ -66,3 +66,8 @@ export async function importDroppedImageFiles(files: Iterable<File>, center: Pos
         omittedCount: selection.omittedCount,
     };
 }
+
+export function collectDroppedMediaFiles(files: Iterable<File>) {
+    const all = Array.from(files);
+    return { images: all.filter(file => file.type.startsWith("image/")), videos: all.filter(file => file.type.startsWith("video/")) };
+}

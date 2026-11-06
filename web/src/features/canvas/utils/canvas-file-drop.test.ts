@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { collectDroppedImageFiles, importDroppedImageFiles, layoutDroppedImageGrid } from "./canvas-file-drop.ts";
+import { collectDroppedImageFiles, collectDroppedMediaFiles, importDroppedImageFiles, layoutDroppedImageGrid } from "./canvas-file-drop.ts";
 
 function image(name: string, type = "image/png") {
     return { name, type } as File;
@@ -45,4 +45,13 @@ test("imports a batch with at most three concurrent uploads and keeps successful
     assert.equal(result.failedCount, 1);
     assert.equal(result.omittedCount, 0);
     assert.deepEqual(result.nodeIds, ["node:one.png", "node:two.png", "node:four.png", "node:five.png"]);
+});
+
+test("mixed drops retain both media groups without accepting unrelated files", () => {
+    const image = new File(["image"], "image.png", { type: "image/png" });
+    const video = new File(["video"], "video.mp4", { type: "video/mp4" });
+    const other = new File(["text"], "note.txt", { type: "text/plain" });
+    const result = collectDroppedMediaFiles([image, video, other]);
+    assert.deepEqual(result.images, [image]);
+    assert.deepEqual(result.videos, [video]);
 });

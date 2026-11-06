@@ -48,7 +48,7 @@ import { hiddenBatchNodeIds } from "../utils/canvas-graph-utils";
 import { buildConnectionPathData, getConnectionCurve } from "../utils/canvas-connection-geometry";
 import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "../utils/canvas-connection-visibility";
 import { canvasImageDownloadTargets, selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
-import { collectDroppedImageFiles, importDroppedImageFiles } from "../utils/canvas-file-drop";
+import { collectDroppedImageFiles, collectDroppedMediaFiles, importDroppedImageFiles, layoutDroppedImageGrid } from "../utils/canvas-file-drop";
 import { createPublicImageImportController } from "../utils/canvas-public-image-import";
 import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
 import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
@@ -57,7 +57,7 @@ import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
-import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "../utils/canvas-config-card";
+import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "@/lib/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
 import { CanvasNodeAngleDialog } from "../components/canvas-node-angle-dialog";
@@ -2092,29 +2092,32 @@ function InfiniteCanvasPage() {
                 return;
             }
             const files = Array.from(event.dataTransfer.files);
-            const images = collectDroppedImageFiles(files);
+            const groups = collectDroppedMediaFiles(files);
+            const images = collectDroppedImageFiles(groups.images);
+            const mixed = images.files.length > 0 && groups.videos.length > 0;
+            const imagePosition = mixed ? { x: position.x - 336, y: position.y } : position;
             if (images.files.length) {
                 if (images.files.length === 1 && images.omittedCount === 0) {
-                    void createImageFileNode(images.files[0]!, position).catch(() => undefined);
-                    return;
+                    void createImageFileNode(images.files[0]!, imagePosition).catch(() => undefined);
+                } else {
+                    void importDroppedImageFiles(groups.images, imagePosition, (file, nodePosition) => createImageFileNode(file, nodePosition, { focus: false })).then((result) => {
+                        if (result.nodeIds.length) {
+                            setSelectedNodeIds(new Set(result.nodeIds));
+                            setSelectedConnectionId(null);
+                            setDialogNodeId(null);
+                        }
+                        const summary = [`已添加 ${result.nodeIds.length} 张图片`];
+                        if (result.failedCount) summary.push(`${result.failedCount} 张上传失败`);
+                        if (result.omittedCount) summary.push(`超过上限，已忽略 ${result.omittedCount} 张`);
+                        if (result.failedCount || result.omittedCount) message.warning(summary.join("；"));
+                        else message.success(summary[0]!);
+                    });
                 }
-                void importDroppedImageFiles(files, position, (file, nodePosition) => createImageFileNode(file, nodePosition, { focus: false })).then((result) => {
-                    if (result.nodeIds.length) {
-                        setSelectedNodeIds(new Set(result.nodeIds));
-                        setSelectedConnectionId(null);
-                        setDialogNodeId(null);
-                    }
-                    const summary = [`已添加 ${result.nodeIds.length} 张图片`];
-                    if (result.failedCount) summary.push(`${result.failedCount} 张上传失败`);
-                    if (result.omittedCount) summary.push(`超过上限，已忽略 ${result.omittedCount} 张`);
-                    if (result.failedCount || result.omittedCount) message.warning(summary.join("；"));
-                    else message.success(summary[0]!);
-                });
-                return;
             }
-            const file = files.find((item) => item.type.startsWith("video/"));
-            if (!file) return;
-            void createVideoFileNode(file, position).catch((error) => message.error(error instanceof Error ? error.message : "视频上传失败"));
+            const videoPositions = layoutDroppedImageGrid(groups.videos.length, mixed ? { x: position.x + 336, y: position.y } : position);
+            groups.videos.forEach((file, index) => {
+                void createVideoFileNode(file, videoPositions[index]!).catch(error => message.error(error instanceof Error ? error.message : "视频上传失败"));
+            });
         },
         [createImageAssetNode, createImageFileNode, createPublicImageNode, createVideoFileNode, message, screenToCanvas],
     );

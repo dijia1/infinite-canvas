@@ -1,5 +1,5 @@
 import { CanvasNodeType } from "./types";
-import { CONFIG_NODE_MIN_SIZE } from "./utils/canvas-config-card";
+import { CONFIG_NODE_MIN_SIZE } from "@/lib/canvas-config-card";
 import type { CanvasNodeMetadata } from "./types";
 
 type CanvasNodeSpec = {
