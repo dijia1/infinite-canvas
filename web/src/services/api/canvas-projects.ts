@@ -93,8 +93,31 @@ export function createCanvasProject(input: CreateCanvasProjectInput) {
     return apiPost<CanvasProjectDetail>("/api/v1/canvas/projects", { ...input, document: sanitizeCanvasProjectDocument(input.document) });
 }
 
-export function importCanvasProjects(projects: CreateCanvasProjectInput[]) {
-    return apiPost<CanvasProjectImportResult>("/api/v1/canvas/projects/import", { projects: projects.map((project) => ({ ...project, document: sanitizeCanvasProjectDocument(project.document) })) });
+export async function importCanvasProjects(projects: CreateCanvasProjectInput[]) {
+    const result: CanvasProjectImportResult = { items: [], total: 0 };
+    const encoder = new TextEncoder();
+    const maxBatchBytes = 8 << 20;
+    const envelopeBytes = encoder.encode('{"projects":[]}').byteLength;
+    let batch: CreateCanvasProjectInput[] = [];
+    let batchBytes = envelopeBytes;
+    const submit = async () => {
+        const imported = await apiPost<CanvasProjectImportResult>("/api/v1/canvas/projects/import", { projects: batch });
+        result.items.push(...imported.items);
+        result.total += imported.total;
+        batch = [];
+        batchBytes = envelopeBytes;
+    };
+    // Sequential batches preserve import order. Retrying remains safe because
+    // existing project IDs are never overwritten by the import endpoint.
+    for (const project of projects) {
+        const sanitized = { ...project, document: sanitizeCanvasProjectDocument(project.document) };
+        const bytes = encoder.encode(JSON.stringify(sanitized)).byteLength;
+        if (batch.length && (batch.length >= 200 || batchBytes + bytes + 1 > maxBatchBytes)) await submit();
+        batchBytes += bytes + (batch.length ? 1 : 0);
+        batch.push(sanitized);
+    }
+    if (batch.length || !projects.length) await submit();
+    return result;
 }
 
 function canvasProjectWriteHeaders(trace?: CanvasProjectWriteTrace) {

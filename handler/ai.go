@@ -35,8 +35,8 @@ type imageRequest struct {
 
 func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 	var payload imageRequest
-	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		Fail(w, "图片生成请求无效")
+	if err := decodeJSONBody(w, r, &payload, maxGenerationRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "图片生成请求无效")
 		return
 	}
 	if rejectReservedWorkflowRequestID(w, payload.ClientRequestID) {
@@ -62,10 +62,8 @@ func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 
 func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 	var payload imageRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&payload); err != nil {
-		Fail(w, "图像编辑请求无效")
+	if err := decodeJSONBody(w, r, &payload, maxGenerationRequestBytes, true); err != nil {
+		writeJSONRequestError(w, err, "图像编辑请求无效")
 		return
 	}
 	if rejectReservedWorkflowRequestID(w, payload.ClientRequestID) {
@@ -152,12 +150,9 @@ func AIImageTaskByClientRequest(w http.ResponseWriter, r *http.Request, clientRe
 }
 
 func AIVideos(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var request service.CreateVideoTaskRequest
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		Fail(w, "视频请求无效")
+	if err := decodeJSONBody(w, r, &request, maxGenerationRequestBytes, true); err != nil {
+		writeJSONRequestError(w, err, "视频请求无效")
 		return
 	}
 	if rejectReservedWorkflowRequestID(w, request.ClientRequestID) {

@@ -900,3 +900,59 @@ func assertCanvasDocumentSanitized(t *testing.T, document json.RawMessage) {
 		}
 	}
 }
+
+func TestCanvasRequestBodyLimitPreservesSaveReceiptsAndRejectsBeforeWriting(t *testing.T) {
+	owner := fixtureUID("body-limit-" + time.Now().Format("150405.000000000"))
+	id := "body-limit-project"
+	create := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects", owner, `{"id":"`+id+`","title":"original","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`)
+	if create.Code != http.StatusOK || decodeCanvasResponse(t, create).Code != 0 {
+		t.Fatalf("create=%s", create.Body)
+	}
+	requestID := "de5e2ccf-40e9-4d29-bbb9-b5de9ee39d71"
+	save := func(body, identity string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPut, "/api/v1/canvas/projects/"+id, strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Portal-User-Uid", owner)
+		request.Header.Set("X-Canvas-Request-Id", identity)
+		recorder := httptest.NewRecorder()
+		servePortalRequest(recorder, request)
+		return recorder
+	}
+	valid := `{"revision":1,"title":"accepted","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}}}`
+	if accepted := save(valid, requestID); accepted.Code != http.StatusOK {
+		t.Fatalf("save=%s", accepted.Body)
+	}
+	oversized := `{"revision":2,"title":"too large","document":{"nodes":[],"connections":[],"backgroundMode":"lines","showImageInfo":false,"viewport":{"x":0,"y":0,"k":1}},"padding":"` + strings.Repeat("x", 5<<20) + `"}`
+	for _, tc := range []struct {
+		identity, code string
+		status         int
+	}{
+		{"", "canvas_save_rejected", http.StatusRequestEntityTooLarge},
+		{requestID, "canvas_save_request_mismatch", http.StatusBadRequest},
+	} {
+		response := save(oversized, tc.identity)
+		payload := decodeCanvasResponse(t, response)
+		var data struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal(payload.Data, &data) != nil || response.Code != tc.status || data.Code != tc.code {
+			t.Fatalf("response=%d/%s", response.Code, response.Body)
+		}
+	}
+	replay := save(valid, requestID)
+	if replay.Code != http.StatusOK {
+		t.Fatalf("receipt replay=%s", replay.Body)
+	}
+	current := canvasRequest(t, http.MethodGet, "/api/v1/canvas/projects/"+id, owner, "")
+	var project struct {
+		Revision int
+		Title    string
+	}
+	if json.Unmarshal(decodeCanvasResponse(t, current).Data, &project) != nil || project.Revision != 2 || project.Title != "accepted" {
+		t.Fatalf("body rejection mutated canvas: %s", current.Body)
+	}
+	response := canvasRequest(t, http.MethodPost, "/api/v1/canvas/projects/import", owner, `{"projects":[],"padding":"`+strings.Repeat("x", 17<<20)+`"}`)
+	if response.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("import cap=%d/%s", response.Code, response.Body)
+	}
+}

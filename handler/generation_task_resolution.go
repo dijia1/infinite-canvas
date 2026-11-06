@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
-	"io"
 	"net/http"
 
 	"github.com/basketikun/infinite-canvas/service"
@@ -10,15 +8,8 @@ import (
 
 func AdminResolveGenerationTask(w http.ResponseWriter, r *http.Request, kind, id string) {
 	var input service.GenerationTaskResolutionRequest
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "任务核对请求无效")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		FailStatus(w, http.StatusBadRequest, "任务核对请求无效")
+	if err := decodeJSONBody(w, r, &input, 8<<10, true); err != nil {
+		writeJSONRequestError(w, err, "任务核对请求无效")
 		return
 	}
 	if err := service.ResolveGenerationTask(r.Context(), kind, id, input); err != nil {

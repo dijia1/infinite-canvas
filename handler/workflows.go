@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -123,10 +122,7 @@ func DeleteWorkflow(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func decodeWorkflowRequest(w http.ResponseWriter, r *http.Request, destination any, allowEmpty bool) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxWorkflowRequestBytes)
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
+	if err := decodeJSONBody(w, r, destination, maxWorkflowRequestBytes, true); err != nil {
 		if allowEmpty && errors.Is(err, io.EOF) {
 			return true
 		}
@@ -135,10 +131,6 @@ func decodeWorkflowRequest(w http.ResponseWriter, r *http.Request, destination a
 			FailStatus(w, http.StatusRequestEntityTooLarge, "流程数据超过保存上限（4MB）")
 			return false
 		}
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
-		return false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		FailStatus(w, http.StatusBadRequest, "请求参数无效")
 		return false
 	}

@@ -19,7 +19,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxCanvasDocumentBytes = 4 << 20
+const MaxCanvasDocumentBytes = 4 << 20
 const canvasProjectDocumentTooLargeMessage = "画板数据超过保存上限（4MB）"
 
 var ErrCanvasProjectConflict = errors.New("canvas project revision conflict")
@@ -77,7 +77,7 @@ func rejectedCanvasSave(err error) error {
 
 // An invalid payload cannot be compared with a successful receipt. Keep an
 // already-used identity blocked instead of declaring it safe to discard.
-func rejectInvalidCanvasSavePayload(err error, requestID string) error {
+func RejectInvalidCanvasSavePayload(err error, requestID string) error {
 	if strings.TrimSpace(requestID) != "" {
 		parsed, parseErr := uuid.Parse(strings.TrimSpace(requestID))
 		if parseErr != nil {
@@ -206,11 +206,11 @@ func UpdateCanvasProject(_ context.Context, user PortalUser, id string, input Ca
 	}
 	title, err := normalizeCanvasProjectTitle(input.Title)
 	if err != nil {
-		return model.CanvasProject{}, CanvasSaveWritten, rejectInvalidCanvasSavePayload(err, requestID)
+		return model.CanvasProject{}, CanvasSaveWritten, RejectInvalidCanvasSavePayload(err, requestID)
 	}
 	document, err := sanitizeCanvasDocumentBase(input.Document)
 	if err != nil {
-		return model.CanvasProject{}, CanvasSaveWritten, rejectInvalidCanvasSavePayload(err, requestID)
+		return model.CanvasProject{}, CanvasSaveWritten, RejectInvalidCanvasSavePayload(err, requestID)
 	}
 	requestID = strings.TrimSpace(requestID)
 	if requestID != "" {
@@ -392,7 +392,7 @@ func sanitizeCanvasDocumentAgainstBaseline(document, baseline json.RawMessage) (
 }
 
 func sanitizeCanvasDocumentValue(document json.RawMessage) (json.RawMessage, map[string]any, error) {
-	if len(document) > maxCanvasDocumentBytes {
+	if len(document) > MaxCanvasDocumentBytes {
 		return nil, nil, ErrCanvasProjectDocumentTooLarge
 	}
 	if len(document) == 0 {

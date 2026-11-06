@@ -12,6 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
+const maxCanvasRequestBytes = service.MaxCanvasDocumentBytes + (64 << 10)
+const maxCanvasImportRequestBytes = (16 << 20) + (64 << 10)
+
 func CanvasProjects(w http.ResponseWriter, r *http.Request) {
 	user, ok := service.PortalUserFromContext(r.Context())
 	if !ok {
@@ -33,8 +36,12 @@ func CreateCanvasProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input service.CanvasProjectInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxCanvasRequestBytes, false); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeCanvasProjectError(w, service.ErrCanvasProjectDocumentTooLarge)
+		} else {
+			writeJSONRequestError(w, err, "请求参数无效")
+		}
 		return
 	}
 	item, err := service.CreateCanvasProject(r.Context(), user, input)
@@ -54,8 +61,8 @@ func ImportCanvasProjects(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Projects []service.CanvasProjectInput `json:"projects"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxCanvasImportRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	items, err := service.ImportCanvasProjects(r.Context(), user, input.Projects)
@@ -75,8 +82,8 @@ func ImportCanvasPublicImages(w http.ResponseWriter, r *http.Request, id string)
 	var input struct {
 		Revision int `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	result, err := service.ImportCanvasPublicImages(r.Context(), user, id, input.Revision)
@@ -108,13 +115,17 @@ func UpdateCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		Fail(w, "未经过 Portal Gateway 身份验证")
 		return
 	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Canvas-Request-Id"))
 	var input service.CanvasProjectUpdateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxCanvasRequestBytes, false); err != nil {
+		if isRequestBodyTooLarge(err) {
+			writeCanvasSaveError(w, service.RejectInvalidCanvasSavePayload(service.ErrCanvasProjectDocumentTooLarge, requestID))
+		} else {
+			writeJSONRequestError(w, err, "请求参数无效")
+		}
 		return
 	}
 	trace := canvasProjectWriteTraceFromRequest(r)
-	requestID := strings.TrimSpace(r.Header.Get("X-Canvas-Request-Id"))
 	if parsedRequestID, err := uuid.Parse(requestID); err == nil {
 		trace.RequestID = parsedRequestID.String()
 	}
@@ -182,8 +193,8 @@ func DeleteCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 	var input struct {
 		Revision int `json:"revision"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	if err := service.DeleteCanvasProject(r.Context(), user, id, input.Revision); err != nil {

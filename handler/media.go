@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -64,8 +63,8 @@ func CreateMediaUploadIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input service.MediaUploadIntentInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	result, err := service.CreateMediaUploadIntent(r.Context(), user, input)
@@ -83,8 +82,8 @@ func CompleteMediaUploadIntent(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 	var input service.MediaUploadCompletionInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil && !errors.Is(err, io.EOF) {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil && !errors.Is(err, io.EOF) {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	result, created, err := service.CompleteMediaUploadIntent(r.Context(), user, id, input)
@@ -156,8 +155,8 @@ func UpdatePrivateImage(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var input mediaUpdateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.UpdatePrivateImage(r.Context(), user, id, input.Title, input.FolderID)
@@ -196,8 +195,8 @@ func CreatePrivateFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input folderCreateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.CreatePrivateFolder(r.Context(), user, input.Title, input.ParentID)
@@ -216,8 +215,8 @@ func RenamePrivateFolder(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var input titleInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.RenamePrivateFolder(r.Context(), user, id, input.Title)
@@ -270,8 +269,8 @@ func ImportPublicImage(w http.ResponseWriter, r *http.Request, id string) {
 	var input struct {
 		RequestID string `json:"requestId"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	result, err := service.ImportPublicImage(r.Context(), user, id, input.RequestID)
@@ -373,8 +372,8 @@ func AdminDeletePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 
 func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
 	var input folderCreateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.CreatePublicFolder(input.Title, input.ParentID)
@@ -388,8 +387,8 @@ func AdminCreatePublicFolder(w http.ResponseWriter, r *http.Request) {
 
 func AdminRenamePublicFolder(w http.ResponseWriter, r *http.Request, id string) {
 	var input titleInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.RenamePublicFolder(id, input.Title)
@@ -412,8 +411,8 @@ func AdminDeletePublicFolder(w http.ResponseWriter, r *http.Request, id string) 
 
 func AdminUpdatePublicImage(w http.ResponseWriter, r *http.Request, id string) {
 	var input mediaUpdateInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		Fail(w, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	item, err := service.UpdatePublicImage(id, input.Title, input.FolderID)

@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -33,13 +31,8 @@ func AdminSettings(w http.ResponseWriter, r *http.Request) {
 
 func AdminSaveSettings(w http.ResponseWriter, r *http.Request) {
 	var settings model.Settings
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&settings); err != nil {
-		Fail(w, "系统设置请求无效")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		Fail(w, "系统设置请求无效")
+	if err := decodeJSONBody(w, r, &settings, maxSettingsRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "系统设置请求无效")
 		return
 	}
 	result, err := service.SaveSettings(settings)
@@ -82,13 +75,8 @@ func AdminSetPortalMemberAppRole(w http.ResponseWriter, r *http.Request, targetU
 	var input struct {
 		AppRole model.AppRole `json:"appRole"`
 	}
-	decoder := json.NewDecoder(r.Body)
-	if err := decoder.Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "应用角色请求无效")
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		FailStatus(w, http.StatusBadRequest, "应用角色请求无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "应用角色请求无效")
 		return
 	}
 	member, err := service.SetPortalMemberAppRole(r.Context(), targetUID, input.AppRole)
@@ -133,8 +121,12 @@ func PortalDirectorySync(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		UserUID string `json:"userUid"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		if isRequestBodyTooLarge(err) {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
 		return
 	}
 	if err := service.SyncPortalMember(r.Context(), input.UserUID); err != nil {

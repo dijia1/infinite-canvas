@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -32,8 +31,8 @@ func ShareCanvasProject(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	var input service.CanvasShareInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		FailStatus(w, http.StatusBadRequest, "请求参数无效")
+	if err := decodeJSONBody(w, r, &input, maxMetadataRequestBytes, false); err != nil {
+		writeJSONRequestError(w, err, "请求参数无效")
 		return
 	}
 	result, err := service.ShareCanvasProject(r.Context(), user, id, input)
