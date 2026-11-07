@@ -70,12 +70,12 @@ test("renames a private image without changing its media metadata", () => {
     const image = { ...imageAsset("image-1", "原名称"), metadata: { mediaId: "media-1" } };
     useAssetStore.setState({ assets: [image], folders: [] });
 
-    useAssetStore.getState().renameImageAsset("image-1", "  新名称  ");
+    useAssetStore.getState().renameMediaAsset("image-1", "  新名称  ");
 
     const renamed = useAssetStore.getState().assets[0];
     assert.equal(renamed?.title, "新名称");
     assert.deepEqual(renamed?.metadata, { mediaId: "media-1" });
-    assert.throws(() => useAssetStore.getState().renameImageAsset("image-1", " "), /1–64/);
+    assert.throws(() => useAssetStore.getState().renameMediaAsset("image-1", " "), /1–64/);
 
     useAssetStore.setState({ assets: [], folders: [] });
 });
@@ -88,7 +88,7 @@ test("renames an empty private folder and rejects deleting a folder with content
 
     useAssetStore.getState().renameFolder(empty.id, "  新目录  ");
     assert.equal(useAssetStore.getState().folders.find((folder) => folder.id === empty.id)?.name, "新目录");
-    assert.throws(() => useAssetStore.getState().removeFolder(parent.id), /包含图片或子文件夹/);
+    assert.throws(() => useAssetStore.getState().removeFolder(parent.id), /包含素材或子文件夹/);
 
     useAssetStore.getState().removeFolder(empty.id);
     assert.equal(
@@ -194,4 +194,19 @@ test("hydrating an empty user scope clears the previous user's assets without wr
         useAssetStore.persist.setOptions(options);
         useAssetStore.setState({ assets: [] });
     }
+});
+
+
+test("video assets can be renamed and moved, and prevent deleting their folder", () => {
+    const image = imageAsset("video", "原视频");
+    const video: Asset = { ...image, kind: "video", data: { url: "", width: 720, height: 1280, bytes: 1000, mimeType: "video/mp4", duration: 6 }, metadata: { mediaId: "video-media", mediaSource: "generated" } };
+    const folder: PrivateAssetFolder = { id: "video-folder", name: "视频", createdAt: "", updatedAt: "" };
+    useAssetStore.setState({ assets: [video], folders: [folder] });
+    useAssetStore.getState().moveAsset(video.id, folder.id);
+    useAssetStore.getState().renameMediaAsset(video.id, "新视频");
+    assert.equal(useAssetStore.getState().assets[0]?.title, "新视频");
+    assert.equal(useAssetStore.getState().assets[0]?.folderId, folder.id);
+    assert.deepEqual(useAssetStore.getState().assets[0]?.metadata, video.metadata);
+    assert.throws(() => useAssetStore.getState().removeFolder(folder.id), /包含素材/);
+    useAssetStore.setState({ assets: [], folders: [] });
 });

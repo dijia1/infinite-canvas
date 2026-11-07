@@ -2,6 +2,8 @@
 
 import { Modal } from "antd";
 import { ImageOff } from "lucide-react";
+import { CanvasVideoContent, ScopedVideoResourceProvider } from "./canvas-video-content";
+import type { MaterialVideoPreview } from "./material-video-card";
 
 export type MaterialImagePreview = { title: string; url: string };
 
@@ -19,5 +21,13 @@ export function MaterialBrokenImagePlaceholder() {
             <ImageOff className="size-5" aria-hidden />
             <span>图片已损坏</span>
         </div>
+    );
+}
+
+export function MaterialVideoPreviewModal({ preview, onClose }: { preview?: MaterialVideoPreview; onClose: () => void }) {
+    return (
+        <Modal open={Boolean(preview)} title={preview?.title} footer={null} onCancel={onClose} width="min(90vw, 64rem)" destroyOnHidden>
+            {preview ? <ScopedVideoResourceProvider scope={`material:${preview.mediaId}`} nodeIds={[preview.mediaId]}><div className="h-[min(70vh,640px)]"><CanvasVideoContent nodeId={preview.mediaId} mediaId={preview.mediaId} /></div></ScopedVideoResourceProvider> : null}
+        </Modal>
     );
 }

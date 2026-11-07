@@ -7,6 +7,7 @@ export type PrivateImage = {
     bytes: number;
     width: number;
     height: number;
+    duration?: number;
     filename: string;
     title: string;
     folderId?: string;
@@ -24,8 +25,8 @@ export type PrivateFolder = {
 export type PrivateImageList = { items: PrivateImage[]; total: number };
 export type PrivateFolderList = { items: PrivateFolder[]; total: number };
 
-export function fetchPrivateImages() {
-    return apiGet<PrivateImageList>("/api/v1/private-images");
+export function fetchPrivateImages(kind?: "image" | "video") {
+    return apiGet<PrivateImageList>("/api/v1/private-images", kind ? { kind } : undefined);
 }
 
 export function fetchPrivateFolders() {

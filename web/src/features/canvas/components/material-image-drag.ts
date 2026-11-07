@@ -1,3 +1,5 @@
+export const PRIVATE_VIDEO_DRAG_TYPE = "application/x-infinite-canvas-private-video";
+
 export const PRIVATE_IMAGE_DRAG_TYPE = "application/x-infinite-canvas-private-image";
 export const PUBLIC_IMAGE_DRAG_TYPE = "application/x-infinite-canvas-public-image";
 

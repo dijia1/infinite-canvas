@@ -58,6 +58,7 @@ export type CanvasGenerationControllerOptions = {
     setAngleNodeId: StateSetter<string | null>;
     setRunningNodeId?: StateSetter<string | null>;
     onImageResultStateChange?: () => void;
+    onGeneratedMedia?: () => void;
     createId: () => string;
     createConfigNode: (position: Position, metadata: CanvasNodeMetadata) => CanvasNodeData;
     requestGeneration: (config: AiConfig, prompt: string, clientRequestId: string) => Promise<ImageGenerationTask>;
@@ -287,6 +288,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 setImageTaskState(identity, task);
                 if (task.status === "succeeded") {
                     await completeImageTaskNode(identity, rootId, task);
+                    if (taskCurrent(identity, options.nodesRef.current, task)) options.onGeneratedMedia?.();
                     return;
                 }
                 if ((task.status === "failed" || task.status === "uncertain" || task.status === "paused")) throw new Error(imageTaskError(task));
@@ -383,6 +385,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                             : node,
                     ),
                 );
+                if (task.status === "succeeded") options.onGeneratedMedia?.();
                 if (terminal || task.status === "succeeded") return;
                 await waitForTask(signal, 12_000);
                 if (!current()) return;

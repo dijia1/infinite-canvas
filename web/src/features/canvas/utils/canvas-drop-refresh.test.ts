@@ -26,6 +26,7 @@ test("batch local node completion selects nodes without requesting a remote cata
         screenToCanvas: () => ({ x: 0, y: 0 }),
         readImageDropPayload: () => null,
         PRIVATE_IMAGE_DRAG_TYPE: "private",
+        PRIVATE_VIDEO_DRAG_TYPE: "private-video",
         PUBLIC_IMAGE_DRAG_TYPE: "public",
         collectDroppedImageFiles,
         collectDroppedMediaFiles,

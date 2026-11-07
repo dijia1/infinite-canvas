@@ -47,7 +47,7 @@ afterEach(() => {
     assert.deepEqual(revokedURLs, createdURLs);
 });
 
-test("video upload sends MP4 bytes directly to OSS and returns stable media", async () => {
+for (const intent of ["canvas", "library"] as const) test(`video upload sends MP4 bytes directly to OSS with ${intent} intent`, async () => {
     const originalPost = axios.post,
         originalFetch = globalThis.fetch;
     const events: string[] = [];
@@ -55,6 +55,7 @@ test("video upload sends MP4 bytes directly to OSS and returns stable media", as
     axios.post = (async (url: string, body: unknown) => {
         events.push(url);
         if (url.endsWith("/complete")) assert.deepEqual(body, { duration: 5, width: 1280, height: 720 });
+        else assert.equal((body as { intent: string }).intent, intent);
         return { data: { code: 0, data: url.endsWith("/complete") ? media : { mode: "direct", id: "upload", uploadUrl: "https://oss.example/upload" } } };
     }) as typeof axios.post;
     const file = new File(["video"], "reference.mp4", { type: "video/mp4" });
@@ -65,7 +66,7 @@ test("video upload sends MP4 bytes directly to OSS and returns stable media", as
         return new Response(null, { status: 200 });
     }) as typeof fetch;
     try {
-        assert.deepEqual(await uploadVideoMedia(file), media);
+        assert.deepEqual(await uploadVideoMedia(file, { intent }), media);
         assert.equal(events.length, 3);
         assert.equal(events[1], "https://oss.example/upload");
     } finally {

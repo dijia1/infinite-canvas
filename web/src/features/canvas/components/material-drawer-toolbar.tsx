@@ -11,13 +11,14 @@ type MaterialDrawerToolbarProps = {
     onKeywordChange: (value: string) => void;
     onAddImage?: () => void;
     isUploading?: boolean;
+    addLabel?: string;
 };
 
-export function MaterialDrawerToolbar({ keyword, placeholder, onKeywordChange, onAddImage, isUploading = false }: MaterialDrawerToolbarProps) {
+export function MaterialDrawerToolbar({ keyword, placeholder, onKeywordChange, onAddImage, isUploading = false, addLabel = "添加图片" }: MaterialDrawerToolbarProps) {
     return (
         <div className="flex items-center gap-2">
             <Input className="min-w-0 flex-1" size="small" prefix={<Search className="size-3.5 text-stone-400" />} placeholder={placeholder} value={keyword} allowClear onChange={(event) => onKeywordChange(event.target.value)} />
-            {onAddImage ? <Button size="small" icon={<ImagePlus className="size-3.5" />} loading={isUploading} disabled={isUploading} onClick={onAddImage} aria-label="添加图片" title="添加图片" /> : null}
+            {onAddImage ? <Button size="small" icon={<ImagePlus className="size-3.5" />} loading={isUploading} disabled={isUploading} onClick={onAddImage} aria-label={addLabel} title={addLabel} /> : null}
         </div>
     );
 }

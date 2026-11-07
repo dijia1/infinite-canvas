@@ -20,25 +20,22 @@ function toFolder(folder: PrivateFolder): PrivateAssetFolder {
 export function privateCatalogToAssetState(images: PrivateImageList, folders: PrivateFolderList): { assets: Asset[]; folders: PrivateAssetFolder[] } {
     return {
         folders: folders.items.map(toFolder),
-        assets: images.items.map((image) => ({
+        assets: images.items.map((image): Asset => ({
             id: image.id,
-            kind: "image" as const,
+            kind: image.contentType.startsWith("video/") ? "video" as const : "image" as const,
             title: image.title,
             coverUrl: "",
             tags: [],
             source: sourceLabel(image.source),
             folderId: image.folderId || undefined,
-            data: {
-                dataUrl: "",
-                storageKey: imageStorageKeyForMedia(image.id),
-                width: image.width,
-                height: image.height,
-                bytes: image.bytes,
-                mimeType: image.contentType,
+            data: image.contentType.startsWith("video/") ? {
+                url: "", width: image.width, height: image.height, bytes: image.bytes, mimeType: image.contentType, duration: image.duration,
+            } : {
+                dataUrl: "", storageKey: imageStorageKeyForMedia(image.id), width: image.width, height: image.height, bytes: image.bytes, mimeType: image.contentType,
             },
             metadata: { mediaId: image.id, mediaSource: image.source, ...(image.expiresAt ? { expiresAt: image.expiresAt } : {}), uploadState: "uploaded" },
             createdAt: image.createdAt,
             updatedAt: image.createdAt,
-        })),
+        } as Asset)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     };
 }

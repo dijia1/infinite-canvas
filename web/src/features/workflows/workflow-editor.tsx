@@ -34,7 +34,8 @@ import { useWorkflowLocalImages } from "./use-workflow-local-images";
 import { useWorkflowLocalVideos } from "./use-workflow-local-videos";
 import { fitWorkflowVideo } from "./workflow-local-videos";
 import { collectDroppedMediaFiles } from "@/features/canvas/utils/canvas-file-drop";
-import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "@/features/canvas/components/material-image-drag";
+import { videoAssetDimensions } from "@/features/canvas/components/material-video-asset";
+import { PRIVATE_IMAGE_DRAG_TYPE, PRIVATE_VIDEO_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "@/features/canvas/components/material-image-drag";
 import { workflowImageDownloadState, workflowImageMenuSelection, type WorkflowImageMenu } from "./workflow-image-download";
 import { WorkflowImageContextMenu } from "./workflow-image-context-menu";
 import { workflowVisualNodeId, workflowVisualOutputId, applyWorkflowVisualNodes, parseWorkflowVisualId } from "./workflow-canvas-adapter";
@@ -180,6 +181,12 @@ function WorkflowEditorContent() {
         return ids;
     }, [graph.nodes, graph.connections, viewport, viewportSize, previewNodeId, mediaPreview, imageMenu]);
     const runs = useWorkflowRuns({ ownerUID: draftOwnerUID, workflowId: workflow.data ? workflowId : undefined, graph, visibleNodeIds: visibleRunNodeIds });
+    const generatedMediaKey = JSON.stringify([...runs.detailByNode.values()].flatMap(detail => detail.outputs.filter(output => output.status === "succeeded" && output.mediaId).map(output => output.mediaId)).sort());
+    useEffect(() => {
+        if (generatedMediaKey === "[]") return;
+        void refreshAssets().catch(error => message.error(error instanceof Error ? error.message : "素材刷新失败"));
+        void queryClient.invalidateQueries({ queryKey: ["workflow-video-assets"] });
+    }, [generatedMediaKey, refreshAssets, message, queryClient]);
     const currentRun = { data: runs.selectedDetail, isError: !runs.selectedDetail && Boolean(runs.selectedError), error: runs.selectedError, refetch: runs.refresh };
     const compatibleOutputs = useMemo(() => indexWorkflowRunOutputsByNode(runs.detailByNode, graph), [runs.detailByNode, graph]);
     const downloadImageCount = workflowDownloadImageCount(currentRun.data);
@@ -464,6 +471,7 @@ function WorkflowEditorContent() {
         if (editBlockedRef.current) return;
         const position = screenToWorld(event.clientX, event.clientY);
         const privateImage = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_IMAGE_DRAG_TYPE));
+        const privateVideo = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_VIDEO_DRAG_TYPE));
         const publicImage = readImageDropPayload<PublicImageDropPayload>(event.dataTransfer.getData(PUBLIC_IMAGE_DRAG_TYPE));
         try {
             if (typeof privateImage?.assetId === "string" && privateImage.assetId) {
@@ -477,6 +485,13 @@ function WorkflowEditorContent() {
                     if (!blob) throw new Error("本地素材不可用，请重新上传");
                     await localImages.importFiles([new File([blob], asset.title || "image.png", { type: asset.data.mimeType })], position);
                 }
+                return;
+            }
+            if (typeof privateVideo?.assetId === "string" && privateVideo.assetId) {
+                const asset = assets.find(asset => asset.id === privateVideo.assetId && asset.kind === "video");
+                if (!asset || asset.kind !== "video" || typeof asset.metadata?.mediaId !== "string") throw new Error("视频素材不存在，请刷新我的素材");
+                const dimensions = await videoAssetDimensions(asset, asset.metadata.mediaId);
+                if (!editBlockedRef.current) addNode("video_input", asset.metadata.mediaId, dimensions, position);
                 return;
             }
             if (typeof publicImage?.mediaId === "string" && publicImage.mediaId && typeof publicImage.id === "string" && publicImage.id) {

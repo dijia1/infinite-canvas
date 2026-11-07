@@ -77,3 +77,20 @@ test("maps a legacy temporary media source into the permanent upload system fold
         uploadState: "uploaded",
     });
 });
+
+
+test("mixed private catalogs preserve video type, duration and stable identity without caching signed video URLs", () => {
+    const base = { source: "generated" as const, bytes: 1000, width: 720, height: 1280, filename: "result.mp4", title: "生成视频", createdAt: "2026-11-01T00:00:00Z" };
+    const state = privateCatalogToAssetState({ items: [
+        { ...base, id: "image", contentType: "image/png", createdAt: "2026-10-31T00:00:00Z" },
+        { ...base, id: "video", contentType: "video/mp4", duration: 6, folderId: "folder" },
+    ], total: 2 }, { items: [], total: 0 });
+    assert.deepEqual(state.assets.map(asset => [asset.id, asset.kind]), [["video", "video"], ["image", "image"]]);
+    const video = state.assets[0];
+    assert.equal(video?.kind, "video");
+    if (video?.kind !== "video") assert.fail("missing video asset");
+    assert.deepEqual(video.data, { url: "", width: 720, height: 1280, duration: 6, bytes: 1000, mimeType: "video/mp4" });
+    assert.equal(video.metadata?.mediaId, "video");
+    assert.equal(video.metadata?.mediaSource, "generated");
+    assert.equal(video.folderId, "folder");
+});

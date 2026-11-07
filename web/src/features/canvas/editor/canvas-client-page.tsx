@@ -40,7 +40,7 @@ import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { appPath } from "@/lib/app-path";
-import { type ImageAsset, useAssetStore } from "@/stores/use-asset-store";
+import { type ImageAsset, type VideoAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
 import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
@@ -77,7 +77,8 @@ import { CanvasBootstrapFeedback, CanvasSyncFeedback } from "../components/canva
 import { createCanvasCanonicalRestore } from "./canvas-canonical-restore";
 import { CanvasImageMaskDialog } from "../image-mask/canvas-image-mask-dialog";
 import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/mask-resources";
-import { PRIVATE_IMAGE_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
+import { videoAssetDimensions } from "../components/material-video-asset";
+import { PRIVATE_IMAGE_DRAG_TYPE, PRIVATE_VIDEO_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore, selectCanvasProjectSummaries } from "../stores/use-canvas-store";
 import { useCanvasProjectDetail } from "../hooks/use-canvas-project-detail";
 import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
@@ -356,7 +357,7 @@ function InfiniteCanvasPage() {
             void useAssetStore
                 .getState()
                 .refreshFromServer()
-                .catch(() => undefined);
+                .catch(error => console.warn("刷新画布素材失败", { projectId, error: error instanceof Error ? error.message : String(error) }));
         };
         privateAssetRefreshTimerRef.current = setTimeout(waitForConfirmedSave, 350);
     }, [projectId]);
@@ -818,6 +819,7 @@ function InfiniteCanvasPage() {
         clearRunningNode,
     } = useCanvasGeneration({
         getSessionScope: getVideoSessionScope,
+        onGeneratedMedia: refreshPrivateAssetsAfterCanvasSave,
         nodesRef,
         connectionsRef,
         effectiveConfig,
@@ -1579,6 +1581,22 @@ function InfiniteCanvasPage() {
         [createPublicImageNode],
     );
 
+    const createVideoAssetNode = useCallback(async (asset: VideoAsset, position: Position) => {
+        if (!videoCanEditRef.current) return;
+        const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
+        if (!mediaId) throw new Error("视频素材尚未上传完成");
+        const scope = getVideoSessionScope();
+        const dimensions = await videoAssetDimensions(asset, mediaId);
+        if (!videoCanEditRef.current || scope !== getVideoSessionScope()) return;
+        const size = fitNodeSize(dimensions.width, dimensions.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+        const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { mediaId, assetId: asset.id, status: "success", naturalWidth: dimensions.width, naturalHeight: dimensions.height, duration: asset.data.duration, mimeType: asset.data.mimeType, bytes: asset.data.bytes }), ...size, title: asset.title };
+        node.position = { x: position.x - node.width / 2, y: position.y - node.height / 2 };
+        setNodes(previous => [...previous, node]);
+        setSelectedNodeIds(new Set([node.id]));
+        setSelectedConnectionId(null);
+        setDialogNodeId(node.id);
+    }, [getVideoSessionScope]);
+
     const createVideoFileNode = useCallback(async (file: File, position: Position) => {
         if (!videoCanEditRef.current) return;
         const scope = getVideoSessionScope();
@@ -2086,6 +2104,12 @@ function InfiniteCanvasPage() {
                 if (asset) void createImageAssetNode(asset, position).catch((error) => message.error(error instanceof Error ? error.message : "素材插入失败"));
                 return;
             }
+            const videoPayload = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_VIDEO_DRAG_TYPE));
+            if (typeof videoPayload?.assetId === "string" && videoPayload.assetId) {
+                const asset = useAssetStore.getState().assets.find((item): item is VideoAsset => item.id === videoPayload.assetId && item.kind === "video");
+                if (asset) void createVideoAssetNode(asset, position).catch(error => message.error(error instanceof Error ? error.message : "视频素材插入失败"));
+                return;
+            }
             const publicPayload = readImageDropPayload<PublicImageDropPayload>(event.dataTransfer.getData(PUBLIC_IMAGE_DRAG_TYPE));
             if (publicPayload?.id && publicPayload.mediaId) {
                 void createPublicImageNode(publicPayload, position).catch((error) => message.error(error instanceof Error ? error.message : "公共素材插入失败"));
@@ -2119,7 +2143,7 @@ function InfiniteCanvasPage() {
                 void createVideoFileNode(file, videoPositions[index]!).catch(error => message.error(error instanceof Error ? error.message : "视频上传失败"));
             });
         },
-        [createImageAssetNode, createImageFileNode, createPublicImageNode, createVideoFileNode, message, screenToCanvas],
+        [createImageAssetNode, createImageFileNode, createPublicImageNode, createVideoAssetNode, createVideoFileNode, message, screenToCanvas],
     );
 
     const handleViewportChange = useCallback((next: ViewportTransform) => {

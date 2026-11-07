@@ -10,6 +10,7 @@ function data<T>(value: ApiResponse<T>): T {
     return value.data;
 }
 export type VideoUploadOptions = {
+    intent?: "canvas" | "library";
     metadata?: VideoUploadMetadata;
     signal?: AbortSignal;
     onProgress?: (percent: number) => void;
@@ -72,7 +73,7 @@ export async function uploadVideoMedia(file: Blob, options: VideoUploadOptions =
                     filename: file instanceof File ? file.name : "video.mp4",
                     contentType: file.type,
                     bytes: file.size,
-                    intent: "canvas",
+                    intent: options.intent || "canvas",
                 },
                 { signal },
             )

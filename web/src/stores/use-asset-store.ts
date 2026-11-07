@@ -26,7 +26,8 @@ export type PrivateAssetFolder = {
 };
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
 export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
-export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
+export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string; duration?: number } };
+export type MediaAsset = ImageAsset | VideoAsset;
 export type Asset = TextAsset | ImageAsset | VideoAsset;
 
 type AssetBase<T extends AssetKind> = {
@@ -52,7 +53,7 @@ type AssetStore = {
     renameFolder: (id: string, name: string) => void;
     removeFolder: (id: string) => void;
     moveAsset: (id: string, folderId?: string) => void;
-    renameImageAsset: (id: string, title: string) => void;
+    renameMediaAsset: (id: string, title: string) => void;
     removeAsset: (id: string) => void;
     cleanupImages: (extra?: unknown) => void;
     hydrate: (uid?: string) => Promise<void>;
@@ -101,7 +102,7 @@ function parseStoredFolders(value: unknown): PrivateAssetFolder[] {
 function mediaIDs(assets: Asset[]) {
     return new Set(
         assets.flatMap((asset) => {
-            if (asset.kind !== "image" || typeof asset.metadata?.mediaId !== "string" || !asset.metadata.mediaId) return [];
+            if (asset.kind === "text" || typeof asset.metadata?.mediaId !== "string" || !asset.metadata.mediaId) return [];
             return [asset.metadata.mediaId];
         }),
     );
@@ -151,11 +152,12 @@ const assetStorage: PersistStorage<AssetStore> = {
 
 const catalogRefresh = createAssetRefreshScheduler({
     load: async () => {
-        // Finish both requests even on failure before allowing another round.
-        const [images, folders] = await Promise.allSettled([fetchPrivateImages(), fetchPrivateFolders()]);
+        // Finish every catalog request even on failure before allowing another round.
+        const [images, videos, folders] = await Promise.allSettled([fetchPrivateImages(), fetchPrivateImages("video"), fetchPrivateFolders()]);
         if (images.status === "rejected") throw images.reason;
+        if (videos.status === "rejected") throw videos.reason;
         if (folders.status === "rejected") throw folders.reason;
-        return privateCatalogToAssetState(images.value, folders.value);
+        return privateCatalogToAssetState({ items: [...images.value.items, ...videos.value.items], total: images.value.total + videos.value.total }, folders.value);
     },
     commit: async (next, isCurrent) => {
         if (!isCurrent()) return;
@@ -220,8 +222,8 @@ export const useAssetStore = create<AssetStore>()(
             removeFolder: (id) =>
                 set((state) => {
                     if (!state.folders.some((folder) => folder.id === id)) throw new Error("文件夹不存在");
-                    if (state.folders.some((folder) => folder.parentId === id) || state.assets.some((asset) => asset.kind === "image" && asset.folderId === id)) {
-                        throw new Error("文件夹包含图片或子文件夹，请先整理内容");
+                    if (state.folders.some((folder) => folder.parentId === id) || state.assets.some((asset) => asset.kind !== "text" && asset.folderId === id)) {
+                        throw new Error("文件夹包含素材或子文件夹，请先整理内容");
                     }
                     return { folders: state.folders.filter((folder) => folder.id !== id) };
                 }),
@@ -231,18 +233,18 @@ export const useAssetStore = create<AssetStore>()(
                     assertFolderExists(state.folders, normalizedFolderId);
                     const asset = state.assets.find((item) => item.id === id);
                     if (!asset) throw new Error("素材不存在");
-                    if (asset.kind !== "image") throw new Error("仅图片素材可以移动");
+                    if (asset.kind === "text") throw new Error("仅图片和视频素材可以移动");
                     return {
                         assets: state.assets.map((item) => (item.id === id ? ({ ...item, folderId: normalizedFolderId, updatedAt: new Date().toISOString() } as Asset) : item)),
                     };
                 });
             },
-            renameImageAsset: (id, value) => {
-                const title = normalizeName(value, "图片名称");
+            renameMediaAsset: (id, value) => {
+                const title = normalizeName(value, "素材名称");
                 set((state) => {
                     const asset = state.assets.find((item) => item.id === id);
                     if (!asset) throw new Error("素材不存在");
-                    if (asset.kind !== "image") throw new Error("仅图片素材可以重命名");
+                    if (asset.kind === "text") throw new Error("仅图片和视频素材可以重命名");
                     return {
                         assets: state.assets.map((item) => (item.id === id ? ({ ...item, title, updatedAt: new Date().toISOString() } as Asset) : item)),
                     };

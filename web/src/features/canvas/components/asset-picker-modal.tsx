@@ -10,24 +10,27 @@ import { deleteUserImage, uploadUserImage } from "@/services/api/image";
 import { fetchPublicImageAccess } from "@/services/api/public-images";
 import { createPrivateFolder, deletePrivateFolder, renamePrivateFolder, updatePrivateImage } from "@/services/api/private-images";
 import { deleteStoredImages, getImageBlob, getRemoteImageAccess, imageThumbnailStorageKey, promoteImageStorageKey, uploadImage, type UploadedImage } from "@/services/image-storage";
-import { type Asset, type ImageAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
+import { type Asset, type ImageAsset, type MediaAsset, type PrivateAssetFolder, useAssetStore } from "@/stores/use-asset-store";
+import { uploadVideoMedia } from "@/services/api/video-media";
+import { MaterialVideoCard, type MaterialVideoPreview } from "./material-video-card";
 import { MaterialDrawer } from "./material-drawer";
 import { MaterialDrawerToolbar, MaterialThumbnailControl } from "./material-drawer-toolbar";
 import { DEFAULT_MATERIAL_THUMBNAIL_STAGE, MaterialContextMenu, MaterialFolderBreadcrumbs, MaterialFolderTree, folderPath, materialThumbnailGridClass } from "./material-folder-ui";
-import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal } from "./material-image-preview";
-import { PRIVATE_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload } from "./material-image-drag";
+import { MaterialBrokenImagePlaceholder, MaterialImagePreviewModal, MaterialVideoPreviewModal } from "./material-image-preview";
+import { PRIVATE_IMAGE_DRAG_TYPE, PRIVATE_VIDEO_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload } from "./material-image-drag";
 import { useMaterialMediaPreview } from "./use-material-media-preview";
 
 const PAGE_SIZE = 24;
-type PrivateMediaSource = "upload" | "generated";
+type PrivateMediaSource = "upload" | "generated_image" | "generated_video";
 const PRIVATE_SYSTEM_FOLDERS: Array<{ source: PrivateMediaSource; title: string }> = [
     { source: "upload", title: "我的上传" },
-    { source: "generated", title: "AI 生成" },
+    { source: "generated_image", title: "AI 生成图片" },
+    { source: "generated_video", title: "AI 生成视频" },
 ];
 type ContextMenu = { x: number; y: number };
-type ImageContextMenu = ContextMenu & { asset: ImageAsset };
+type ImageContextMenu = ContextMenu & { asset: MediaAsset };
 type FolderContextMenu = ContextMenu & { folder: PrivateAssetFolder };
-type Editor = { kind: "folder" } | { kind: "folderRename"; folder: PrivateAssetFolder } | { kind: "rename"; asset: ImageAsset } | { kind: "move"; asset: ImageAsset };
+type Editor = { kind: "folder" } | { kind: "folderRename"; folder: PrivateAssetFolder } | { kind: "rename"; asset: MediaAsset } | { kind: "move"; asset: MediaAsset };
 
 export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
     const { message } = App.useApp();
@@ -36,7 +39,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const addAsset = useAssetStore((state) => state.addAsset);
     const updateAsset = useAssetStore((state) => state.updateAsset);
     const moveAsset = useAssetStore((state) => state.moveAsset);
-    const renameImageAsset = useAssetStore((state) => state.renameImageAsset);
+    const renameMediaAsset = useAssetStore((state) => state.renameMediaAsset);
     const removeAsset = useAssetStore((state) => state.removeAsset);
     const refreshFromServer = useAssetStore((state) => state.refreshFromServer);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -44,6 +47,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const [isUploading, setIsUploading] = useState(false);
     const [deletingAssetId, setDeletingAssetId] = useState<string>();
     const [preview, setPreview] = useState<{ title: string; url: string }>();
+    const [videoPreview, setVideoPreview] = useState<MaterialVideoPreview>();
     const [thumbnailStage, setThumbnailStage] = useState(DEFAULT_MATERIAL_THUMBNAIL_STAGE);
     const [currentFolderId, setCurrentFolderId] = useState<string>();
     const [currentSystemSource, setCurrentSystemSource] = useState<PrivateMediaSource>();
@@ -58,8 +62,8 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     }, [currentFolderId, folders]);
 
     useEffect(() => {
-        if (open) void refreshFromServer().catch(() => undefined);
-    }, [open, refreshFromServer]);
+        if (open) void refreshFromServer().catch(error => message.error(error instanceof Error ? error.message : "素材加载失败"));
+    }, [open, refreshFromServer, message]);
 
     const uploadStoredImage = useCallback(
         async (assetId: string, image: UploadedImage, file: File) => {
@@ -101,20 +105,20 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         [updateAsset],
     );
 
-    const updateRemoteAsset = useCallback(async (asset: ImageAsset, patch: { title?: string; folderId?: string }) => {
+    const updateRemoteAsset = useCallback(async (asset: MediaAsset, patch: { title?: string; folderId?: string }) => {
         const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
         if (!mediaId) return;
         await updatePrivateImage(mediaId, patch);
     }, []);
 
     const moveImageToFolder = useCallback(
-        async (asset: ImageAsset, folderId?: string) => {
+        async (asset: MediaAsset, folderId?: string) => {
             try {
                 await updateRemoteAsset(asset, { folderId: folderId || "" });
                 moveAsset(asset.id, folderId);
-                message.success("图片已移动");
+                message.success("素材已移动");
             } catch (error) {
-                message.error(error instanceof Error ? error.message : "移动图片失败");
+                message.error(error instanceof Error ? error.message : "移动素材失败");
             }
         },
         [message, moveAsset, updateRemoteAsset],
@@ -147,6 +151,21 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
         [addAsset, isUploading, message, updateAsset, uploadStoredImage],
     );
 
+    const saveVideo = async (file: File) => {
+        if (isUploading) return;
+        setIsUploading(true);
+        try {
+            const remote = await uploadVideoMedia(file, { intent: "library" });
+            if (currentFolderId) await updatePrivateImage(remote.mediaId, { folderId: currentFolderId });
+            await refreshFromServer();
+            message.success("视频已加入我的素材");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "视频上传失败");
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
     const retryImage = useCallback(
         async (asset: ImageAsset) => {
             if (isUploading || !asset.data.storageKey) return;
@@ -173,7 +192,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     );
 
     const deleteImage = useCallback(
-        async (asset: ImageAsset) => {
+        async (asset: MediaAsset) => {
             if (deletingAssetId) return;
             const mediaId = typeof asset.metadata?.mediaId === "string" ? asset.metadata.mediaId : "";
             const publicImageId = typeof asset.metadata?.publicImageId === "string" ? asset.metadata.publicImageId : "";
@@ -182,9 +201,9 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 if (mediaId && !publicImageId) await deleteUserImage(mediaId);
                 removeAsset(asset.id);
                 if (!publicImageId) await deleteStoredImages([asset.data.storageKey, ...(mediaId ? [imageThumbnailStorageKey(mediaId)] : [])].filter((key): key is string => Boolean(key)));
-                message.success("图片已永久删除");
+                message.success("素材已永久删除");
             } catch (error) {
-                message.error(error instanceof Error ? `删除图片失败：${error.message}` : "删除图片失败");
+                message.error(error instanceof Error ? `删除素材失败：${error.message}` : "删除素材失败");
             } finally {
                 setDeletingAssetId(undefined);
             }
@@ -230,8 +249,8 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 message.success("文件夹已重命名");
             } else if (editor?.kind === "rename") {
                 await updateRemoteAsset(editor.asset, { title: value });
-                renameImageAsset(editor.asset.id, value);
-                message.success("图片已重命名");
+                renameMediaAsset(editor.asset.id, value);
+                message.success("素材已重命名");
             }
             setEditor(undefined);
         } catch (error) {
@@ -241,9 +260,9 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
     const handleFolderDrop = async (folderId: string, event: DragEvent<HTMLButtonElement>) => {
         event.preventDefault();
         event.stopPropagation();
-        const payload = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_IMAGE_DRAG_TYPE));
+        const payload = readImageDropPayload<PrivateImageDropPayload>(event.dataTransfer.getData(PRIVATE_IMAGE_DRAG_TYPE) || event.dataTransfer.getData(PRIVATE_VIDEO_DRAG_TYPE));
         if (!payload?.assetId) return;
-        const asset = useAssetStore.getState().assets.find((item): item is ImageAsset => item.id === payload.assetId && item.kind === "image");
+        const asset = useAssetStore.getState().assets.find((item): item is MediaAsset => item.id === payload.assetId && item.kind !== "text");
         if (asset) await moveImageToFolder(asset, folderId);
     };
 
@@ -291,6 +310,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         }}
                         onAddImage={() => fileInputRef.current?.click()}
                         onRetryImage={retryImage}
+                        onVideoPreview={setVideoPreview}
                         onPreview={setPreview}
                         onFolderDrop={(folderId, event) => void handleFolderDrop(folderId, event)}
                         onImageContextMenu={(asset, event) => {
@@ -312,11 +332,11 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                 <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/mp4"
                     className="hidden"
                     onChange={(event) => {
                         const file = event.target.files?.[0];
-                        if (file) void saveImage(file, "本地上传", currentFolderId);
+                        if (file) void (file.type.startsWith("video/") ? saveVideo(file) : saveImage(file, "本地上传", currentFolderId));
                         event.target.value = "";
                     }}
                 />
@@ -405,10 +425,11 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                     </>
                 </MaterialContextMenu>
             </MaterialDrawer>
+            <MaterialVideoPreviewModal preview={videoPreview} onClose={() => setVideoPreview(undefined)} />
             <MaterialImagePreviewModal preview={preview} onClose={() => setPreview(undefined)} />
             <Modal
                 open={Boolean(editor)}
-                title={editor?.kind === "folder" ? "新建文件夹" : editor?.kind === "folderRename" ? "重命名文件夹" : editor?.kind === "move" ? "移动到文件夹" : "重命名图片"}
+                title={editor?.kind === "folder" ? "新建文件夹" : editor?.kind === "folderRename" ? "重命名文件夹" : editor?.kind === "move" ? "移动到文件夹" : "重命名素材"}
                 okText="保存"
                 cancelText="取消"
                 footer={editor?.kind === "move" ? null : undefined}
@@ -448,7 +469,7 @@ export function MyAssetsDrawer({ open, onClose }: { open: boolean; onClose: () =
                         value={editorValue}
                         onChange={(event) => setEditorValue(event.target.value)}
                         onPressEnter={() => void submitEditor()}
-                        placeholder={editor?.kind === "folder" || editor?.kind === "folderRename" ? "文件夹名称" : "图片名称"}
+                        placeholder={editor?.kind === "folder" || editor?.kind === "folderRename" ? "文件夹名称" : "素材名称"}
                     />
                 )}
             </Modal>
@@ -468,6 +489,7 @@ function MyAssetsTab({
     onAddImage,
     onRetryImage,
     onPreview,
+    onVideoPreview,
     onFolderDrop,
     onImageContextMenu,
     onFolderContextMenu,
@@ -483,8 +505,9 @@ function MyAssetsTab({
     onAddImage: () => void;
     onRetryImage: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
+    onVideoPreview: (preview: MaterialVideoPreview) => void;
     onFolderDrop: (folderId: string, event: DragEvent<HTMLButtonElement>) => void;
-    onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
+    onImageContextMenu: (asset: MediaAsset, event: MouseEvent) => void;
     onFolderContextMenu: (folder: PrivateAssetFolder, event: MouseEvent<HTMLButtonElement>) => void;
 }) {
     const [keyword, setKeyword] = useState("");
@@ -492,9 +515,9 @@ function MyAssetsTab({
     const filtered = useMemo(() => {
         const query = keyword.trim().toLowerCase();
         return assets
-            .filter((asset): asset is ImageAsset => asset.kind === "image")
+            .filter((asset): asset is MediaAsset => asset.kind !== "text")
             .filter((asset) => !currentSystemSource || privateMediaSource(asset) === currentSystemSource)
-            .filter((asset) => (asset.folderId || undefined) === currentFolderId)
+            .filter((asset) => currentSystemSource || (asset.folderId || undefined) === currentFolderId)
             .filter((asset) => !query || [asset.title, ...(asset.tags || [])].join(" ").toLowerCase().includes(query));
     }, [assets, currentFolderId, currentSystemSource, keyword]);
     const visible = useMemo(() => filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [filtered, page]);
@@ -512,6 +535,7 @@ function MyAssetsTab({
                     setKeyword(value);
                 }}
                 onAddImage={onAddImage}
+                addLabel="添加素材"
                 isUploading={isUploading}
             />
             <PrivateSystemFolderTree
@@ -544,11 +568,11 @@ function MyAssetsTab({
             {visible.length ? (
                 <div className={gridClass}>
                     {visible.map((asset) => (
-                        <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
+                        asset.kind === "video" ? <MaterialVideoCard key={asset.id} asset={asset} onPreview={onVideoPreview} onContextMenu={onImageContextMenu} /> : <PickerCard key={asset.id} asset={asset} onRetry={onRetryImage} onPreview={onPreview} onImageContextMenu={onImageContextMenu} />
                     ))}
                 </div>
             ) : (
-                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前文件夹没有图片" className="py-12" />
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="当前分类或文件夹没有素材" className="py-12" />
             )}
             {filtered.length > PAGE_SIZE ? (
                 <div className="flex justify-center">
@@ -559,9 +583,9 @@ function MyAssetsTab({
     );
 }
 
-function privateMediaSource(asset: ImageAsset): PrivateMediaSource {
+function privateMediaSource(asset: MediaAsset): PrivateMediaSource {
     const source = asset.metadata?.mediaSource;
-    return source === "generated" ? source : "upload";
+    return source === "generated" ? asset.kind === "video" ? "generated_video" : "generated_image" : "upload";
 }
 
 function PrivateSystemFolderTree({ currentSource, onNavigate }: { currentSource?: PrivateMediaSource; onNavigate: (source?: PrivateMediaSource) => void }) {
@@ -610,7 +634,7 @@ function PickerCard({
     asset: ImageAsset;
     onRetry: (asset: ImageAsset) => void;
     onPreview: (preview: { title: string; url: string }) => void;
-    onImageContextMenu: (asset: ImageAsset, event: MouseEvent) => void;
+    onImageContextMenu: (asset: MediaAsset, event: MouseEvent) => void;
 }) {
     const cover = asset.coverUrl || asset.data.dataUrl;
     const uploadState = asset.metadata?.uploadState;
