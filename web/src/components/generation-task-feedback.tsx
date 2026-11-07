@@ -12,6 +12,7 @@ export function GenerationTaskFeedback({
     confirmingRetry,
     onResume,
     onRegenerate,
+    onRestart,
     onReconnect,
 }: {
     status?: string;
@@ -22,6 +23,7 @@ export function GenerationTaskFeedback({
     confirmingRetry?: boolean;
     onResume?: () => void;
     onRegenerate?: () => void;
+    onRestart?: () => void;
     onReconnect?: () => void;
 }) {
     const view = generationTaskPresentation(status, error, issue, connectionError);
@@ -31,15 +33,15 @@ export function GenerationTaskFeedback({
         : status === "paused"
           ? [
                 { label: "恢复查询", action: onResume },
-                { label: confirmingRetry ? "确认重试" : "重新生成", action: onRegenerate },
+                { label: onRestart ? "重新运行" : confirmingRetry ? "确认重试" : "重新生成", action: onRestart || onRegenerate },
             ]
           : status === "uncertain"
             ? [
                   { label: "刷新状态", action: onReconnect },
-                  { label: confirmingRetry ? "确认重试" : "重新生成", action: onRegenerate },
+                  { label: onRestart ? "重新运行" : confirmingRetry ? "确认重试" : "重新生成", action: onRestart || onRegenerate },
               ]
             : status === "failed"
-              ? [{ label: confirmingRetry ? "确认重试" : "重新生成", action: onRegenerate }]
+              ? [{ label: onRestart ? "重新运行" : confirmingRetry ? "确认重试" : "重新生成", action: onRestart || onRegenerate }]
               : [];
     return (
         <div role="status" className="flex h-full w-full flex-col items-center justify-center gap-3 px-4 py-3 text-center">

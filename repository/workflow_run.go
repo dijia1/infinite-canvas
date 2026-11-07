@@ -45,7 +45,7 @@ type WorkflowRunListFilter struct {
 	Active     string
 }
 
-func AdmitWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution, outputs []model.WorkflowOutputExecution, mediaIDs []string, expectedRevision int) (model.WorkflowRun, bool, error) {
+func AdmitWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution, outputs []model.WorkflowOutputExecution, mediaIDs []string, expectedRevision int, restart *WorkflowRunRestart) (model.WorkflowRun, bool, error) {
 	database, err := DB()
 	if err != nil {
 		return model.WorkflowRun{}, false, err
@@ -71,6 +71,11 @@ func AdmitWorkflowRun(run model.WorkflowRun, steps []model.WorkflowStepExecution
 		}
 		if definition.Revision != expectedRevision {
 			return ErrWorkflowRevisionConflict
+		}
+		if restart != nil {
+			if err := retireWorkflowRun(tx, run, restart); err != nil {
+				return err
+			}
 		}
 		if conflict, err := workflowRunConflict(tx, run, steps, ""); err != nil {
 			return err

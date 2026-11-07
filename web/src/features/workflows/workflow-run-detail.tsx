@@ -17,10 +17,11 @@ import type { WorkflowGraph, WorkflowNode, WorkflowOutputExecution, WorkflowOutp
 
 type Preview = { nodeId: string; mediaId: string; type: "image" | "video" };
 
-export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, resumingTaskIDs, confirmingRetryKeys, onStop, onDelete, onRetry, onResumeTask, connectionError, onReconnect }: {
+export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, resumingTaskIDs, confirmingRetryKeys, onStop, onDelete, onRetry, onResumeTask, connectionError, onReconnect, onRestart }: {
     detail?: WorkflowRunDetailRecord;
     connectionError?: string;
     onReconnect?: () => void;
+    onRestart?: () => void;
     stopping?: boolean;
     deleting?: boolean;
     retryingKey?: string;
@@ -63,6 +64,7 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, res
                         <p className="mt-2 text-sm">{workflowRunStatusText(detail.run.status)}</p>
                     </div>
                     <div className="flex items-center gap-2">
+                        {onRestart ? <Button type="primary" icon={<RefreshCw className="size-3.5" />} onClick={onRestart}>重新运行</Button> : null}
                         {active && !detail.run.stopRequested && onStop ? <Button danger icon={<Square className="size-3.5" />} loading={stopping} onClick={onStop}>停止</Button> : null}
                         {!active && onDelete ? <Button danger type="text" icon={<Trash2 className="size-3.5" />} loading={deleting} onClick={onDelete}>删除记录</Button> : null}
                     </div>

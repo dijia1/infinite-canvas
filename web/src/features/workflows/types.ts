@@ -172,3 +172,5 @@ export type WorkflowRunState = {
     nodeRunIds: Record<string, string>;
     activeRuns: WorkflowRunList;
 };
+
+export type WorkflowRunReplacement = { replaceRunId: string; confirmUncertain: true };

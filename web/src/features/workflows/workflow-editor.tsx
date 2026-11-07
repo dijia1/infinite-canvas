@@ -67,7 +67,7 @@ import { WorkflowImageAssetCard } from "./workflow-image-asset-card";
 import { WorkflowRunDetail } from "./workflow-run-detail";
 import { pendingWorkflowRetryKey, workflowRunScopeKey } from "./workflow-run-requests";
 import { useWorkflowRuns } from "./use-workflow-runs";
-import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableWorkflowOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText, workflowResumeTaskID } from "./workflow-run-state";
+import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableWorkflowOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText, workflowResumeTaskID, workflowScopeRestartTarget } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
 import { buildWorkflowPathData, selectWorkflowViewportScene, workflowConnectionPathCache, workflowOutputLinks, workflowOutputPathCache, workflowSelectedImageResourceIds, workflowVisualRenderDetail } from "./workflow-viewport-rendering";
 import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition, WorkflowRunScope } from "./types";
@@ -353,9 +353,14 @@ function WorkflowEditorContent() {
             message.error(error instanceof Error ? error.message : "保存流程失败");
         },
     };
-    const startRun = async (scope: WorkflowRunScope = { type: "workflow" }) => {
+    const startRun = async (scope: WorkflowRunScope = { type: "workflow" }, restartConfirmed = false) => {
         const key = workflowRunScopeKey(scope);
         if (startingScopesRef.current.has(key) || readOnly) return;
+        const restart = !runs.pendingByScope.has(key) ? workflowScopeRestartTarget(scopeStates.get(key)) : undefined;
+        if (restart && !restartConfirmed) {
+            modal.confirm({ title: "重新运行当前流程？", content: "将使用当前配置重新执行此范围的全部节点。原请求可能仍在处理，可能重复扣费。旧结果会保留在历史记录中。", okText: "重新运行", cancelText: "取消", onOk: () => startRun(scope, true) });
+            return;
+        }
         startingScopesRef.current.add(key); setStartingScopes(new Set(startingScopesRef.current));
         try {
             let confirmedRevision = revision;
@@ -367,7 +372,7 @@ function WorkflowEditorContent() {
             }
             if (editBlockedRef.current) throw new Error("当前流程不可编辑，请重新确认编辑权限");
             if (!runs.pendingByScope.has(key) && (localImages.pending(scope).length || localVideos.pending(scope).length)) throw new Error("素材仍在上传，请等待上传完成后运行");
-            await runs.start(scope, confirmedRevision);
+            await runs.start(scope, confirmedRevision, restart ? { replaceRunId: restart.id, confirmUncertain: true } : undefined);
             message.success("流程已开始运行");
         } catch (error) { message.error(error instanceof Error ? error.message : "运行请求结果待确认，可再次点击确认"); }
         finally { startingScopesRef.current.delete(key); setStartingScopes(new Set(startingScopesRef.current)); }
@@ -970,7 +975,7 @@ function WorkflowEditorContent() {
     const anyActive = Boolean(runs.overview?.activeRuns.total);
     const fullActive = Boolean(scopeStates.get(workflowRunScopeKey({ type: "workflow" }))?.activeRunId);
     const unframedRun = graph.frames?.length ? undefined : scopeStates.get(workflowRunScopeKey({ type: "workflow" }))?.latestRun || undefined;
-    const runDisabled = (scope: WorkflowRunScope) => (scope.type === "frame" && !graph.frames?.find((frame) => frame.id === scope.frameId)?.nodeIds.some((id) => nodesById.get(id)?.type.endsWith("_generation"))) || readOnly || resizing || interactions.isNodeDragging || frameGesture.active || startingScopes.has(workflowRunScopeKey(scope)) || (!runs.pendingByScope.has(workflowRunScopeKey(scope)) && (scope.type === "workflow" ? anyActive : fullActive || Boolean(scopeStates.get(workflowRunScopeKey(scope))?.activeRunId)));
+    const runDisabled = (scope: WorkflowRunScope) => (scope.type === "frame" && !graph.frames?.find((frame) => frame.id === scope.frameId)?.nodeIds.some((id) => nodesById.get(id)?.type.endsWith("_generation"))) || readOnly || resizing || interactions.isNodeDragging || frameGesture.active || startingScopes.has(workflowRunScopeKey(scope)) || (!runs.pendingByScope.has(workflowRunScopeKey(scope)) && (scope.type === "workflow" ? anyActive && !workflowScopeRestartTarget(scopeStates.get(workflowRunScopeKey(scope))) : fullActive || Boolean(scopeStates.get(workflowRunScopeKey(scope))?.activeRunId && !workflowScopeRestartTarget(scopeStates.get(workflowRunScopeKey(scope))))));
     const openRun = (id: string) => { runs.selectRun(id); setRunDetailOpen(true); };
     const frameLabel = (frame: { id: string; name: string }) => {
         const duplicates = graph.frames?.filter((item) => item.name === frame.name) || [];
@@ -1059,7 +1064,7 @@ function WorkflowEditorContent() {
                                 ...graph.frames.map((frame) => { const scope: WorkflowRunScope = { type: "frame", frameId: frame.id }; const state = scopeStates.get(workflowRunScopeKey(scope)); return { key: frame.id, label: `${frameLabel(frame)}${state?.activeRunId ? " · 运行中" : ""}`, disabled: runDisabled(scope), onClick: () => void startRun(scope) }; }),
                                 { type: "divider" as const }, { key: "all", label: "运行全部", disabled: runDisabled({ type: "workflow" }), onClick: () => void startRun() },
                             ] }}><Button icon={<Play className="size-4" />} disabled={readOnly}>运行 <ChevronDown className="size-3" /></Button></Dropdown>
-                            : <Button icon={<Play className="size-4" />} disabled={runDisabled({ type: "workflow" })} loading={startingScopes.has(workflowRunScopeKey({ type: "workflow" }))} onClick={() => void startRun()}>{runs.pendingByScope.has(workflowRunScopeKey({ type: "workflow" })) ? "确认上次运行" : "运行"}</Button>}
+                            : <Button icon={<Play className="size-4" />} disabled={runDisabled({ type: "workflow" })} loading={startingScopes.has(workflowRunScopeKey({ type: "workflow" }))} onClick={() => void startRun()}>{runs.pendingByScope.has(workflowRunScopeKey({ type: "workflow" })) ? "确认上次运行" : workflowScopeRestartTarget(scopeStates.get(workflowRunScopeKey({ type: "workflow" }))) ? "重新运行" : "运行"}</Button>}
                         </>
                     }
                 />
@@ -1082,7 +1087,7 @@ function WorkflowEditorContent() {
                             headerActions={(() => {
                                 const scope: WorkflowRunScope = { type: "frame", frameId: frame.id };
                                 const key = workflowRunScopeKey(scope); const state = scopeStates.get(key);
-                                return <><Button size="small" type="text" aria-label={`运行 ${frame.name}`} icon={<Play className="size-3.5" />} disabled={runDisabled(scope)} loading={startingScopes.has(key)} onClick={() => void startRun(scope)}><span data-frame-run-label>{runs.pendingByScope.has(key) ? "确认" : "运行"}</span></Button>
+                                return <><Button size="small" type="text" aria-label={`运行 ${frame.name}`} icon={<Play className="size-3.5" />} disabled={runDisabled(scope)} loading={startingScopes.has(key)} onClick={() => void startRun(scope)}><span data-frame-run-label>{runs.pendingByScope.has(key) ? "确认" : workflowScopeRestartTarget(state) ? "重新运行" : "运行"}</span></Button>
                                     {state?.activeRunId ? <Button size="small" type="text" aria-label={`停止 ${frame.name}`} icon={<Square className="size-3.5" />} loading={stoppingRuns.has(state.activeRunId)} onClick={() => void stopRun(state.activeRunId!)} /> : null}
                                     {state?.latestRun ? <button data-frame-run-status className="px-1 text-xs opacity-65" onClick={() => openRun(state.latestRun!.id)}>{workflowRunStatusText(state.latestRun.status)}</button> : null}</>;
                             })()}
@@ -1201,6 +1206,7 @@ function WorkflowEditorContent() {
                                     onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
                                     onRetryOutput={detail && isRetryableWorkflowOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
                                     onResumeOutput={resumeTaskID ? () => void resumeWorkflowTask(resumeTaskID, slot.type) : undefined}
+                                    onRestartOutput={detail?.run.status === "attention_required" && detail.run.stopRequested ? () => void startRun(detail.run.scopeType === "frame" ? { type: "frame", frameId: detail.run.frameId } : { type: "workflow" }) : undefined}
                                     onReconnectOutput={() => void runs.refresh()}
                                     onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
                                     onMediaDimensions={(dimensions) => {
@@ -1462,6 +1468,7 @@ function WorkflowEditorContent() {
                             confirmingRetryKeys={new Set(currentRun.data?.outputs.filter((output) => runs.pendingRetryKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId)))}
                             onStop={currentRun.data ? () => void stopRun(currentRun.data!.run.id) : undefined}
                             onRetry={currentRun.data ? (nodeId, slotId) => void startOutputRetry(currentRun.data!.run.id, nodeId, slotId) : undefined}
+                            onRestart={!readOnly && currentRun.data?.run.status === "attention_required" ? () => void startRun(currentRun.data!.run.scopeType === "frame" ? { type: "frame", frameId: currentRun.data!.run.frameId } : { type: "workflow" }) : undefined}
                             onResumeTask={currentRun.data ? (taskID, taskType) => void resumeWorkflowTask(taskID, taskType) : undefined}
                         />
                     )}

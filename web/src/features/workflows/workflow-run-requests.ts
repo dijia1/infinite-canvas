@@ -1,6 +1,6 @@
-import type { WorkflowRunScope } from "./types";
+import type { WorkflowRunScope, WorkflowRunReplacement } from "./types";
 
-export type PendingWorkflowRunRequest = { workflowId: string; revision: number; requestId: string; scope: WorkflowRunScope };
+export type PendingWorkflowRunRequest = { workflowId: string; revision: number; requestId: string; scope: WorkflowRunScope; replaceRunId?: string; confirmUncertain?: true };
 export type PendingWorkflowRetryRequest = { runId: string; nodeId: string; slotId: string; attempt: number; requestId: string; confirmUncertain?: boolean };
 type RequestStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -32,8 +32,8 @@ function sameWorkflowRunScope(left: WorkflowRunScope, right: WorkflowRunScope) {
     return workflowRunScopeKey(left) === workflowRunScopeKey(right);
 }
 
-export function ensureWorkflowRunRequest(pending: PendingWorkflowRunRequest | undefined, workflowId: string, revision: number, createRequestId: () => string, scope: WorkflowRunScope = { type: "workflow" }): PendingWorkflowRunRequest {
-    return pending?.workflowId === workflowId && sameWorkflowRunScope(pending.scope, scope) ? pending : { workflowId, revision, requestId: createRequestId(), scope };
+export function ensureWorkflowRunRequest(pending: PendingWorkflowRunRequest | undefined, workflowId: string, revision: number, createRequestId: () => string, scope: WorkflowRunScope = { type: "workflow" }, replacement?: WorkflowRunReplacement): PendingWorkflowRunRequest {
+    return pending?.workflowId === workflowId && sameWorkflowRunScope(pending.scope, scope) ? pending : { workflowId, revision, requestId: createRequestId(), scope, ...replacement };
 }
 
 export function ensureWorkflowRetryRequest(pending: PendingWorkflowRetryRequest | undefined, input: Omit<PendingWorkflowRetryRequest, "requestId">, createRequestId: () => string): PendingWorkflowRetryRequest {
@@ -50,7 +50,7 @@ function parsePendingWorkflowRunRequest(value: string | null | undefined, workfl
         const request = JSON.parse(value || "null") as Partial<PendingWorkflowRunRequest> | null;
         const scope = request?.scope || fallbackScope;
         if (!request || request.workflowId !== workflowId || !Number.isInteger(request.revision) || (request.revision || 0) < 1 || typeof request.requestId !== "string" || !request.requestId || !scope || (scope.type !== "workflow" && (scope.type !== "frame" || typeof scope.frameId !== "string" || !scope.frameId))) return undefined;
-        return { workflowId, revision: request.revision!, requestId: request.requestId, scope } as PendingWorkflowRunRequest;
+        return { workflowId, revision: request.revision!, requestId: request.requestId, scope, ...(request.replaceRunId && request.confirmUncertain === true ? { replaceRunId: request.replaceRunId, confirmUncertain: true } : {}) } as PendingWorkflowRunRequest;
     } catch {
         return undefined;
     }

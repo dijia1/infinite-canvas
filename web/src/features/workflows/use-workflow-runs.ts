@@ -24,7 +24,7 @@ import {
     type PendingWorkflowRunRequest,
 } from "./workflow-run-requests";
 import { findWorkflowOutput, indexWorkflowRunDetailsByNode, isWorkflowRunActive } from "./workflow-run-state";
-import type { WorkflowGraph, WorkflowRun, WorkflowRunDetail, WorkflowRunScope, WorkflowRunState } from "./types";
+import type { WorkflowRunReplacement, WorkflowGraph, WorkflowRun, WorkflowRunDetail, WorkflowRunScope, WorkflowRunState } from "./types";
 
 const OVERVIEW_POLL_MS = 2500;
 const DETAIL_POLL_MS = 1500;
@@ -275,21 +275,21 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
     }, []);
 
     const start = useCallback(
-        (scope: WorkflowRunScope, revision: number) => {
+        (scope: WorkflowRunScope, revision: number, replacement?: WorkflowRunReplacement) => {
             if (!ownerUID || !workflowId) return Promise.reject(new Error("流程尚未加载"));
             const scopeKey = workflowRunScopeKey(scope);
             const inFlight = startPromisesRef.current.get(scopeKey);
             if (inFlight) return inFlight;
             const startedIdentity = identityRef.current;
             const persisted = readPendingWorkflowRunRequest(browserSessionStorage(), ownerUID, workflowId, scope);
-            const request = ensureWorkflowRunRequest(pendingByScopeRef.current.get(scopeKey) || persisted, workflowId, revision, nanoid, scope);
+            const request = ensureWorkflowRunRequest(pendingByScopeRef.current.get(scopeKey) || persisted, workflowId, revision, nanoid, scope, replacement);
             writePendingWorkflowRunRequest(browserSessionStorage(), ownerUID, request);
             const pending = new Map(pendingByScopeRef.current).set(scopeKey, request);
             pendingByScopeRef.current = pending;
             setPendingByScope(pending);
             const promise = withOperation(startedIdentity, async () => {
                 try {
-                    const detail = await createWorkflowRun(workflowId, request.requestId, request.revision, request.scope);
+                    const detail = await createWorkflowRun(workflowId, request.requestId, request.revision, request.scope, request.replaceRunId ? { replaceRunId: request.replaceRunId, confirmUncertain: true } : undefined);
                     assertCurrent(startedIdentity);
                     clearPendingWorkflowRunRequest(browserSessionStorage(), ownerUID, workflowId, request.scope);
                     const next = new Map(pendingByScopeRef.current);

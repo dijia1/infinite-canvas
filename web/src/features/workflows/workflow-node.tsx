@@ -283,6 +283,7 @@ export function WorkflowOutputCard({
     onRetryOutput,
     onResumeOutput,
     onReconnectOutput,
+    onRestartOutput,
     onImageLoaded,
     onMediaDimensions,
     onDragStart,
@@ -313,6 +314,7 @@ export function WorkflowOutputCard({
     onRetryOutput?: () => void;
     onResumeOutput?: () => void;
     onReconnectOutput?: () => void;
+    onRestartOutput?: () => void;
     onImageLoaded?: (storageKey: string) => void;
     onMediaDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, parent: WorkflowNode, slot: WorkflowOutputSlot) => void;
@@ -391,7 +393,7 @@ export function WorkflowOutputCard({
                         />
                     ) : (
                         <GenerationTaskFeedback status={execution?.taskStatus || execution?.status || (loadingExecution ? "loading" : undefined)} issue={execution?.issue} error={execution?.error} connectionError={executionLoadError} busy={retrying} confirmingRetry={confirmingRetry}
-                            onResume={!readOnly ? onResumeOutput : undefined} onRegenerate={!readOnly ? onRetryOutput : undefined} onReconnect={onReconnectOutput} />
+                            onRestart={!readOnly ? onRestartOutput : undefined} onResume={!readOnly ? onResumeOutput : undefined} onRegenerate={!readOnly ? onRetryOutput : undefined} onReconnect={onReconnectOutput} />
                     )}
 
                 </div>

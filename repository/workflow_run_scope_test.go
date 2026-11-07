@@ -37,7 +37,7 @@ func TestAdmitWorkflowRunSerializesSameFrameAndAllowsDisjointFrames(t *testing.T
 		go func() {
 			defer wait.Done()
 			<-start
-			_, _, err := AdmitWorkflowRun(run, steps, nil, nil, 1)
+			_, _, err := AdmitWorkflowRun(run, steps, nil, nil, 1, nil)
 			results <- err
 		}()
 	}
@@ -62,7 +62,7 @@ func TestAdmitWorkflowRunSerializesSameFrameAndAllowsDisjointFrames(t *testing.T
 	}
 
 	run, steps := admissionFixture("disjoint-run", "disjoint-request", owner, workflowID, "frame-b", "b")
-	if _, inserted, err := AdmitWorkflowRun(run, steps, nil, nil, 1); err != nil || !inserted {
+	if _, inserted, err := AdmitWorkflowRun(run, steps, nil, nil, 1, nil); err != nil || !inserted {
 		t.Fatalf("disjoint frame admission inserted=%t err=%v", inserted, err)
 	}
 }
@@ -72,11 +72,11 @@ func TestAdmitWorkflowRunChecksScopeMatrixBeforeNodeOverlap(t *testing.T) {
 	owner, workflowID := "matrix-owner", "matrix-workflow"
 	seedAdmissionWorkflow(t, owner, workflowID)
 	active, steps := admissionFixture("active-frame", "active-frame-request", owner, workflowID, "frame-a", "a")
-	if _, _, err := AdmitWorkflowRun(active, steps, nil, nil, 1); err != nil {
+	if _, _, err := AdmitWorkflowRun(active, steps, nil, nil, 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	candidate, candidateSteps := admissionFixture("same-frame-disjoint", "same-frame-disjoint-request", owner, workflowID, "frame-a", "b")
-	_, _, err := AdmitWorkflowRun(candidate, candidateSteps, nil, nil, 1)
+	_, _, err := AdmitWorkflowRun(candidate, candidateSteps, nil, nil, 1, nil)
 	var conflict *WorkflowRunAdmissionConflict
 	if !errors.As(err, &conflict) || conflict.Code != "workflow_run_scope_active" || conflict.RunID != active.ID {
 		t.Fatalf("same-frame conflict = %#v", err)
@@ -84,7 +84,7 @@ func TestAdmitWorkflowRunChecksScopeMatrixBeforeNodeOverlap(t *testing.T) {
 
 	workflowRun := candidate
 	workflowRun.ID, workflowRun.RequestID, workflowRun.ScopeType, workflowRun.FrameID = "whole-run", "whole-request", model.WorkflowRunScopeWorkflow, ""
-	_, _, err = AdmitWorkflowRun(workflowRun, candidateSteps, nil, nil, 1)
+	_, _, err = AdmitWorkflowRun(workflowRun, candidateSteps, nil, nil, 1, nil)
 	if !errors.As(err, &conflict) || conflict.Code != "workflow_run_scope_active" {
 		t.Fatalf("whole graph conflict = %#v", err)
 	}
@@ -182,7 +182,7 @@ func TestWorkflowRunRetryAndNewAdmissionAreAtomic(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		<-start
-		_, _, err := AdmitWorkflowRun(candidate, candidateSteps, nil, nil, 1)
+		_, _, err := AdmitWorkflowRun(candidate, candidateSteps, nil, nil, 1, nil)
 		results <- err
 	}()
 	close(start)

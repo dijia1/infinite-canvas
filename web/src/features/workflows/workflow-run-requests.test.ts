@@ -88,3 +88,17 @@ test("does not reuse an uncertain start id for another scope", () => {
     assert.notEqual(other.requestId, first.requestId);
     assert.deepEqual(other.scope, { type: "frame", frameId: "b" });
 });
+
+
+test("confirmed restart keeps the source run and consent when a start response is lost", () => {
+    const values = new Map<string, string>();
+    const storage = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
+    const scope = { type: "frame" as const, frameId: "restart-frame" };
+    const request = ensureWorkflowRunRequest(undefined, "restart-flow", 318, () => "restart-request", scope, { replaceRunId: "stopped-uncertain-run", confirmUncertain: true });
+    writePendingWorkflowRunRequest(storage, "restart-owner", request);
+    const restored = readPendingWorkflowRunRequest(storage, "restart-owner", "restart-flow", scope);
+    assert.equal(restored?.replaceRunId, "stopped-uncertain-run");
+    assert.equal(restored?.confirmUncertain, true);
+    assert.equal(ensureWorkflowRunRequest(restored, "restart-flow", 319, () => "must-not-use", scope), restored);
+    clearPendingWorkflowRunRequest(storage, "restart-owner", "restart-flow", scope);
+});

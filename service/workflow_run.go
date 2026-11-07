@@ -13,9 +13,11 @@ import (
 )
 
 type CreateWorkflowRunInput struct {
-	RequestID string                  `json:"requestId"`
-	Revision  *int                    `json:"revision,omitempty"`
-	Scope     *model.WorkflowRunScope `json:"scope,omitempty"`
+	ReplaceRunID     string                  `json:"replaceRunId,omitempty"`
+	ConfirmUncertain bool                    `json:"confirmUncertain,omitempty"`
+	RequestID        string                  `json:"requestId"`
+	Revision         *int                    `json:"revision,omitempty"`
+	Scope            *model.WorkflowRunScope `json:"scope,omitempty"`
 }
 
 type RetryWorkflowOutputInput struct {
@@ -69,6 +71,10 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 	requestID := strings.TrimSpace(input.RequestID)
 	if strings.TrimSpace(user.UID) == "" || requestID == "" || len(requestID) > 128 {
 		return WorkflowRunDetail{}, workflowValidationError{message: "运行请求 ID 无效"}
+	}
+	input.ReplaceRunID = strings.TrimSpace(input.ReplaceRunID)
+	if len(input.ReplaceRunID) > 128 {
+		return WorkflowRunDetail{}, workflowValidationError{message: "原运行记录无效"}
 	}
 	scope, err := normalizeWorkflowRunScope(input.Scope)
 	if err != nil {
@@ -146,8 +152,25 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 			outputs = append(outputs, model.WorkflowOutputExecution{RunID: run.ID, NodeID: node.ID, SlotID: slot.ID, Status: "waiting", Attempt: 1, UpdatedAt: current})
 		}
 	}
-	created, _, err := repository.AdmitWorkflowRun(run, steps, outputs, workflowGraphMediaIDs(graph), workflow.Revision)
+	var restart *repository.WorkflowRunRestart
+	if input.ReplaceRunID != "" {
+		summary, _ := json.Marshal(map[string]any{"sourceRunId": input.ReplaceRunID, "replacementRunId": run.ID, "revision": run.Revision, "confirmUncertain": input.ConfirmUncertain})
+		restart = &repository.WorkflowRunRestart{RunID: input.ReplaceRunID, ConfirmUncertain: input.ConfirmUncertain, Audit: model.OperationLog{ID: newID("operation"), ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: user.Roles, Action: "workflow_run_restart", Status: model.OperationStatusSuccess, TargetType: "workflow_run", TargetID: input.ReplaceRunID, RequestSummary: string(summary), CreatedAt: current}}
+	}
+	created, inserted, err := repository.AdmitWorkflowRun(run, steps, outputs, workflowGraphMediaIDs(graph), workflow.Revision, restart)
 	if err != nil {
+		if errors.Is(err, repository.ErrWorkflowRunNotFound) {
+			return WorkflowRunDetail{}, safeMessageError{message: "原运行记录不存在"}
+		}
+		if errors.Is(err, repository.ErrWorkflowRunRestartConfirmation) {
+			return WorkflowRunDetail{}, workflowValidationError{message: "请确认原请求可能产生重复费用后重新运行"}
+		}
+		if errors.Is(err, repository.ErrWorkflowRunRestartUnavailable) {
+			return WorkflowRunDetail{}, workflowValidationError{message: "原运行仍有任务正在处理，或状态已变化，请刷新后重试"}
+		}
+		if errors.Is(err, repository.ErrGenerationTaskResolutionConflict) {
+			return WorkflowRunDetail{}, workflowValidationError{message: "原任务状态正在更新，请稍后重新运行"}
+		}
 		if errors.Is(err, repository.ErrWorkflowRevisionConflict) {
 			serverRevision := workflow.Revision
 			if current, found, readErr := repository.GetWorkflow(user.UID, workflowID); readErr == nil && found {
@@ -168,6 +191,11 @@ func CreateWorkflowRun(ctx context.Context, user PortalUser, workflowID string, 
 			return WorkflowRunDetail{}, NewWorkflowBusinessError(conflict.Code, "运行范围与已有活跃运行冲突", data)
 		}
 		return WorkflowRunDetail{}, workflowRepositoryError(err)
+	}
+	if inserted && restart != nil {
+		for _, taskID := range restart.ClosedImageTaskIDs {
+			cleanupClosedImageTask(ctx, taskID)
+		}
 	}
 	if err := validateWorkflowRunReplay(created, workflowID, scope, input.Revision); err != nil {
 		return WorkflowRunDetail{}, err

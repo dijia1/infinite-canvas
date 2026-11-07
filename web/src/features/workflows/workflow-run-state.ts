@@ -1,4 +1,4 @@
-import type { WorkflowGraph, WorkflowRunDetail, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun, WorkflowRunStatus } from "./types";
+import type { WorkflowGraph, WorkflowRunDetail, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun, WorkflowRunStatus, WorkflowRunScopeState } from "./types";
 
 const runStatusText: Record<WorkflowRunStatus, string> = {
     pending: "等待调度",
@@ -184,4 +184,8 @@ export function workflowDownloadImageCount(detail: Pick<WorkflowRunDetail, "grap
         const output = outputs.get(workflowOutputKey(node.id, slot.id));
         return (node.type === "image_generation" || node.type === "video_generation") && slot.type === "image" && output?.status === "succeeded" && Boolean(output.mediaId);
     }).length, 0);
+}
+
+export function workflowScopeRestartTarget(state?: WorkflowRunScopeState) {
+    return state?.activeRunId && state.latestRun?.id === state.activeRunId && state.latestRun.status === "attention_required" ? state.latestRun : undefined;
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableWorkflowOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunScopeLabel, workflowRunStatusText, workflowResumeTaskID } from "./workflow-run-state";
+import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableWorkflowOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunScopeLabel, workflowRunStatusText, workflowResumeTaskID, workflowScopeRestartTarget } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun, WorkflowRunDetail } from "./types";
 
 const run = (id: string, workflowId: string, status: WorkflowRun["status"], createdAt: string): WorkflowRun => ({ id, workflowId, status, createdAt, updatedAt: createdAt, requestId: `${id}-request`, revision: 1, title: id, scopeType: "workflow", frameId: "", frameName: "", stopRequested: false });
@@ -136,4 +136,13 @@ test("never falls back to an older detail while the selected source is missing o
     assert.equal(indexWorkflowRunDetailsByNode(new Map([["run-old", old]]), { node: "run-new" }, graph).has("node"), false);
     const incompatible = { ...old, run: { ...old.run, id: "run-new" }, graph: { ...old.graph, nodes: [{ ...old.graph.nodes[0], type: "video_generation" as const, outputs: [{ id: "out", type: "video" as const }] }] } };
     assert.equal(indexWorkflowRunDetailsByNode(new Map([["run-new", incompatible]]), { node: "run-new" }, graph).has("node"), false);
+});
+
+
+test("attention runs remain restartable after Stop while running scopes stay protected", () => {
+    const previous = { ...run("stopped-uncertain", "workflow", "attention_required", "2026-11-07T00:00:00Z"), stopRequested: true };
+    const state = { scope: { type: "workflow" as const }, latestRun: previous, activeRunId: previous.id };
+    assert.equal(workflowScopeRestartTarget(state), previous);
+    assert.equal(workflowScopeRestartTarget({ ...state, latestRun: { ...previous, status: "running" } }), undefined);
+    assert.equal(workflowScopeRestartTarget({ ...state, activeRunId: "other-run" }), undefined);
 });

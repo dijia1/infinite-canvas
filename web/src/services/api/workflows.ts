@@ -1,4 +1,4 @@
-import type { WorkflowGraph, WorkflowList, WorkflowRecord, WorkflowRunDetail, WorkflowRunList, WorkflowRunScope, WorkflowRunState } from "@/features/workflows/types";
+import type { WorkflowRunReplacement, WorkflowGraph, WorkflowList, WorkflowRecord, WorkflowRunDetail, WorkflowRunList, WorkflowRunScope, WorkflowRunState } from "@/features/workflows/types";
 import { ApiRequestError, apiDelete, apiGet, apiPost, apiPut } from "./request";
 
 export type CreateWorkflowInput = { name: string; graph?: WorkflowGraph; frameSchemaVersion?: 1 };
@@ -68,8 +68,8 @@ export async function deleteWorkflow(id: string, revision: number) {
     await apiDelete<true>(`/api/v1/workflows/${encodeURIComponent(id)}`, { revision });
 }
 
-export function createWorkflowRun(workflowId: string, requestId: string, revision?: number, scope?: WorkflowRunScope) {
-    return apiPost<WorkflowRunDetail>(`/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { requestId, ...(revision === undefined ? {} : { revision }), ...(scope ? { scope } : {}) });
+export function createWorkflowRun(workflowId: string, requestId: string, revision?: number, scope?: WorkflowRunScope, replacement?: WorkflowRunReplacement) {
+    return apiPost<WorkflowRunDetail>(`/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { requestId, ...replacement, ...(revision === undefined ? {} : { revision }), ...(scope ? { scope } : {}) });
 }
 
 export function fetchWorkflowRuns(page = 1, pageSize = 20, workflowIdOrOptions?: string | FetchWorkflowRunsOptions) {

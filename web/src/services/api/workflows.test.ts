@@ -96,3 +96,14 @@ test("narrows stable workflow run conflict data at the workflow API boundary", (
     assert.equal(workflowRunErrorData(new ApiRequestError("other", 409, 1, { code: "unrelated_conflict" })), undefined);
     assert.equal(workflowRunErrorData(new Error("offline")), undefined);
 });
+
+
+test("restarting a workflow sends the current revision and explicit source-run confirmation", async () => {
+    const original = axios.request;
+    let body: unknown;
+    axios.request = (async (config) => { body = config.data; return { status: 200, data: { code: 0, data: {} } }; }) as typeof axios.request;
+    try {
+        await createWorkflowRun("flow", "restart-request", 318, { type: "frame", frameId: "frame" }, { replaceRunId: "old-run", confirmUncertain: true });
+        assert.deepEqual(body, { requestId: "restart-request", revision: 318, scope: { type: "frame", frameId: "frame" }, replaceRunId: "old-run", confirmUncertain: true });
+    } finally { axios.request = original; }
+});
