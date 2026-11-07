@@ -22,9 +22,10 @@ type CanvasImageSettingsPopoverProps = {
     buttonClassName?: string;
     placement?: "topLeft" | "top" | "topRight" | "bottomLeft" | "bottom" | "bottomRight";
     maxCount?: number;
-} & CanvasSettingsTriggerProps;
+    compact?: boolean;
+} & Pick<CanvasSettingsTriggerProps, "buttonIcon">;
 
-export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderOptionsChange, onOpenChange, buttonClassName, placement = "topLeft", maxCount = 15, buttonIcon, formatSummary = (summary) => summary }: CanvasImageSettingsPopoverProps) {
+export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderOptionsChange, onOpenChange, buttonClassName, placement = "topLeft", maxCount = 15, buttonIcon, compact = false }: CanvasImageSettingsPopoverProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const buttonRef = useRef<HTMLSpanElement>(null);
     const panelRef = useRef<HTMLDivElement>(null);
@@ -78,7 +79,7 @@ export function CanvasImageSettingsPopover({ config, onConfigChange, onProviderO
                     onClick={() => updateOpen(!open)}
                 >
                     <span className="truncate">
-						{formatSummary(imageSettingsSummary(config, schema, options, quality, activeSize, count))}
+						{imageSettingsSummary(config, schema, options, quality, activeSize, count, compact)}
                     </span>
                 </Button>
             </span>
@@ -139,7 +140,8 @@ function ImageSettingsPortal({
     );
 }
 
-function imageSettingsSummary(config: AiConfig, schema: import("@/lib/image-request-schema").ImageRequestSchema | undefined, options: ImageRequestOptions, quality: string, size: string, count: number) {
+function imageSettingsSummary(config: AiConfig, schema: import("@/lib/image-request-schema").ImageRequestSchema | undefined, options: ImageRequestOptions, quality: string, size: string, count: number, compact = false) {
+    if (compact) return [imageResolutionLabel(schemaOptionString(options, "resolution") || config.resolution), imageOutputFormatLabel(schemaOptionString(options, "outputFormat") || config.outputFormat)].filter(Boolean).join(" · ");
 	if (!schema) return [imageQualityLabel(quality), imageSizeLabel(size), imageResolutionLabel(config.resolution), imageOutputFormatLabel(config.outputFormat), imageBackgroundLabel(config.background), `${count} 张`].filter(Boolean).join(" · ");
 	const fields = schema.fields
 		.map((field) => {

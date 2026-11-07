@@ -165,6 +165,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         mode === "video" ? (
             <CanvasVideoSettingsPopover
                 {...triggerProps}
+                formatSummary={compact ? shortSettingsSummary : undefined}
                 config={config}
                 placement="topRight"
                 buttonClassName={buttonClassName}
@@ -173,6 +174,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         ) : mode === "image" ? (
             <CanvasImageSettingsPopover
                 {...triggerProps}
+                compact={compact}
                 config={config}
                 placement="topRight"
                 buttonClassName={buttonClassName}
@@ -189,7 +191,6 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 modelSelect={modelSelect}
                 action={{ label: "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
                 settings={renderSettings("canvas-config-compact-settings", {
-                    formatSummary: shortSettingsSummary,
                     buttonIcon: (
                         <>
                             <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />

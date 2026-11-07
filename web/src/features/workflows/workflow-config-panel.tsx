@@ -107,12 +107,12 @@ export function WorkflowConfigPanel({
             {isImage ? (
                 <CanvasImageSettingsPopover
                     config={config}
+                    compact={compact}
                     maxCount={9}
                     placement="topRight"
                     buttonClassName={compact ? "canvas-config-compact-settings" : "canvas-compact-control !h-10 !w-full !justify-start !rounded-lg !px-2"}
                     {...(compact
                         ? {
-                              formatSummary: shortSettingsSummary,
                               buttonIcon: (
                                   <>
                                       <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
