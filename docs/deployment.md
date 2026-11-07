@@ -14,11 +14,11 @@ https://www.semetaloa.com/apps/infinite-canvas/canvas
 
 容器等待 Go API 的 `/api/healthz` 就绪后才启动前端，整体就绪等待最多 120 秒。任一子进程退出会停止另一个进程并以失败状态退出容器，由现有 `restart: unless-stopped` 策略重启。正常停止会向两个进程发送 SIGTERM，8 秒后仍未退出的进程会被终止。该机制不重新提交任务，任务恢复仍使用现有状态与上游任务 ID。
 
-本地更新应用（保留现有数据库和数据目录）：
+本地更新应用（保留现有数据库和数据目录）：先核对 `.env` 的数据库目标并备份应用 schema，再运行下面的入口。脚本先构建新镜像，使用新镜像执行 `/app/migrate`，迁移成功后才更新 `app`；构建或迁移失败会立即停止。仅运行 `up --build` 不会执行迁移，数据库可连接的健康检查也不能证明新字段已存在。
 
 ```bash
 cd /Users/Admin/codexprogram/infinite-canvas
-docker compose -f docker-compose.local.yml up -d --build --no-deps app
+bash scripts/rebuild-local.sh
 docker compose -f docker-compose.local.yml ps app
 docker compose -f docker-compose.local.yml logs --tail=100 app
 ```
@@ -102,7 +102,7 @@ ghcr.io/dijia1/infinite-canvas:sha-<GITHUB_SHA>
 
 仍在运行但不健康、异常退出、OOM、暂停（`docker pause`）、重启中、容器缺失或存在多个匹配容器时均拒绝发布，不自动绕过校验。为故障止血而执行 `docker stop infinite-canvas` 后，可以保持停止状态推送修复；不要为通过部署前置检查而先启动故障旧版。
 
-部署后最多检查 90 次健康状态，间隔 2 秒，总等待窗口约 180 秒（单次 Docker 或 HTTP 命令可能跨过截止时间）。网关请求连接超时 3 秒、总超时 5 秒、响应上限 4 KiB。只有目标容器身份、Docker healthcheck 和完整网关健康检查均通过后才更新发布记录。部署或记录更新失败时，按上述起始状态恢复并返回失败；恢复失败会输出需要人工介入的错误。不会跳过当前版本而回退到更早的 previous。数据库仍沿用应用启动时的 GORM 自动迁移；应用镜像回滚不会回退数据库 schema 或数据。
+部署后最多检查 90 次健康状态，间隔 2 秒，总等待窗口约 180 秒（单次 Docker 或 HTTP 命令可能跨过截止时间）。网关请求连接超时 3 秒、总超时 5 秒、响应上限 4 KiB。只有目标容器身份、Docker healthcheck 和完整网关健康检查均通过后才更新发布记录。部署或记录更新失败时，按上述起始状态恢复并返回失败；恢复失败会输出需要人工介入的错误。不会跳过当前版本而回退到更早的 previous。数据库在启动目标容器前通过独立迁移入口执行 GORM 扩展迁移；应用镜像回滚不会回退数据库 schema 或数据。
 
 ## Canvas 本地草稿格式升级与回滚
 

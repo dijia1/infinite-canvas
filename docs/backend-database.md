@@ -2,7 +2,7 @@
 
 后端只支持 PostgreSQL。应用启动时必须提供非空的 `DATABASE_DSN`，并使用 Portal 之外的专属应用账号和 schema；没有数据库类型选择项，也不会回退到本地数据库文件。
 
-GORM 在每次启动时先执行必要的 PostgreSQL 兼容升级，再执行 `AutoMigrate`。连接池由 `DB_MAX_OPEN_CONNS`、`DB_MAX_IDLE_CONNS` 和 `DB_CONN_MAX_LIFETIME` 控制。
+数据库结构由 `cmd/migrate`（镜像内 `/app/migrate`）显式执行 `AutoMigrate`，应用启动与健康检查只连接数据库，不执行迁移。普通迁移会拒绝需要独立维护窗口的旧画布主键升级。连接池由 `DB_MAX_OPEN_CONNS`、`DB_MAX_IDLE_CONNS` 和 `DB_CONN_MAX_LIFETIME` 控制。
 
 ## 当前表结构
 
@@ -31,12 +31,12 @@ GORM 在每次启动时先执行必要的 PostgreSQL 兼容升级，再执行 `A
 
 ## 兼容升级与数据维护
 
-早期 PostgreSQL 版本的 `canvas_projects` 主键只有 `id`。启动时如果检测到该旧主键，会在事务中将其升级为复合主键 `(id, owner_uid)`；新库直接以复合主键创建。此升级保留既有行，用于保证不同用户的画布写入和 revision 乐观锁按所有者隔离。
+早期 PostgreSQL 版本的 `canvas_projects` 主键只有 `id`。普通迁移会拒绝该旧结构，必须在独立维护窗口升级为复合主键 `(id, owner_uid)`；新库直接以复合主键创建。此升级必须保留既有行，用于保证不同用户的画布写入和 revision 乐观锁按所有者隔离。
 
 `AutoMigrate` 只补充当前模型所需的表、列和索引，不会清理停用的表或列，也不能用来迁移其他数据库引擎的数据。生产数据库变更前应先完成备份及隔离恢复验证，具体流程见 [生产部署](deployment.md)。
 
 图片任务追加 `deadline`（可空时间）和 `poll_failures`（默认 0）。`paused` 保留输入和供应商任务 ID，只能恢复查询原任务；`uncertain` 可由所有者确认风险后重新生成，或由管理员核对原任务。两者均不属于保留策略的成功／失败终态。管理员核对记录使用 `operation_logs`，并与任务状态变更在同一事务写入。兼容与回退边界见 [流程运行维护](workflow-operations.md)。图片完成时间暂保留历史字符串列，统计和过期清理将其转换为时间值比较，避免秒／小数秒及时区写法影响范围边界。
 
-图片和视频达到 `succeeded` 或 `failed` 时清空 `provider_config` 中的供应商凭据。启动迁移对历史终态执行相同的可重复清理，保留请求 hash、schema、上游任务 ID、结果和费用；暂停、待核对及其他活动任务保留恢复所需配置。此清理不删除任务记录，也不更改统计保留期。
+图片和视频达到 `succeeded` 或 `failed` 时清空 `provider_config` 中的供应商凭据。独立迁移对历史终态执行相同的可重复清理，保留请求 hash、schema、上游任务 ID、结果和费用；暂停、待核对及其他活动任务保留恢复所需配置。此清理不删除任务记录，也不更改统计保留期。
 
 图片和视频任务追加 `error_kind`、`error_stage` 字符串列，记录查询／保存异常类别及发生阶段。空值兼容历史任务，不改变生命周期状态。API 的 `issue` 为派生字段，组合原有失败计数及下次查询时间；流程输出的 `taskStatus`、`issue` 也只在读取时附加，不写入输出表。
