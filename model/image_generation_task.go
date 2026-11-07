@@ -45,6 +45,8 @@ type ImageGenerationTask struct {
 	ReferencesJSON      string                    `json:"-"`
 	RequestSummary      string                    `json:"-" gorm:"type:text"`
 	OperationLogID      string                    `json:"-" gorm:"index"`
+	ErrorKind           string                    `json:"-"`
+	ErrorStage          string                    `json:"-"`
 	ProviderTaskID      string                    `json:"-" gorm:"index"`
 	ClaimID             string                    `json:"-" gorm:"index"`
 	LeaseUntil          *time.Time                `json:"-" gorm:"index"`

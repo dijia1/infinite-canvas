@@ -322,32 +322,48 @@ func GetWorkflowRun(_ context.Context, user PortalUser, id string) (WorkflowRunD
 	if err := json.Unmarshal([]byte(record.Run.Snapshot), &graph); err != nil {
 		return WorkflowRunDetail{}, err
 	}
-	videoTaskIDs := make([]string, 0)
-	imageTaskIDs := make([]string, 0)
+	ids := map[string][]string{"image": {}, "video": {}}
 	for _, attempt := range record.Attempts {
-		if attempt.Status == "uncertain" && attempt.TaskType == "video" && strings.TrimSpace(attempt.TaskID) != "" {
-			videoTaskIDs = append(videoTaskIDs, attempt.TaskID)
-		}
-		if attempt.Status == "uncertain" && attempt.TaskType == "image" && strings.TrimSpace(attempt.TaskID) != "" {
-			imageTaskIDs = append(imageTaskIDs, attempt.TaskID)
+		if attempt.TaskID != "" {
+			ids[attempt.TaskType] = append(ids[attempt.TaskType], attempt.TaskID)
 		}
 	}
-	resumableVideoTaskIDs, err := repository.ListResumableVideoGenerationTaskIDs(user.UID, videoTaskIDs)
-	if err != nil {
-		return WorkflowRunDetail{}, err
-	}
-	resumableImageTaskIDs, err := repository.ListResumableImageGenerationTaskIDs(user.UID, imageTaskIDs)
-	if err != nil {
-		return WorkflowRunDetail{}, err
+	states := map[string]repository.GenerationTaskState{}
+	for _, kind := range []string{"image", "video"} {
+		items, err := repository.ListGenerationTaskStates(user.UID, kind, ids[kind])
+		if err != nil {
+			return WorkflowRunDetail{}, err
+		}
+		for _, item := range items {
+			states[kind+":"+item.ID] = item
+		}
 	}
 	for index := range record.Attempts {
 		attempt := &record.Attempts[index]
-		_, videoResumable := resumableVideoTaskIDs[attempt.TaskID]
-		_, imageResumable := resumableImageTaskIDs[attempt.TaskID]
-		if attempt.TaskType == "video" && videoResumable || attempt.TaskType == "image" && imageResumable {
-			record.Attempts[index].ResumeTaskID = record.Attempts[index].TaskID
+		state, found := states[attempt.TaskType+":"+attempt.TaskID]
+		if !found {
+			continue
+		}
+		if attempt.Status == "uncertain" && state.Status == "paused" && state.ProviderTaskID != "" {
+			attempt.ResumeTaskID = attempt.TaskID
+		}
+		for outputIndex := range record.Outputs {
+			output := &record.Outputs[outputIndex]
+			if output.NodeID != attempt.NodeID || output.SlotID != attempt.SlotID || output.Attempt != attempt.Attempt {
+				continue
+			}
+			output.TaskStatus = state.Status
+			next := state.NextRetryAt
+			if state.ClaimID != "" || (state.Status != "running" && state.Status != "saving") {
+				next = nil
+			}
+			output.Issue = generationTaskIssue(state.ErrorKind, state.ErrorStage, state.Failures, next)
+			if output.Status == "running" || output.Status == "uncertain" {
+				output.Error = state.Error
+			}
 		}
 	}
+
 	return WorkflowRunDetail{Run: record.Run, Graph: graph, Steps: record.Steps, Outputs: record.Outputs, Attempts: record.Attempts}, nil
 }
 

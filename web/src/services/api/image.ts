@@ -1,3 +1,4 @@
+import { GenerationTaskQueryError, type GenerationTaskIssue, type GenerationTaskReplacement } from "@/lib/generation-task-state";
 import { uploadDirectlyToOSS } from "./direct-upload";
 import axios from "axios";
 
@@ -26,18 +27,19 @@ export type ImageGenerationTask = {
     status: "queued" | "submitting" | "running" | "succeeded" | "failed" | "uncertain" | "paused";
     progress: number;
     error?: string;
+    issue?: GenerationTaskIssue;
     images: GeneratedImage[];
 };
 
 export class ImageRequestRejectedError extends Error {}
-export class ImageQueryTransientError extends Error {}
+export class ImageQueryTransientError extends GenerationTaskQueryError {}
 
 function imageQueryError(error: unknown): never {
     if (axios.isCancel(error)) throw error;
     if (axios.isAxiosError(error) && (!error.response || [408, 429].includes(error.response.status) || error.response.status >= 500)) {
         throw new ImageQueryTransientError("图片任务查询暂不可用，后台任务仍会继续，可重新查询");
     }
-    throw new Error(apiRequestError(error, "查询图片任务失败"));
+    throw new GenerationTaskQueryError(apiRequestError(error, "查询图片任务失败"));
 }
 
 type UserImageUploadData = {
@@ -86,6 +88,7 @@ function parseImageTask(payload: ImageApiResponse): ImageGenerationTask {
         status: item.status === "queued" || item.status === "submitting" || item.status === "running" || item.status === "succeeded" || item.status === "failed" || item.status === "uncertain" || item.status === "paused" ? item.status : "failed",
         progress: typeof item.progress === "number" ? item.progress : 0,
         error: typeof item.error === "string" ? item.error : undefined,
+        issue: item.issue as GenerationTaskIssue | undefined,
         images,
     };
 }
@@ -147,13 +150,14 @@ function imageCreateError(error: unknown, fallback: string): never {
     throw new Error(apiRequestError(error, fallback));
 }
 
-export async function requestGeneration(config: AiConfig, prompt: string, clientRequestId: string): Promise<ImageGenerationTask> {
+export async function requestGeneration(config: AiConfig, prompt: string, clientRequestId: string, replacement?: GenerationTaskReplacement): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = config.resolution.trim();
     const output = imageOutputSettings(config.outputFormat, config.background);
     const body = {
         clientRequestId,
+        ...replacement,
         ...(config.imageProviderId ? { providerId: config.imageProviderId } : {}),
         prompt,
         n: 1,
@@ -178,7 +182,7 @@ export async function requestGeneration(config: AiConfig, prompt: string, client
     }
 }
 
-export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId: string): Promise<ImageGenerationTask> {
+export async function requestEdit(config: AiConfig, prompt: string, references: ReferenceImage[], clientRequestId: string, replacement?: GenerationTaskReplacement): Promise<ImageGenerationTask> {
     const quality = normalizeQuality(config.quality);
     const size = (config.size || "").trim();
     const resolution = config.resolution.trim();
@@ -197,6 +201,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const maskMediaId = mask?.mask ? (await uploadUserImage(await createImageMaskFile(mask.mask, mask), "mask")).mediaId : undefined;
     const body = {
         clientRequestId,
+        ...replacement,
         ...(config.imageProviderId ? { providerId: config.imageProviderId } : {}),
         prompt,
         n: 1,

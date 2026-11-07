@@ -18,10 +18,10 @@ var ErrImageLeaseLost = errors.New("image task lease lost")
 // submitted audit record together. A duplicate client request returns the
 // existing task without creating a second operation log.
 func CreateImageGenerationTaskWithOperationLog(item model.ImageGenerationTask, operation model.OperationLog) (model.ImageGenerationTask, bool, error) {
-	return CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, nil)
+	return CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, nil, nil)
 }
 
-func CreateImageGenerationTaskWithInputsAndOperationLog(item model.ImageGenerationTask, operation model.OperationLog, inputs []model.ImageGenerationTaskInput) (model.ImageGenerationTask, bool, error) {
+func CreateImageGenerationTaskWithInputsAndOperationLog(item model.ImageGenerationTask, operation model.OperationLog, inputs []model.ImageGenerationTaskInput, replacement *GenerationTaskReplacement) (model.ImageGenerationTask, bool, error) {
 	database, err := DB()
 	if err != nil {
 		return model.ImageGenerationTask{}, false, err
@@ -67,6 +67,9 @@ func CreateImageGenerationTaskWithInputsAndOperationLog(item model.ImageGenerati
 			return result.Error
 		}
 		if result.RowsAffected > 0 {
+			if err := replaceGenerationTask(transaction, "image", item.OwnerUID, replacement, time.Now().UTC()); err != nil {
+				return err
+			}
 			if err := transaction.Create(&operation).Error; err != nil {
 				return err
 			}
@@ -269,7 +272,7 @@ func ListResumableImageGenerationTaskIDs(owner string, taskIDs []string) (map[st
 	return result, nil
 }
 
-func ResumeImageGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int) error {
+func ResumeImageGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int, providerConfig string) error {
 	db, err := DB()
 	if err != nil {
 		return err
@@ -278,9 +281,13 @@ func ResumeImageGenerationTask(id, owner string, current time.Time, timeout time
 		if err := reserveWorkflowTaskCapacity(tx, "image", id, owner, globalLimit, current); err != nil {
 			return err
 		}
+		updates := map[string]any{"status": model.ImageTaskRunning, "error_message": "", "poll_failures": 0, "deadline": current.Add(timeout), "lease_until": nil, "claim_id": "", "updated_at": current.Format(time.RFC3339Nano), "error_kind": "", "error_stage": ""}
+		if providerConfig != "" {
+			updates["provider_config"] = providerConfig
+		}
 		result := tx.Model(&model.ImageGenerationTask{}).
 			Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, model.ImageTaskPaused).
-			Updates(map[string]any{"status": model.ImageTaskRunning, "error_message": "", "poll_failures": 0, "deadline": current.Add(timeout), "lease_until": nil, "claim_id": "", "updated_at": current.Format(time.RFC3339Nano)})
+			Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -425,7 +432,7 @@ func CompleteImageGenerationTask(item model.ImageGenerationTask, media []model.M
 			Updates(map[string]any{
 				"status": model.ImageTaskSucceeded, "progress": 100, "result_media_ids_json": string(encoded),
 				"provider_config": "",
-				"error_message":   "", "claim_id": "", "lease_until": nil, "updated_at": current.Format(time.RFC3339Nano), "finished_at": current.Format(time.RFC3339Nano),
+				"error_message":   "", "error_kind": "", "error_stage": "", "claim_id": "", "lease_until": nil, "updated_at": current.Format(time.RFC3339Nano), "finished_at": current.Format(time.RFC3339Nano),
 			})
 		if updated.Error != nil {
 			return updated.Error

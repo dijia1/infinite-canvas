@@ -58,7 +58,7 @@ func ListResumableVideoGenerationTaskIDs(owner string, taskIDs []string) (map[st
 	return result, nil
 }
 
-func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.OperationLog, inputs []string) (model.VideoGenerationTask, error) {
+func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.OperationLog, inputs []string, replacement *GenerationTaskReplacement) (model.VideoGenerationTask, error) {
 	db, err := DB()
 	if err != nil {
 		return item, err
@@ -108,6 +108,9 @@ func CreateVideoGenerationTask(item model.VideoGenerationTask, operation model.O
 				}
 			}
 		}
+		if err := replaceGenerationTask(tx, "video", item.OwnerUID, replacement, time.Now().UTC()); err != nil {
+			return err
+		}
 		return tx.Create(&operation).Error
 	})
 	return item, err
@@ -147,7 +150,7 @@ func UpdateClaimedVideoTask(item model.VideoGenerationTask, updates map[string]a
 	}
 	return nil
 }
-func ResumeVideoGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int) error {
+func ResumeVideoGenerationTask(id, owner string, current time.Time, timeout time.Duration, globalLimit int, providerConfig string) error {
 	db, err := DB()
 	if err != nil {
 		return err
@@ -156,7 +159,11 @@ func ResumeVideoGenerationTask(id, owner string, current time.Time, timeout time
 		if err := reserveWorkflowTaskCapacity(tx, "video", id, owner, globalLimit, current); err != nil {
 			return err
 		}
-		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, "paused").Updates(map[string]any{"status": gorm.Expr("CASE WHEN result_urls_json <> '[]' THEN 'saving' ELSE 'running' END"), "error": "", "attempts": 0, "deadline": current.Add(timeout), "next_poll_at": current, "lease_until": nil, "claim_id": ""})
+		updates := map[string]any{"status": gorm.Expr("CASE WHEN result_urls_json <> '[]' THEN 'saving' ELSE 'running' END"), "error": "", "attempts": 0, "deadline": current.Add(timeout), "next_poll_at": current, "lease_until": nil, "claim_id": "", "error_kind": "", "error_stage": ""}
+		if providerConfig != "" {
+			updates["provider_config"] = providerConfig
+		}
+		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND owner_uid = ? AND status = ? AND provider_task_id <> ''", id, owner, "paused").Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
@@ -202,7 +209,7 @@ func CompleteVideoGenerationTask(item model.VideoGenerationTask, media []model.M
 			}
 			ids = append(ids, m.ID)
 		}
-		if err := tx.Model(&task).Updates(map[string]any{"status": "succeeded", "progress": 100, "result_media_ids_json": mustJSON(ids), "finished_at": current, "lease_until": nil, "error": "", "provider_config": ""}).Error; err != nil {
+		if err := tx.Model(&task).Updates(map[string]any{"status": "succeeded", "progress": 100, "result_media_ids_json": mustJSON(ids), "finished_at": current, "lease_until": nil, "error": "", "error_kind": "", "error_stage": "", "provider_config": ""}).Error; err != nil {
 			return err
 		}
 		return tx.Model(&model.OperationLog{}).Where("id = ?", task.OperationLogID).Updates(map[string]any{"status": model.OperationStatusSuccess, "provider_task_id": task.ProviderTaskID, "media_ids": mustJSON(ids)}).Error
@@ -216,7 +223,7 @@ func FinishFailedVideoTask(item model.VideoGenerationTask, message string, curre
 	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		leaseCheckAt := time.Now().UTC()
-		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND claim_id = ? AND lease_until > ?", item.ID, item.ClaimID, leaseCheckAt).Updates(map[string]any{"status": "failed", "error": message, "finished_at": current, "lease_until": nil, "provider_config": ""})
+		result := tx.Model(&model.VideoGenerationTask{}).Where("id = ? AND claim_id = ? AND lease_until > ?", item.ID, item.ClaimID, leaseCheckAt).Updates(map[string]any{"status": "failed", "error": message, "error_kind": "", "error_stage": "", "finished_at": current, "lease_until": nil, "provider_config": ""})
 		if result.Error != nil {
 			return result.Error
 		}

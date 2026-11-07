@@ -193,6 +193,8 @@ function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
                 {detail.isError && !detail.data ? <Empty description={detail.error instanceof Error ? detail.error.message : "运行详情加载失败"}><Button onClick={() => void detail.refetch()}>重新加载</Button></Empty> : (
                     <WorkflowRunDetail
                         detail={detail.data}
+                        connectionError={detail.error instanceof Error ? detail.error.message : undefined}
+                        onReconnect={() => void detail.refetch()}
                         stopping={stop.isPending}
                         deleting={remove.isPending}
                         retryingKey={retry.isPending ? workflowOutputKey(retry.variables.nodeId, retry.variables.slotId) : undefined}

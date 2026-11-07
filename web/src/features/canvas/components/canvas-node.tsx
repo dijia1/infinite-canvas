@@ -1,5 +1,8 @@
 "use client";
 
+import { GenerationTaskFeedback } from "@/components/generation-task-feedback";
+import type { GenerationRecoveryAction } from "@/lib/generation-task-state";
+
 import { resizeCanvasNode } from "@/lib/canvas-resize";
 import { CanvasVideoUploadContent } from "./canvas-video-upload-content";
 import { CanvasMediaUploadStatus } from "./canvas-media-upload-status";
@@ -35,6 +38,7 @@ type CanvasNodeProps = {
     imageSourceManaged?: boolean;
     imageError?: string;
     imageResultState?: "loading" | "error";
+    taskConnectionError?: string;
     onRetryImage?: (nodeId: string) => void;
     imageMask?: ImageMask;
     renderDetail?: CanvasRenderDetail;
@@ -67,7 +71,7 @@ type CanvasNodeProps = {
     onContentChange: (nodeId: string, content: string) => void;
     onToggleBatch?: (nodeId: string) => void;
     onSetBatchPrimary?: (node: CanvasNodeData) => void;
-    onRetry?: (node: CanvasNodeData) => void;
+    onRetry?: (node: CanvasNodeData, action?: GenerationRecoveryAction) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
@@ -86,6 +90,7 @@ type NodeContentRendererProps = {
     imageSourceManaged?: boolean;
     imageError?: string;
     imageResultState?: "loading" | "error";
+    taskConnectionError?: string;
     onRetryImage?: (nodeId: string) => void;
     imageMask?: ImageMask;
     isEditingContent: boolean;
@@ -98,7 +103,7 @@ type NodeContentRendererProps = {
     renderNodeContent?: (node: CanvasNodeData) => ReactNode;
     onContentChange: (nodeId: string, content: string) => void;
     onStopEditing: () => void;
-    onRetry?: (node: CanvasNodeData) => void;
+    onRetry?: (node: CanvasNodeData, action?: GenerationRecoveryAction) => void;
     onGenerateImage?: (node: CanvasNodeData) => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
     onToggleBatch?: () => void;
@@ -117,6 +122,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     imageSourceManaged = false,
     imageError,
     imageResultState,
+    taskConnectionError,
     onRetryImage,
     imageMask,
     renderDetail = "full",
@@ -401,6 +407,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                         imageSourceManaged={imageSourceManaged}
                         imageError={imageError}
                         imageResultState={imageResultState}
+                        taskConnectionError={taskConnectionError}
                         onRetryImage={onRetryImage}
                         imageMask={imageMask}
                         onImageLoaded={onImageLoaded}
@@ -438,6 +445,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
         prev.imageSourceManaged === next.imageSourceManaged &&
         prev.imageError === next.imageError &&
         prev.imageResultState === next.imageResultState &&
+        prev.taskConnectionError === next.taskConnectionError &&
         prev.onRetryImage === next.onRetryImage &&
         prev.imageMask === next.imageMask &&
         prev.renderDetail === next.renderDetail &&
@@ -485,6 +493,7 @@ function NodeContent(props: NodeContentRendererProps) {
     if (props.videoUpload) return <CanvasVideoUploadContent nodeId={props.node.id} upload={props.videoUpload} visible={props.videoVisible} onRetry={() => props.onRetryVideoUpload?.(props.node.id)} onCancel={() => props.onCancelVideoUpload?.(props.node.id)} />;
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
+    if (hasTaskFeedback(props)) return <CanvasTaskFeedback {...props} />;
     if (props.node.metadata?.status === "loading") return <LoadingContent theme={props.theme} label={props.imageResultState === "loading" ? "图片加载中" : "生成中"} />;
     if (props.node.metadata?.status === "error") return <ErrorContent node={props.node} theme={props.theme} onRetry={props.onRetry} />;
 
@@ -506,6 +515,19 @@ function LoadingContent({ theme, label = "生成中" }: Pick<NodeContentRenderer
             <span className="text-[10px] tracking-[0.2em]">{label}</span>
         </div>
     );
+}
+
+function hasTaskFeedback(props: NodeContentRendererProps) {
+    const status = props.node.metadata?.[props.node.type === CanvasNodeType.Video ? "videoTaskStatus" : "imageTaskStatus"];
+    return Boolean(props.taskConnectionError || (status && status !== "succeeded"));
+}
+
+function CanvasTaskFeedback(props: NodeContentRendererProps) {
+    const kind = props.node.type === CanvasNodeType.Video ? "video" : "image";
+    return <GenerationTaskFeedback status={props.node.metadata?.[`${kind}TaskStatus`]} issue={props.node.metadata?.[`${kind}TaskIssue`]} error={props.node.metadata?.errorDetails} connectionError={props.taskConnectionError}
+        onResume={props.onRetry ? () => props.onRetry!(props.node, "resume") : undefined}
+        onRegenerate={props.onRetry ? () => props.onRetry!(props.node, "regenerate") : undefined}
+        onReconnect={props.onRetry ? () => props.onRetry!(props.node, "reconnect") : undefined} />;
 }
 
 function ErrorContent({ node, theme, onRetry }: Pick<NodeContentRendererProps, "node" | "theme" | "onRetry">) {
@@ -586,7 +608,7 @@ function TextContent({ node, theme, isEditingContent, textareaRef, onContentChan
 function ImageNodeContent(props: NodeContentRendererProps) {
     const content = props.imageSourceManaged ? props.imageSource : props.node.metadata?.content;
     if (!content && props.isBatchRoot && !props.imageSourceManaged) {
-        const content =
+        const content = hasTaskFeedback(props) ? <CanvasTaskFeedback {...props} /> :
             props.node.metadata?.status === "loading" ? (
                 <LoadingContent theme={props.theme} label={props.imageResultState === "loading" ? "图片加载中" : "生成中"} />
             ) : props.node.metadata?.status === "error" ? (
@@ -676,7 +698,7 @@ function ImageContent({
     onToggleBatch?: () => void;
     onSetBatchPrimary?: () => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
-    onRetry?: (node: CanvasNodeData) => void;
+    onRetry?: (node: CanvasNodeData, action?: GenerationRecoveryAction) => void;
 }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const isBatchChild = Boolean(node.metadata?.batchRootId);

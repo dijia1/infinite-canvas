@@ -65,7 +65,14 @@ func StartVideoTaskWorker(parent context.Context) (func(), error) {
 }
 func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, current time.Time) error {
 	release := func(updates map[string]any) error {
+		if updates["attempts"] == 0 {
+			updates["error"], updates["error_kind"], updates["error_stage"] = "", "", ""
+		}
+		if updates["status"] == "uncertain" && updates["error_kind"] == nil {
+			updates["error_kind"], updates["error_stage"] = ai.TaskIssueUnknown, "submit"
+		}
 		updates["lease_until"] = nil
+		updates["claim_id"] = ""
 		updates["next_poll_at"] = current.Add(videoPollInterval)
 		return repository.UpdateClaimedVideoTask(item, updates)
 	}
@@ -77,19 +84,25 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 		if item.Status == "queued" {
 			return failVideoTask(item, "排队超时，尚未提交供应商")
 		}
-		return release(map[string]any{"status": "paused", "error": "等待超时，可继续检查原任务"})
+		return release(map[string]any{"status": "paused", "error": "等待超时，可继续检查原任务", "error_kind": ai.TaskIssueTransient, "error_stage": "query"})
+	}
+	configurationFailure := func(message string) error {
+		if item.Status == "queued" {
+			return failVideoTask(item, message)
+		}
+		return release(map[string]any{"status": "paused", "error": "供应商配置不可用，请修正后恢复查询", "error_kind": ai.TaskIssueConfiguration, "error_stage": "query"})
 	}
 	providerType, ok := ai.Type(item.ProviderType)
 	if !ok {
-		return failVideoTask(item, "视频供应商不存在")
+		return configurationFailure("视频供应商不存在")
 	}
 	raw, err := providerType.New(json.RawMessage(item.ProviderConfig))
 	if err != nil {
-		return failVideoTask(item, "视频供应商配置无效")
+		return configurationFailure("视频供应商配置无效")
 	}
 	provider, ok := raw.(ai.VideoGenerator)
 	if !ok {
-		return failVideoTask(item, "供应商不支持视频")
+		return configurationFailure("供应商不支持视频")
 	}
 	if item.Status == "queued" {
 		var request CreateVideoTaskRequest
@@ -120,7 +133,15 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 		task, err := provider.GetVideo(ctx, item.ProviderTaskID)
 		if err != nil {
 			log.Printf("video task query failed id=%s provider_task=%s category=%s", item.ID, item.ProviderTaskID, TaskErrorCategory(err))
-			return retryVideoTask(item, current, "查询视频任务失败")
+			kind, message := generationQueryIssue(err)
+			switch kind {
+			case ai.TaskIssueConfiguration:
+				return release(map[string]any{"status": "paused", "error": message, "error_kind": kind, "error_stage": "query"})
+			case ai.TaskIssueMissing, ai.TaskIssueUnknown:
+				return release(map[string]any{"status": "uncertain", "error": message, "error_kind": kind, "error_stage": "query"})
+			default:
+				return retryVideoTask(item, current, message)
+			}
 		}
 		switch task.Status {
 		case "failed", "cancelled", "canceled":
@@ -141,7 +162,7 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 			}
 			return release(map[string]any{"progress": progress, "attempts": 0})
 		default:
-			return retryVideoTask(item, current, "供应商返回未知任务状态")
+			return release(map[string]any{"status": "uncertain", "error": "供应商返回未知任务状态，请确认原任务", "error_kind": ai.TaskIssueUnknown, "error_stage": "query"})
 		}
 	}
 	if item.Status == "saving" {
@@ -160,12 +181,16 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 }
 func retryVideoTask(item model.VideoGenerationTask, current time.Time, message string) error {
 	status := item.Status
+	stage := "query"
+	if item.Status == "saving" {
+		stage = "save"
+	}
 	attempts := item.Attempts + 1
 	if attempts >= 5 {
 		status = "paused"
 		message += "，请继续检查"
 	}
-	return repository.UpdateClaimedVideoTask(item, map[string]any{"status": status, "attempts": attempts, "error": message, "lease_until": nil, "next_poll_at": current.Add(videoPollInterval * time.Duration(attempts))})
+	return repository.UpdateClaimedVideoTask(item, map[string]any{"status": status, "attempts": attempts, "error": message, "error_kind": ai.TaskIssueTransient, "error_stage": stage, "lease_until": nil, "claim_id": "", "next_poll_at": current.Add(videoPollInterval * time.Duration(attempts))})
 }
 func failVideoTask(item model.VideoGenerationTask, message string) error {
 	if message == "" {

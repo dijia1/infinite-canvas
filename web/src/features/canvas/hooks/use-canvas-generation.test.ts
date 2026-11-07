@@ -5,7 +5,7 @@ import { createCanvasGenerationController } from "./use-canvas-generation.ts";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types.ts";
 import type { AiConfig } from "@/lib/ai-config";
 import type { ImageGenerationTask } from "@/services/api/image";
-import { ImageQueryTransientError } from "@/services/api/image";
+import { ImageQueryTransientError, ImageRequestRejectedError } from "@/services/api/image";
 import type { VideoGenerationTask } from "@/services/api/video";
 import type { StoredCanvasImage } from "@/services/canvas-image-hydration";
 
@@ -350,7 +350,7 @@ test("preserves successful batch children when another child fails", async () =>
         requestGeneration: async () => {
             attempts++;
             calls.generation++;
-            if (attempts === 2) throw new Error("provider failed");
+            if (attempts === 2) throw new ImageRequestRejectedError("provider failed");
             return completedTask(`image-${attempts}`, `media-${attempts}`);
         },
     });
@@ -827,7 +827,9 @@ test("explicit rejected video request remains retryable while ambiguous submissi
         });
         await controller.generateNode("source", "video", "dance");
         const result = nodesRef.current.find((item) => item.type === CanvasNodeType.Video)!;
-        assert.equal(result.metadata?.status, "error");
+        assert.equal(result.metadata?.status, explicit ? "error" : "loading");
+        assert.equal(result.metadata?.videoTaskStatus, explicit ? "failed" : "submitting");
+        assert.equal(Boolean(controller.getTaskConnectionError(result.id)), !explicit);
         assert.equal(Boolean(result.metadata?.videoTaskClientRequestId), !explicit);
     }
 });
@@ -928,7 +930,9 @@ test("transient video observation failures retry three times then preserve the o
         assert.equal(queries, 4);
         assert.deepEqual(delays, [12000, 24000, 36000]);
         assert.equal(nodesRef.current[0].metadata?.videoTaskId, "original");
-        assert.match(nodesRef.current[0].metadata?.errorDetails || "", /请求超时/);
+        assert.match(controller.getTaskConnectionError("v") || "", /请求超时/);
+        assert.equal(nodesRef.current[0].metadata?.status, "loading");
+        assert.equal(nodesRef.current[0].metadata?.errorDetails, undefined);
         assert.equal(calls.video, 0);
     } finally {
         globalThis.setTimeout = set;
@@ -1183,4 +1187,54 @@ test("pending video input reports an error without submitting or changing the gr
     assert.equal(calls.generation, 0);
     assert.deepEqual(calls.errors, ["参考视频尚未上传或校验完成，请等待完成或重试上传"]);
     assert.deepEqual(nodesRef.current, [source]);
+});
+
+test("failed video regeneration creates a new task while repeated clicks share one recovery", async () => {
+    const source = node("failed-video", CanvasNodeType.Video, { status: "error", videoTaskStatus: "failed", videoTaskId: "old-video", generationMode: "video", prompt: "dance", videoProviderId: "video-test" });
+    const finished = deferred<VideoGenerationTask>();
+    const requests: unknown[][] = [];
+    const { controller, nodesRef, calls } = setup([source], [], {
+        requestVideoGeneration: async (...args: unknown[]) => { requests.push(args); return finished.promise; },
+    });
+    const first = controller.retryNode(source, "regenerate");
+    const duplicate = controller.retryNode(source, "regenerate");
+    await settleGeneration();
+    assert.equal(requests.length, 1);
+    assert.deepEqual(requests[0].at(-1), { replaceTaskId: "old-video" });
+    finished.resolve({ id: "new-video", status: "succeeded", progress: 100, resultMediaIds: ["new-media"], videos: [{ mediaId: "new-media", url: "https://example.com/result.mp4" }] });
+    await Promise.all([first, duplicate]);
+    assert.equal(nodesRef.current[0].metadata?.videoTaskId, "new-video");
+    assert.equal(nodesRef.current[0].metadata?.status, "success");
+    assert.equal(calls.errors.length, 0);
+});
+
+test("confirmed uncertain image regeneration passes consent and the original task into atomic creation", async () => {
+    const source = node("uncertain-regenerate", CanvasNodeType.Image, { status: "error", imageTaskStatus: "uncertain", imageTaskId: "old-image", prompt: "landscape", generationType: "generation" });
+    const requests: unknown[][] = [];
+    const { controller, nodesRef } = setup([source], [], { requestGeneration: async (...args: unknown[]) => { requests.push(args); return completedTask("new-image", "new-media"); } });
+    await controller.retryNode(source, "regenerate", true);
+    assert.deepEqual(requests[0].at(-1), { replaceTaskId: "old-image", confirmUncertain: true });
+    assert.equal(nodesRef.current[0].metadata?.status, "success");
+});
+
+
+test("a rejected regeneration keeps the old paused task available for recovery", async () => {
+    const { VideoRequestRejectedError } = await import("@/services/api/video");
+    for (const kind of ["image", "video"] as const) {
+        const source = node("paused-result", kind === "image" ? CanvasNodeType.Image : CanvasNodeType.Video, {
+            status: "error", prompt: "landscape", generationType: "generation",
+            [`${kind}TaskId`]: "original-task", [`${kind}TaskClientRequestId`]: "original-client", [`${kind}TaskStatus`]: "paused",
+            [`${kind}TaskIssue`]: { kind: "configuration", stage: "query", consecutiveFailures: 0 },
+        });
+        const { controller, nodesRef } = setup([source], [], {
+            requestGeneration: async () => { throw new ImageRequestRejectedError("模型配置错误"); },
+            requestVideoGeneration: async () => { throw new VideoRequestRejectedError("模型配置错误"); },
+        });
+        await controller.retryNode(source, "regenerate", true);
+        const metadata = nodesRef.current[0].metadata!;
+        assert.equal(metadata[`${kind}TaskId`], "original-task");
+        assert.equal(metadata[`${kind}TaskClientRequestId`], "original-client");
+        assert.equal(metadata[`${kind}TaskStatus`], "paused");
+        assert.equal(metadata.errorDetails, "模型配置错误");
+    }
 });

@@ -67,7 +67,7 @@ func TestMaiziVideoSubmissionAmbiguityAndSafeErrors(t *testing.T) {
 		transport bool
 		uncertain bool
 	}{
-		{"rejected", 400, `secret`, false, false}, {"server", 500, `secret`, false, true}, {"timeout", 408, `secret`, false, true}, {"malformed", 200, `secret`, false, true}, {"transport", 0, "", true, true},
+		{"unstructured rejection", 400, `secret`, false, true}, {"message-only rejection", 422, `{"message":"aspect_ratio is invalid"}`, false, true}, {"server", 500, `secret`, false, true}, {"timeout", 408, `secret`, false, true}, {"malformed", 200, `secret`, false, true}, {"transport", 0, "", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := videoTestProvider(func(*http.Request) (*http.Response, error) {
@@ -87,7 +87,7 @@ func TestMaiziVideoSubmissionAmbiguityAndSafeErrors(t *testing.T) {
 
 func TestMaiziVideoSubmissionReportsStructuredValidationMessage(t *testing.T) {
 	p := videoTestProvider(func(*http.Request) (*http.Response, error) {
-		return videoResponse(http.StatusUnprocessableEntity, `{"message":"aspect_ratio is invalid"}`), nil
+		return videoResponse(http.StatusUnprocessableEntity, `{"error":"aspect_ratio is invalid"}`), nil
 	})
 	_, err := p.CreateVideo(context.Background(), validVideoRequest())
 	var submission *ai.VideoSubmissionError
@@ -146,5 +146,28 @@ func TestMaiziVideoRejectsMismatchedTaskID(t *testing.T) {
 	})
 	if _, err := p.GetVideo(context.Background(), "requested"); err == nil {
 		t.Fatal("accepted another task response")
+	}
+}
+
+func TestMaiziQueryErrorsPreserveClassification(t *testing.T) {
+	for _, fixture := range []struct {
+		code int
+		kind string
+	}{{401, ai.TaskIssueConfiguration}, {403, ai.TaskIssueConfiguration}, {404, ai.TaskIssueMissing}, {429, ai.TaskIssueTransient}, {503, ai.TaskIssueTransient}} {
+		p := videoTestProvider(func(*http.Request) (*http.Response, error) {
+			return videoResponse(fixture.code, `{"error":"查询失败"}`), nil
+		})
+		_, err := p.GetVideo(context.Background(), "original")
+		var query *ai.TaskQueryError
+		if !errors.As(err, &query) || query.Kind != fixture.kind {
+			t.Fatalf("HTTP %d: %v", fixture.code, err)
+		}
+		image := &maiziProvider{config: maiziConfig{APIKey: "key"}, client: &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+			return jsonStatusResponse(fixture.code, `{"error":"查询失败"}`), nil
+		})}}
+		_, err = image.GetImageTask(context.Background(), "original")
+		if !errors.As(err, &query) || query.Kind != fixture.kind {
+			t.Fatalf("image HTTP %d: %v", fixture.code, err)
+		}
 	}
 }

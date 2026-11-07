@@ -1,7 +1,8 @@
 "use client";
 
-import { Button } from "antd";
-import { Image as ImageIcon, LoaderCircle, Maximize2, Pencil, RefreshCw, Trash2, Upload, Video } from "lucide-react";
+import { GenerationTaskFeedback } from "@/components/generation-task-feedback";
+
+import { Image as ImageIcon, Maximize2, Pencil, Trash2, Upload, Video } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
@@ -19,7 +20,6 @@ import type { WorkflowGenerationConfig, WorkflowNode, WorkflowOutputExecution, W
 import { WorkflowConfigPanel } from "./workflow-config-panel";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
 import type { LocalImageOperation } from "./workflow-local-images";
-import { workflowOutputStatusText } from "./workflow-run-state";
 
 export type WorkflowPreviewInput = { key: string; sourceNodeId: string; type: "image" | "video" | "text"; text?: string; mediaId?: string; imageUrl?: string; imageStorageKey?: string; imageError?: string };
 type ResizeStart = (event: ReactPointerEvent, node: WorkflowNode, corner: CanvasResizeCorner, slot?: WorkflowOutputSlot) => void;
@@ -281,6 +281,8 @@ export function WorkflowOutputCard({
     confirmingRetry,
     onReloadMedia,
     onRetryOutput,
+    onResumeOutput,
+    onReconnectOutput,
     onImageLoaded,
     onMediaDimensions,
     onDragStart,
@@ -309,6 +311,8 @@ export function WorkflowOutputCard({
     confirmingRetry?: boolean;
     onReloadMedia?: () => void;
     onRetryOutput?: () => void;
+    onResumeOutput?: () => void;
+    onReconnectOutput?: () => void;
     onImageLoaded?: (storageKey: string) => void;
     onMediaDimensions?: (dimensions: { width: number; height: number }) => void;
     onDragStart: (event: ReactPointerEvent, parent: WorkflowNode, slot: WorkflowOutputSlot) => void;
@@ -386,36 +390,10 @@ export function WorkflowOutputCard({
                             onMediaDimensions={onMediaDimensions}
                         />
                     ) : (
-                        <div className={`flex max-w-[85%] flex-col items-center gap-2 text-center text-xs ${execution?.status === "failed" || execution?.status === "blocked" ? "text-red-500" : "opacity-55"}`}>
-                            {loadingExecution || (execution && ["ready", "claimed", "submitting", "running"].includes(execution.status)) ? (
-                                <LoaderCircle className="size-6 animate-spin" />
-                            ) : slot.type === "image" ? (
-                                <ImageIcon className="size-7" />
-                            ) : (
-                                <Video className="size-7" />
-                            )}
-                            <span>{executionLoadError || (loadingExecution ? "正在加载运行结果" : workflowOutputStatusText(execution?.status))}</span>
-                            {execution?.error ? <span className="line-clamp-3 opacity-80">{execution.error}</span> : null}
-                        </div>
+                        <GenerationTaskFeedback status={execution?.taskStatus || execution?.status || (loadingExecution ? "loading" : undefined)} issue={execution?.issue} error={execution?.error} connectionError={executionLoadError} busy={retrying} confirmingRetry={confirmingRetry}
+                            onResume={!readOnly ? onResumeOutput : undefined} onRegenerate={!readOnly ? onRetryOutput : undefined} onReconnect={onReconnectOutput} />
                     )}
-                    {!readOnly && onRetryOutput ? (
-                        <Button
-                            type="text"
-                            size="small"
-                            loading={retrying}
-                            icon={<RefreshCw className="size-3.5" />}
-                            className="!absolute !bottom-2 !right-2"
-                            onPointerDown={(event) => {
-                                if (event.button !== 1) event.stopPropagation();
-                            }}
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                onRetryOutput();
-                            }}
-                        >
-                            {confirmingRetry ? "确认重试" : execution?.status === "uncertain" ? "重新生成" : "重试"}
-                        </Button>
-                    ) : null}
+
                 </div>
                 {!readOnly && onResizeStart ? canvasResizeCorners.map((corner) => <CanvasResizeHandle key={corner} corner={corner} onPointerDown={(event) => onResizeStart(event, parent, corner, slot)} />) : null}
             </CanvasNodeFrame>

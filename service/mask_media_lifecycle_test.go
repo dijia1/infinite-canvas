@@ -52,7 +52,7 @@ func TestMaskUploadIsTemporaryAndHidden(t *testing.T) {
 func createMaskPreparingTask(item model.Media) (model.ImageGenerationTask, error) {
 	task := model.ImageGenerationTask{ID: newID("mask-task"), OwnerUID: item.OwnerUID, ClientRequestID: newID("request"), Status: model.ImageTaskPreparing, OperationLogID: newID("operation"), CreatedAt: now(), UpdatedAt: now()}
 	input := model.ImageGenerationTaskInput{ID: newID("mask-input"), TaskID: task.ID, SourceMediaID: item.ID, Purpose: "mask", PreparationStatus: "ready"}
-	_, _, err := repository.CreateImageGenerationTaskWithInputsAndOperationLog(task, model.OperationLog{ID: task.OperationLogID, ActorUID: item.OwnerUID, Status: model.OperationStatusSubmitted}, []model.ImageGenerationTaskInput{input})
+	_, _, err := repository.CreateImageGenerationTaskWithInputsAndOperationLog(task, model.OperationLog{ID: task.OperationLogID, ActorUID: item.OwnerUID, Status: model.OperationStatusSubmitted}, []model.ImageGenerationTaskInput{input}, nil)
 	return task, err
 }
 

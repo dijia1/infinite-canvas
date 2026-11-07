@@ -411,7 +411,7 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
         selectedDetail,
         selectedError: selectedDetailQuery?.error,
         overviewError: overviewQuery.error,
-        detailErrorsByRunId: new Map(detailQueries.flatMap((query, index) => query.error && !query.data ? [[relevantDetailIds[index]!, query.error] as const] : [])),
+        detailErrorsByRunId: new Map(detailQueries.flatMap((query, index) => query.error ? [[relevantDetailIds[index]!, query.error] as const] : [])),
         selectedRunId,
         selectRun: setSelectedRunId,
         start,

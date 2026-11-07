@@ -21,7 +21,7 @@ func videoFixture(t *testing.T) (model.VideoGenerationTask, time.Time) {
 }
 func createVideoFixture(t *testing.T, item model.VideoGenerationTask) {
 	t.Helper()
-	if _, err := CreateVideoGenerationTask(item, model.OperationLog{ID: item.OperationLogID, ActorUID: item.OwnerUID, Action: "video_generate", Status: model.OperationStatusSubmitted, CreatedAt: time.Now()}, []string{"reference"}); err != nil {
+	if _, err := CreateVideoGenerationTask(item, model.OperationLog{ID: item.OperationLogID, ActorUID: item.OwnerUID, Action: "video_generate", Status: model.OperationStatusSubmitted, CreatedAt: time.Now()}, []string{"reference"}, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -31,7 +31,7 @@ func TestVideoTaskCreationHoldsMediaAndIsIdempotent(t *testing.T) {
 	duplicate := item
 	duplicate.ID = "duplicate"
 	duplicate.OperationLogID = "duplicate-operation"
-	got, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: "duplicate-operation"}, []string{"reference"})
+	got, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: "duplicate-operation"}, []string{"reference"}, nil)
 	if err != nil || got.ID != item.ID {
 		t.Fatalf("%+v %v", got, err)
 	}
@@ -57,13 +57,13 @@ func TestCreateVideoGenerationTaskValidatesRequestHashAndPreservesLegacyReplay(t
 
 	exact := item
 	exact.ID, exact.OperationLogID = "video-exact", "video-exact-operation"
-	if got, err := CreateVideoGenerationTask(exact, model.OperationLog{ID: exact.OperationLogID}, []string{"reference"}); err != nil || got.ID != item.ID {
+	if got, err := CreateVideoGenerationTask(exact, model.OperationLog{ID: exact.OperationLogID}, []string{"reference"}, nil); err != nil || got.ID != item.ID {
 		t.Fatalf("exact replay = %#v, err=%v", got, err)
 	}
 	for _, hash := range []string{strings.Repeat("b", 64), ""} {
 		duplicate := item
 		duplicate.ID, duplicate.OperationLogID, duplicate.RequestHash = "video-duplicate-"+hash, "video-duplicate-operation-"+hash, hash
-		if _, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []string{"reference"}); !errors.Is(err, ErrGenerationRequestConflict) {
+		if _, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []string{"reference"}, nil); !errors.Is(err, ErrGenerationRequestConflict) {
 			t.Fatalf("duplicate hash %q err=%v", hash, err)
 		}
 	}
@@ -73,7 +73,7 @@ func TestCreateVideoGenerationTaskValidatesRequestHashAndPreservesLegacyReplay(t
 	createVideoFixture(t, legacy)
 	legacyReplay := legacy
 	legacyReplay.ID, legacyReplay.OperationLogID, legacyReplay.RequestHash = "legacy-video-replay", "legacy-video-replay-operation", strings.Repeat("c", 64)
-	if got, err := CreateVideoGenerationTask(legacyReplay, model.OperationLog{ID: legacyReplay.OperationLogID}, []string{"reference"}); err != nil || got.ID != legacy.ID {
+	if got, err := CreateVideoGenerationTask(legacyReplay, model.OperationLog{ID: legacyReplay.OperationLogID}, []string{"reference"}, nil); err != nil || got.ID != legacy.ID {
 		t.Fatalf("legacy replay = %#v, err=%v", got, err)
 	}
 }
@@ -106,7 +106,7 @@ func TestConcurrentVideoGenerationHashConflictWaitsForUniqueKeyWinner(t *testing
 	loser := winner
 	loser.ID, loser.OperationLogID, loser.RequestHash = "video-loser", "video-loser-operation", strings.Repeat("b", 64)
 	go func() {
-		_, err := CreateVideoGenerationTask(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID}, []string{"missing-loser-media"})
+		_, err := CreateVideoGenerationTask(loser, model.OperationLog{ID: loser.OperationLogID, ActorUID: loser.OwnerUID, TargetID: loser.ID}, []string{"missing-loser-media"}, nil)
 		result <- err
 	}()
 	waitForTransactionIDLock(t, database, holderXID)
@@ -143,7 +143,7 @@ func TestVideoTaskCannotReferenceDeletingMedia(t *testing.T) {
 	if _, claimed, err := ClaimCanvasMediaCleanup("reference", current, time.Minute); err != nil || !claimed {
 		t.Fatal(err)
 	}
-	if _, err := CreateVideoGenerationTask(item, model.OperationLog{ID: item.OperationLogID}, []string{"reference"}); !errors.Is(err, ErrCanvasMediaUnavailable) {
+	if _, err := CreateVideoGenerationTask(item, model.OperationLog{ID: item.OperationLogID}, []string{"reference"}, nil); !errors.Is(err, ErrCanvasMediaUnavailable) {
 		t.Fatalf("got %v", err)
 	}
 	if _, found, _ := GetVideoGenerationTask(item.ID, "owner"); found {

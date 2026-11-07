@@ -67,7 +67,7 @@ import { WorkflowImageAssetCard } from "./workflow-image-asset-card";
 import { WorkflowRunDetail } from "./workflow-run-detail";
 import { pendingWorkflowRetryKey, workflowRunScopeKey } from "./workflow-run-requests";
 import { useWorkflowRuns } from "./use-workflow-runs";
-import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableWorkflowOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
+import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableWorkflowOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText, workflowResumeTaskID } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
 import { buildWorkflowPathData, selectWorkflowViewportScene, workflowConnectionPathCache, workflowOutputLinks, workflowOutputPathCache, workflowSelectedImageResourceIds, workflowVisualRenderDetail } from "./workflow-viewport-rendering";
 import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition, WorkflowRunScope } from "./types";
@@ -1177,6 +1177,8 @@ function WorkflowEditorContent() {
                                 const detail = runs.detailByNode.get(node.id);
                                 const resourceNodeId = detail ? workflowOutputResourceNodeId(detail.run.id, node.id, slot.id) : undefined;
                                 const retryKey = detail ? pendingWorkflowRetryKey({ runId: detail.run.id, nodeId: node.id, slotId: slot.id }) : "";
+                                const resumeTaskID = detail && output ? workflowResumeTaskID(detail, output) : undefined;
+                                const detailError = runs.detailErrorsByRunId.get(detail?.run.id || runs.overview?.nodeRunIds[node.id] || "");
                                 const resource = resourceNodeId ? imageResources.resources.get(resourceNodeId) : undefined;
                                 return <WorkflowOutputCard
                                     key={workflowOutputKey(node.id, slot.id)}
@@ -1184,7 +1186,7 @@ function WorkflowEditorContent() {
                                     slot={slot}
                                     execution={output}
                                     loadingExecution={Boolean(runs.overview?.nodeRunIds[node.id] && !detail)}
-                                    executionLoadError={!detail && runs.error instanceof Error ? runs.error.message : undefined}
+                                    executionLoadError={detailError instanceof Error ? detailError.message : !detail && runs.error instanceof Error ? runs.error.message : undefined}
                                     resourceNodeId={resourceNodeId}
                                     videoVisible={isCanvasNodeNearViewport(
                                         { id: workflowOutputKey(node.id, slot.id), type: CanvasNodeType.Video, title: "", position: slot.position || node.position, width: slot.width || 420, height: slot.height || 236 } satisfies CanvasNodeData,
@@ -1194,10 +1196,12 @@ function WorkflowEditorContent() {
                                     imageUrl={resource?.url}
                                     imageStorageKey={resource?.storageKey}
                                     imageError={resourceNodeId ? imageResources.errors.get(resourceNodeId) : undefined}
-                                    retrying={retryingKeys.has(retryKey)}
+                                    retrying={retryingKeys.has(retryKey) || Boolean(resumeTaskID && resumingTaskIDs.has(resumeTaskID))}
                                     confirmingRetry={runs.pendingRetryKeys.has(retryKey)}
                                     onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
                                     onRetryOutput={detail && isRetryableWorkflowOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
+                                    onResumeOutput={resumeTaskID ? () => void resumeWorkflowTask(resumeTaskID, slot.type) : undefined}
+                                    onReconnectOutput={() => void runs.refresh()}
                                     onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
                                     onMediaDimensions={(dimensions) => {
                                         if (output?.mediaId) fitLoadedMedia(node.id, output.mediaId, dimensions, slot.id, slot.type);
@@ -1450,6 +1454,8 @@ function WorkflowEditorContent() {
                     ) : (
                         <WorkflowRunDetail
                             detail={currentRun.data}
+                            connectionError={currentRun.error instanceof Error ? currentRun.error.message : undefined}
+                            onReconnect={() => void currentRun.refetch()}
                             stopping={Boolean(currentRun.data && stoppingRuns.has(currentRun.data.run.id))}
                             retryingKey={currentRun.data?.outputs.filter((output) => retryingKeys.has(pendingWorkflowRetryKey(output))).map((output) => workflowOutputKey(output.nodeId, output.slotId))[0]}
                             resumingTaskIDs={resumingTaskIDs}

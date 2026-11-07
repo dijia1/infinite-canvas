@@ -12,7 +12,7 @@ func TestVideoStatisticsFinishedRangeAndOperationStatusFilters(t *testing.T) {
 	duplicate := task
 	duplicate.ID = "duplicate"
 	duplicate.OperationLogID = "duplicate-operation"
-	if _, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []string{"reference"}); err != nil {
+	if _, err := CreateVideoGenerationTask(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []string{"reference"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	db, _ := DB()

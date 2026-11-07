@@ -247,3 +247,20 @@ test("each masked edit uploads a new temporary mask and submits media IDs only",
         else Reflect.deleteProperty(globalThis, "document");
     }
 });
+
+
+test("image regeneration sends explicit replacement consent and preserves retry metadata", async () => {
+    const previous = axios.post;
+    let body: unknown;
+    const issue = { kind: "transient", stage: "query", consecutiveFailures: 2, nextRetryAt: "2026-11-07T01:02:03Z" };
+    axios.post = (async (_url: string, input: unknown) => {
+        body = input;
+        return { data: { code: 0, data: { id: "new-image", status: "running", issue, images: [] } } };
+    }) as typeof axios.post;
+    try {
+        const task = await requestGeneration({ quality: "auto", size: "1:1", resolution: "1k", outputFormat: "jpeg", background: "opaque" } as never, "prompt", "new-client", { replaceTaskId: "old-image", confirmUncertain: true });
+        assert.equal((body as { replaceTaskId: string }).replaceTaskId, "old-image");
+        assert.equal((body as { confirmUncertain: boolean }).confirmUncertain, true);
+        assert.deepEqual(task.issue, issue);
+    } finally { axios.post = previous; }
+});

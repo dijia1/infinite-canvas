@@ -89,3 +89,28 @@ func cleanupClosedImageTask(ctx context.Context, id string) {
 		}
 	}
 }
+
+func taskReplacement(user PortalUser, kind, taskID, requestID string, confirmed bool) (*repository.GenerationTaskReplacement, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, nil
+	}
+	if len(taskID) > 128 {
+		return nil, safeMessageError{message: "原任务无效"}
+	}
+	summary, err := json.Marshal(map[string]any{"sourceTaskId": taskID, "clientRequestId": requestID, "confirmUncertain": confirmed})
+	if err != nil {
+		return nil, err
+	}
+	return &repository.GenerationTaskReplacement{TaskID: taskID, ConfirmUncertain: confirmed, Audit: model.OperationLog{ID: newID("operation"), ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...), Action: "generation_task_regenerate", Status: model.OperationStatusSuccess, TargetType: kind + "_generation", TargetID: taskID, RequestSummary: string(summary), CreatedAt: time.Now().UTC()}}, nil
+}
+
+func generationReplacementError(err error) error {
+	if errors.Is(err, repository.ErrGenerationTaskResolutionConflict) {
+		return safeMessageError{message: "原任务仍在运行、状态已变化，或尚未确认重新生成，请刷新后重试"}
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return safeMessageError{message: "原任务不存在"}
+	}
+	return err
+}

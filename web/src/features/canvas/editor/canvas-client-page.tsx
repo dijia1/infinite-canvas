@@ -1,4 +1,6 @@
 "use client";
+
+import { regenerationNeedsConfirmation, type GenerationRecoveryAction } from "@/lib/generation-task-state";
 import { prepareVideoUpload, uploadVideoMedia } from "@/services/api/video-media";
 import { createCanvasLocalVideoUploadController, videoUploadSourceIdentity, type LocalVideoUploadView } from "../media/canvas-local-video-upload-controller";
 
@@ -199,7 +201,7 @@ function CanvasRefreshShell() {
 }
 
 function InfiniteCanvasPage() {
-    const { message } = App.useApp();
+    const { message, modal } = App.useApp();
     const params = useParams<{ id: string }>();
     const router = useRouter();
     const editorNavigation = useEditorNavigation();
@@ -811,6 +813,7 @@ function InfiniteCanvasPage() {
     const {
         runningNodeId,
         getImageResultState,
+        getTaskConnectionError,
         generateNode: handleGenerateNode,
         retryNode: handleRetryNode,
         generateImageFromTextNode,
@@ -2027,14 +2030,17 @@ function InfiniteCanvasPage() {
     );
 
     const handleCanvasNodeRetry = useCallback(
-        (node: CanvasNodeData) => {
+        (node: CanvasNodeData, action?: GenerationRecoveryAction) => {
             if (isLocalImageUploadNode(node) && node.metadata?.localUploadState === "failed") {
                 void retryLocalImageUpload(node);
                 return;
             }
-            void handleRetryNode(node);
+            const status = node.metadata?.[node.type === CanvasNodeType.Video ? "videoTaskStatus" : "imageTaskStatus"];
+            if (action === "regenerate" && regenerationNeedsConfirmation(status)) {
+                modal.confirm({ title: "确认重新生成？", content: "原请求可能已被供应商接收。重新生成会创建新任务，可能重复扣费。", okText: "确认重新生成", cancelText: "取消", onOk: () => handleRetryNode(node, action, true) });
+            } else { void handleRetryNode(node, action); }
         },
-        [handleRetryNode, retryLocalImageUpload],
+        [handleRetryNode, retryLocalImageUpload, modal],
     );
 
     const handleCanvasNodeGenerateImage = useCallback(
@@ -2261,6 +2267,7 @@ function InfiniteCanvasPage() {
                                 imageSourceManaged={Boolean(node.metadata?.mediaId)}
                                 imageError={canvasImageErrors.get(node.id)}
                                 imageResultState={getImageResultState(node.id)}
+                                taskConnectionError={getTaskConnectionError(node.id)}
                                 onRetryImage={retryCanvasImage}
                                 renderDetail={canvasRenderDetail === "overview" && node.type !== CanvasNodeType.Config && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
                                 configCard={node.type === CanvasNodeType.Config && configCompact ? getConfigCardView(node, viewport.k) : undefined}

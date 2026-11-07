@@ -161,8 +161,9 @@ export function workflowRunAttentionText(detail: WorkflowRunDetail) {
     const uncertain = detail.outputs.filter((output) => output.status === "uncertain");
     const resumable = uncertain.filter((output) => Boolean(workflowResumeTaskID(detail, output)));
     return [
-        resumable.length ? "任务查询已暂停，可恢复原任务继续查询；也可选择“重新生成”。" : "",
-        uncertain.length > resumable.length ? "提交结果不确定。修正模型配置后，可在对应输出选择“重新生成”。" : "",
+        resumable.length ? "任务查询已暂停，可选择“恢复查询”继续处理原任务；也可选择“重新生成”。" : "",
+        uncertain.some((output) => output.issue?.stage === "query" && !workflowResumeTaskID(detail, output)) ? "原任务状态需要确认。可刷新状态，或确认风险后重新生成。" : "",
+        uncertain.some((output) => output.issue?.stage !== "query" && !workflowResumeTaskID(detail, output)) ? "提交结果不确定。修正模型配置后，可在对应输出选择“重新生成”。" : "",
     ].filter(Boolean).join(" ");
 }
 

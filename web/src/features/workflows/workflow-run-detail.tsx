@@ -1,5 +1,7 @@
 "use client";
 
+import { generationTaskPresentation } from "@/lib/generation-task-state";
+
 import { Button, Empty, Modal, Spin } from "antd";
 import { CircleAlert, Image as ImageIcon, RefreshCw, Square, Trash2, Video } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
@@ -15,8 +17,10 @@ import type { WorkflowGraph, WorkflowNode, WorkflowOutputExecution, WorkflowOutp
 
 type Preview = { nodeId: string; mediaId: string; type: "image" | "video" };
 
-export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, resumingTaskIDs, confirmingRetryKeys, onStop, onDelete, onRetry, onResumeTask }: {
+export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, resumingTaskIDs, confirmingRetryKeys, onStop, onDelete, onRetry, onResumeTask, connectionError, onReconnect }: {
     detail?: WorkflowRunDetailRecord;
+    connectionError?: string;
+    onReconnect?: () => void;
     stopping?: boolean;
     deleting?: boolean;
     retryingKey?: string;
@@ -64,6 +68,8 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, res
                     </div>
                 </section>
 
+                {connectionError ? <div role="alert" className="flex items-center justify-between gap-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"><span>连接中断：{connectionError}，后台任务仍会继续。</span><Button size="small" onClick={onReconnect}>重新连接</Button></div> : null}
+
                 {detail.run.status === "attention_required" && attentionText ? (
                     <div className="flex gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950/30 dark:text-amber-300">
                         <CircleAlert className="mt-0.5 size-4 shrink-0" />
@@ -94,15 +100,15 @@ export function WorkflowRunDetail({ detail, stopping, deleting, retryingKey, res
                                             <div className="min-w-0">
                                                 <div className="flex items-center gap-2 text-sm">
                                                     {slot?.type === "video" ? <Video className="size-4" /> : <ImageIcon className="size-4" />}
-                                                    <span>{workflowOutputStatusText(output.status)}</span>
+                                                    <span>{output.taskStatus ? generationTaskPresentation(output.taskStatus, output.error, output.issue).title : workflowOutputStatusText(output.status)}</span>
                                                     <span className="text-xs text-stone-400">第 {output.attempt} 次</span>
                                                 </div>
-                                                {output.error ? <p className="mt-2 break-words text-xs leading-5 text-red-500">{output.error}</p> : null}
+                                                {output.error ? <p className={`mt-2 break-words text-xs leading-5 ${output.status === "failed" ? "text-red-500" : "text-amber-600 dark:text-amber-400"}`}>{output.taskStatus ? generationTaskPresentation(output.taskStatus, output.error, output.issue).message : output.error}</p> : null}
                                             </div>
                                             <div className="flex shrink-0 items-center gap-1">
                                                 {output.status === "succeeded" && output.mediaId ? <Button type="text" size="small" onClick={() => openOutput(output)}>查看</Button> : null}
-                                                {retryable && onRetry ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={retryingKey === key} onClick={() => onRetry(output.nodeId, output.slotId)}>{confirmingRetryKeys?.has(key) ? "确认重试" : output.status === "uncertain" ? "重新生成" : "重试"}</Button> : null}
-                                                {resumeTaskID && onResumeTask ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={resumingTaskIDs?.has(resumeTaskID)} onClick={() => onResumeTask(resumeTaskID, slot?.type === "video" ? "video" : "image")}>恢复原任务</Button> : null}
+                                                {retryable && onRetry ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={retryingKey === key} onClick={() => onRetry(output.nodeId, output.slotId)}>{confirmingRetryKeys?.has(key) ? "确认重试" : "重新生成"}</Button> : null}
+                                                {resumeTaskID && onResumeTask ? <Button type="text" size="small" icon={<RefreshCw className="size-3.5" />} loading={resumingTaskIDs?.has(resumeTaskID)} onClick={() => onResumeTask(resumeTaskID, slot?.type === "video" ? "video" : "image")}>恢复查询</Button> : null}
                                             </div>
                                         </div>
                                     </div>

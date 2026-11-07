@@ -333,7 +333,7 @@ func (provider *maiziProvider) doJSON(ctx context.Context, method, url string, b
 		return nil
 	}
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
-		return maiziUpstreamError(response.StatusCode, data)
+		return ai.NewTaskQueryError(response.StatusCode, provider.safeSubmissionReason(maiziUpstreamError(response.StatusCode, data).Error(), ai.ImageRequest{}, nil, nil))
 	}
 	if err := json.Unmarshal(data, result); err != nil {
 		return maiziError{message: "MaiziAI 响应无效"}

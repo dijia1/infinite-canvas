@@ -90,7 +90,7 @@ func (p *maiziVideoProvider) GetVideo(ctx context.Context, id string) (ai.VideoT
 	}
 	task, err := p.request(ctx, http.MethodGet, "/tasks/"+url.PathEscape(id), nil, false)
 	if err == nil && task.ID != id {
-		return ai.VideoTask{}, maiziError{"视频供应商返回不匹配的任务 ID"}
+		return ai.VideoTask{}, &ai.TaskQueryError{Kind: ai.TaskIssueUnknown, Message: "视频供应商返回不匹配的任务 ID，请确认原任务"}
 	}
 	return task, err
 }
@@ -122,7 +122,10 @@ func (p *maiziVideoProvider) request(ctx context.Context, method, path string, b
 		if err == nil && len(data) <= limit {
 			message = maiziUpstreamError(resp.StatusCode, data).Error()
 		}
-		return fail(message, resp.StatusCode >= 500 || resp.StatusCode == 408)
+		if !create {
+			return ai.VideoTask{}, ai.NewTaskQueryError(resp.StatusCode, (&maiziProvider{config: p.config}).safeSubmissionReason(message, ai.ImageRequest{}, nil, nil))
+		}
+		return fail(message, !maiziExplicitSubmissionRejection(resp.StatusCode, data))
 	}
 	if err != nil || len(data) > limit {
 		return fail("视频供应商响应读取失败", true)
@@ -142,6 +145,9 @@ func (p *maiziVideoProvider) request(ctx context.Context, method, path string, b
 	switch wire.Status {
 	case "pending", "queued", "processing", "running", "completed", "failed", "cancelled", "canceled":
 	default:
+		if !create {
+			return ai.VideoTask{}, &ai.TaskQueryError{Kind: ai.TaskIssueUnknown, Message: "视频供应商返回未知任务状态，请确认原任务"}
+		}
 		return fail("视频供应商返回未知任务状态", true)
 	}
 	if wire.Status == "completed" && len(wire.ResultURLs) == 0 {

@@ -42,7 +42,7 @@ func resolveGenerationTask(tx *gorm.DB, kind, id, ownerUID, action, providerTask
 	if task.Status != "uncertain" && task.Status != "paused" {
 		return ErrGenerationTaskResolutionConflict
 	}
-	updates := map[string]any{"claim_id": "", "lease_until": nil}
+	updates := map[string]any{"claim_id": "", "lease_until": nil, "error_kind": "", "error_stage": ""}
 	message := "管理员已核对并确认失败"
 	if ownerUID != "" {
 		message = "用户已确认结束原任务并重新生成"
@@ -96,4 +96,35 @@ func resolveGenerationTask(tx *gorm.DB, kind, id, ownerUID, action, providerTask
 		}
 	}
 	return tx.Create(&audit).Error
+}
+
+type GenerationTaskReplacement struct {
+	TaskID           string
+	ConfirmUncertain bool
+	Audit            model.OperationLog
+}
+
+// Called only by the winning create transaction so replay cannot close a newer
+// task or release old inputs before the replacement has acquired them.
+func replaceGenerationTask(tx *gorm.DB, kind, owner string, replacement *GenerationTaskReplacement, current time.Time) error {
+	if replacement == nil {
+		return nil
+	}
+	table := "image_generation_tasks"
+	if kind == "video" {
+		table = "video_generation_tasks"
+	}
+	var task struct{ Status, ProviderTaskID string }
+	if err := tx.Table(table).Where("id = ? AND owner_uid = ?", replacement.TaskID, owner).Take(&task).Error; err != nil {
+		return err
+	}
+	if task.Status == "failed" {
+		audit := replacement.Audit
+		audit.ProviderTaskID = task.ProviderTaskID
+		return tx.Create(&audit).Error
+	}
+	if !replacement.ConfirmUncertain {
+		return ErrGenerationTaskResolutionConflict
+	}
+	return resolveGenerationTask(tx, kind, replacement.TaskID, owner, "close", "", current, 0, 0, replacement.Audit)
 }

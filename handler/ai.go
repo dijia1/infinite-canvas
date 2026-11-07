@@ -14,6 +14,8 @@ import (
 const workflowRequestIDPrefix = "workflow-"
 
 type imageRequest struct {
+	ReplaceTaskID     string          `json:"replaceTaskId"`
+	ConfirmUncertain  bool            `json:"confirmUncertain"`
 	ClientRequestID   string          `json:"clientRequestId"`
 	ProviderID        string          `json:"providerId"`
 	Prompt            string          `json:"prompt"`
@@ -43,6 +45,7 @@ func AIImagesGenerations(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
+		ReplaceTaskID: payload.ReplaceTaskID, ConfirmUncertain: payload.ConfirmUncertain,
 		ClientRequestID: payload.ClientRequestID,
 		ProviderID:      payload.ProviderID,
 		Mode:            service.ImageTaskModeGeneration,
@@ -70,6 +73,7 @@ func AIImagesEdits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task, err := service.CreateImageTask(r.Context(), service.CreateImageTaskRequest{
+		ReplaceTaskID: payload.ReplaceTaskID, ConfirmUncertain: payload.ConfirmUncertain,
 		ClientRequestID:   payload.ClientRequestID,
 		ProviderID:        payload.ProviderID,
 		Mode:              service.ImageTaskModeEdit,

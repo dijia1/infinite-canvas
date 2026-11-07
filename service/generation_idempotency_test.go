@@ -284,7 +284,7 @@ func TestGenerationServicesReplayExactPayloadAndRejectChangedPayload(t *testing.
 	}
 	if _, err := repository.CreateVideoGenerationTask(videoItem, model.OperationLog{
 		ID: videoItem.OperationLogID, ActorUID: videoItem.OwnerUID, Status: model.OperationStatusSubmitted,
-	}, nil); err != nil {
+	}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	video, err := CreateVideoGenerationTask(ctx, videoRequest)
@@ -409,7 +409,7 @@ func TestGenerationServicesReplayHashedTaskBeforeCurrentMediaOrProviderValidatio
 	}
 	if _, err := repository.CreateVideoGenerationTask(videoItem, model.OperationLog{
 		ID: videoItem.OperationLogID, ActorUID: owner, Status: model.OperationStatusSubmitted,
-	}, nil); err != nil {
+	}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	video, err := CreateVideoGenerationTask(ctx, videoRequest)

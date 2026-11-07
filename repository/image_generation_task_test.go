@@ -174,7 +174,7 @@ func TestIdempotentImageTaskReplayDoesNotReplaceSnapshotInputs(t *testing.T) {
 	}
 	item := model.ImageGenerationTask{ID: "snapshot-task", OwnerUID: "owner", ClientRequestID: "snapshot-request", RequestHash: strings.Repeat("a", 64), Status: model.ImageTaskPreparing, OperationLogID: "snapshot-operation"}
 	input := model.ImageGenerationTaskInput{ID: "snapshot-input", TaskID: item.ID, Position: 0, Purpose: "image", SourceMediaID: media.ID, SourceObjectKey: media.ObjectKey, PreparationStatus: "pending"}
-	created, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(item, model.OperationLog{ID: item.OperationLogID}, []model.ImageGenerationTaskInput{input})
+	created, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(item, model.OperationLog{ID: item.OperationLogID}, []model.ImageGenerationTaskInput{input}, nil)
 	if err != nil || !inserted || created.ID != item.ID {
 		t.Fatalf("create task = %#v, inserted=%t, err=%v", created, inserted, err)
 	}
@@ -182,7 +182,7 @@ func TestIdempotentImageTaskReplayDoesNotReplaceSnapshotInputs(t *testing.T) {
 	duplicate.ID, duplicate.OperationLogID = "replacement-task", "replacement-operation"
 	replacement := input
 	replacement.ID, replacement.TaskID = "replacement-input", duplicate.ID
-	replayed, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []model.ImageGenerationTaskInput{replacement})
+	replayed, inserted, err := CreateImageGenerationTaskWithInputsAndOperationLog(duplicate, model.OperationLog{ID: duplicate.OperationLogID}, []model.ImageGenerationTaskInput{replacement}, nil)
 	if err != nil || inserted || replayed.ID != item.ID {
 		t.Fatalf("replay task = %#v, inserted=%t, err=%v", replayed, inserted, err)
 	}

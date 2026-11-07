@@ -70,3 +70,20 @@ test("video HTTP requests carry bounded timeouts and query cancellation", async 
         axios.defaults.adapter = adapter;
     }
 });
+
+
+test("video regeneration carries old task consent and query issues", async () => {
+    const previous = axios.defaults.adapter;
+    let input: { replaceTaskId?: string; confirmUncertain?: boolean } | undefined;
+    const issue = { kind: "configuration", stage: "query", consecutiveFailures: 0 };
+    axios.defaults.adapter = async (c) => {
+        input = JSON.parse(c.data);
+        return { config: c, data: { code: 0, data: { id: "new-video", status: "paused", issue, videos: [] } }, status: 200, statusText: "OK", headers: {} } as AxiosResponse;
+    };
+    try {
+        const task = await requestVideoGeneration(config, "dance", [], "new-client", [], { replaceTaskId: "old-video", confirmUncertain: true });
+        assert.equal(input?.replaceTaskId, "old-video");
+        assert.equal(input?.confirmUncertain, true);
+        assert.deepEqual(task.issue, issue);
+    } finally { axios.defaults.adapter = previous; }
+});

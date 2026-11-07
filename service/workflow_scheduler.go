@@ -509,7 +509,7 @@ func applyWorkflowImageView(attempt model.WorkflowOutputAttempt, view ImageTaskV
 		attempt.Status, attempt.Error = "uncertain", strings.TrimSpace(view.Error)
 		return persistWorkflowAttempt(attempt, "uncertain", time.Now().UTC().Add(5*time.Second), false, "uncertain")
 	default:
-		attempt.Status, attempt.Error = "running", ""
+		attempt.Status, attempt.Error = "running", strings.TrimSpace(view.Error)
 		return persistWorkflowAttempt(attempt, "running", nextPoll, false, "")
 	}
 }
@@ -533,7 +533,7 @@ func applyWorkflowVideoView(attempt model.WorkflowOutputAttempt, view VideoTaskV
 		attempt.Status, attempt.Error = "uncertain", strings.TrimSpace(view.Error)
 		return persistWorkflowAttempt(attempt, "uncertain", time.Now().UTC().Add(5*time.Second), false, "uncertain")
 	case "queued", "submitting", "running", "saving":
-		attempt.Status, attempt.Error = "running", ""
+		attempt.Status, attempt.Error = "running", strings.TrimSpace(view.Error)
 		return persistWorkflowAttempt(attempt, "running", nextPoll, false, "")
 	default:
 		attempt.Status, attempt.Error = "uncertain", "视频任务状态需要确认"

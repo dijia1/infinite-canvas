@@ -1,3 +1,4 @@
+import { GenerationTaskQueryError, type GenerationTaskIssue, type GenerationTaskReplacement } from "@/lib/generation-task-state";
 import axios from "axios";
 import { nanoid } from "nanoid";
 import { aiApiPath, apiRequestError, type ApiResponse } from "@/services/api/request";
@@ -9,18 +10,19 @@ export type VideoGenerationTask = {
     status: "queued" | "submitting" | "running" | "saving" | "succeeded" | "failed" | "uncertain" | "paused";
     progress: number;
     error?: string;
+    issue?: GenerationTaskIssue;
     resultMediaIds: string[];
     videos: { mediaId: string; url: string; width?: number; height?: number; bytes?: number; contentType?: string; duration?: number }[];
 };
 export class VideoRequestRejectedError extends Error {}
-export class VideoQueryTransientError extends Error {}
+export class VideoQueryTransientError extends GenerationTaskQueryError {}
 
 function queryError(error: unknown, fallback: string): never {
     if (axios.isCancel(error)) throw error;
     if (axios.isAxiosError(error) && (!error.response || [408, 429].includes(error.response.status) || error.response.status >= 500)) {
         throw new VideoQueryTransientError(["ECONNABORTED", "ETIMEDOUT"].includes(error.code || "") ? "请求超时，后台视频任务仍会继续，可重新查询" : "视频任务查询暂不可用，后台任务仍会继续，可重新查询");
     }
-    throw new Error(apiRequestError(error, fallback));
+    throw new GenerationTaskQueryError(apiRequestError(error, fallback));
 }
 
 function unwrap(payload: unknown): VideoGenerationTask {
@@ -39,7 +41,7 @@ export function validateVideoGeneration(config: AiConfig, references: ReferenceI
     if (references.some((r) => !r.mediaId)) throw new Error("参考图片尚未上传完成，请等待上传完成后重试");
     return seconds;
 }
-export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], clientRequestId = nanoid(), videoMediaIds: string[] = []): Promise<VideoGenerationTask> {
+export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], clientRequestId = nanoid(), videoMediaIds: string[] = [], replacement?: GenerationTaskReplacement): Promise<VideoGenerationTask> {
     const seconds = validateVideoGeneration(config, references, videoMediaIds);
     try {
         return unwrap(
@@ -48,6 +50,7 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
                     aiApiPath("/videos"),
                     {
                         clientRequestId,
+                        ...replacement,
                         providerId: config.videoProviderId,
                         prompt,
                         seconds,

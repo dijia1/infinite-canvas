@@ -1,3 +1,4 @@
+import type { GenerationTaskIssue, GenerationTaskStatus } from "@/lib/generation-task-state";
 export type Position = {
     x: number;
     y: number;
@@ -73,6 +74,9 @@ export type CanvasNodeMetadata = {
     assetId?: string;
     mimeType?: string;
     bytes?: number;
+    imageTaskStatus?: GenerationTaskStatus;
+    imageTaskIssue?: GenerationTaskIssue;
+    videoTaskIssue?: GenerationTaskIssue;
     imageTaskId?: string;
     imageTaskClientRequestId?: string;
     imageMask?: import("@/types/image").ImageMask;

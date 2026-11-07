@@ -16,6 +16,8 @@ type VideoGenerationTask struct {
 	ProviderName       string          `json:"-"`
 	ProviderType       string          `json:"-"`
 	ProviderConfig     string          `json:"-"`
+	ErrorKind          string          `json:"-"`
+	ErrorStage         string          `json:"-"`
 	ProviderTaskID     string          `json:"-"`
 	RequestJSON        string          `json:"-" gorm:"type:text"`
 	InputMediaIDsJSON  string          `json:"-" gorm:"type:text"`

@@ -13,24 +13,27 @@ import (
 )
 
 type CreateVideoTaskRequest struct {
-	ClientRequestID string   `json:"clientRequestId"`
-	ProviderID      string   `json:"providerId"`
-	Prompt          string   `json:"prompt"`
-	Seconds         int      `json:"seconds"`
-	Size            string   `json:"size"`
-	Resolution      string   `json:"resolution"`
-	GenerateAudio   bool     `json:"generateAudio"`
-	ImageMediaIDs   []string `json:"imageMediaIds"`
-	VideoMediaIDs   []string `json:"videoMediaIds"`
+	ReplaceTaskID    string   `json:"replaceTaskId,omitempty"`
+	ConfirmUncertain bool     `json:"confirmUncertain,omitempty"`
+	ClientRequestID  string   `json:"clientRequestId"`
+	ProviderID       string   `json:"providerId"`
+	Prompt           string   `json:"prompt"`
+	Seconds          int      `json:"seconds"`
+	Size             string   `json:"size"`
+	Resolution       string   `json:"resolution"`
+	GenerateAudio    bool     `json:"generateAudio"`
+	ImageMediaIDs    []string `json:"imageMediaIds"`
+	VideoMediaIDs    []string `json:"videoMediaIds"`
 }
 type VideoTaskView struct {
-	ID              string        `json:"id"`
-	ClientRequestID string        `json:"clientRequestId"`
-	Status          string        `json:"status"`
-	Progress        int           `json:"progress"`
-	Error           string        `json:"error,omitempty"`
-	ResultMediaIDs  []string      `json:"resultMediaIds"`
-	Videos          []MediaAccess `json:"videos"`
+	ID              string                     `json:"id"`
+	ClientRequestID string                     `json:"clientRequestId"`
+	Status          string                     `json:"status"`
+	Progress        int                        `json:"progress"`
+	Error           string                     `json:"error,omitempty"`
+	Issue           *model.GenerationTaskIssue `json:"issue,omitempty"`
+	ResultMediaIDs  []string                   `json:"resultMediaIds"`
+	Videos          []MediaAccess              `json:"videos"`
 }
 
 func validateVideoTaskRequest(request CreateVideoTaskRequest) error {
@@ -151,9 +154,13 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	inputJSON, _ := json.Marshal(inputs)
 	item := model.VideoGenerationTask{ID: newID("video-task"), OwnerUID: user.UID, ClientRequestID: request.ClientRequestID, RequestHash: requestHash, Status: "queued", ProviderID: provider.ID, ProviderName: provider.Name, ProviderType: provider.Type, ProviderConfig: string(provider.Config), RequestJSON: string(body), InputMediaIDsJSON: string(inputJSON), ResultMediaIDsJSON: "[]", ResultURLsJSON: "[]", Amount: amount, OperationLogID: newID("operation"), CreatedAt: current, UpdatedAt: current, NextPollAt: current, Deadline: current.Add(timeout)}
 	operation := model.OperationLog{ID: item.OperationLogID, ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: user.Roles, Action: "video_generate", Status: model.OperationStatusSubmitted, TargetType: "video_generation", TargetID: item.ID, Prompt: request.Prompt, RequestSummary: string(body), CreatedAt: current}
-	item, err = repository.CreateVideoGenerationTask(item, operation, inputs)
+	replacement, err := taskReplacement(user, "video", request.ReplaceTaskID, request.ClientRequestID, request.ConfirmUncertain)
 	if err != nil {
 		return VideoTaskView{}, err
+	}
+	item, err = repository.CreateVideoGenerationTask(item, operation, inputs, replacement)
+	if err != nil {
+		return VideoTaskView{}, generationReplacementError(err)
 	}
 	return videoGenerationTaskView(ctx, user, item)
 }
@@ -198,14 +205,25 @@ func ResumeVideoGenerationTask(ctx context.Context, id string) (VideoTaskView, e
 	if err != nil {
 		return VideoTaskView{}, err
 	}
+	item, found, err := repository.GetVideoGenerationTask(id, user.UID)
+	if err != nil {
+		return VideoTaskView{}, err
+	}
+	if !found || item.OwnerUID != user.UID {
+		return VideoTaskView{}, safeMessageError{message: "任务不存在"}
+	}
+	credentials, err := refreshedGenerationCredentials(item.ProviderID, item.ProviderType, item.ProviderConfig)
+	if err != nil {
+		return VideoTaskView{}, err
+	}
 	global, _ := workflowConcurrency()
-	if err := repository.ResumeVideoGenerationTask(id, user.UID, time.Now().UTC(), timeout, global); err != nil {
+	if err := repository.ResumeVideoGenerationTask(id, user.UID, time.Now().UTC(), timeout, global, credentials); err != nil {
 		return VideoTaskView{}, generationResumeError(err)
 	}
 	return GetVideoGenerationTask(ctx, id)
 }
 func videoGenerationTaskView(ctx context.Context, user PortalUser, item model.VideoGenerationTask) (VideoTaskView, error) {
-	view := VideoTaskView{ID: item.ID, ClientRequestID: item.ClientRequestID, Status: item.Status, Progress: item.Progress, Error: item.Error, ResultMediaIDs: []string{}, Videos: []MediaAccess{}}
+	view := VideoTaskView{ID: item.ID, ClientRequestID: item.ClientRequestID, Status: item.Status, Progress: item.Progress, Error: item.Error, Issue: videoGenerationTaskIssue(item), ResultMediaIDs: []string{}, Videos: []MediaAccess{}}
 	if err := json.Unmarshal([]byte(item.ResultMediaIDsJSON), &view.ResultMediaIDs); err != nil {
 		return view, err
 	}

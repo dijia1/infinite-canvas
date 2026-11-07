@@ -51,7 +51,7 @@ func TestUncertainWorkflowTasksReleaseGlobalCapacityAndReserveItOnResume(t *test
 	if err := db.Model(&model.WorkflowOutputAttempt{}).Where("id IN ?", []string{"run-1-attempt", "run-2-attempt", "run-3-attempt"}).Update("status", "running").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4); !errors.Is(err, ErrWorkflowCapacity) {
+	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4, ""); !errors.Is(err, ErrWorkflowCapacity) {
 		t.Fatalf("resume exceeded capacity: %v", err)
 	}
 	stored, _, _ := GetImageGenerationTask(task.ID)
@@ -61,14 +61,14 @@ func TestUncertainWorkflowTasksReleaseGlobalCapacityAndReserveItOnResume(t *test
 	if err := db.Model(&model.WorkflowOutputAttempt{}).Where("id = ?", "run-3-attempt").Update("status", "failed").Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4); err != nil {
+	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4, ""); err != nil {
 		t.Fatal(err)
 	}
 	var resumed model.WorkflowOutputAttempt
 	if err := db.First(&resumed, "id = ?", "run-0-attempt").Error; err != nil || resumed.Status != "running" || resumed.RequestID != "run-0-task-request" || resumed.TaskID != task.ID {
 		t.Fatalf("resumed attempt=%+v err=%v", resumed, err)
 	}
-	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4); err == nil {
+	if err := ResumeImageGenerationTask(task.ID, task.OwnerUID, current, time.Hour, 4, ""); err == nil {
 		t.Fatal("duplicate resume accepted")
 	}
 	stored, _, _ = GetImageGenerationTask(task.ID)

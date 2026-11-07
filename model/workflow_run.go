@@ -42,15 +42,17 @@ type WorkflowStepExecution struct {
 }
 
 type WorkflowOutputExecution struct {
-	RunID          string    `json:"runId" gorm:"primaryKey;size:128"`
-	NodeID         string    `json:"nodeId" gorm:"primaryKey;size:128"`
-	SlotID         string    `json:"slotId" gorm:"primaryKey;size:128"`
-	Status         string    `json:"status" gorm:"index"`
-	Attempt        int       `json:"attempt"`
-	MediaID        string    `json:"mediaId,omitempty"`
-	Error          string    `json:"error,omitempty"`
-	RetryRequestID string    `json:"-" gorm:"size:128"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	RunID          string               `json:"runId" gorm:"primaryKey;size:128"`
+	NodeID         string               `json:"nodeId" gorm:"primaryKey;size:128"`
+	SlotID         string               `json:"slotId" gorm:"primaryKey;size:128"`
+	Status         string               `json:"status" gorm:"index"`
+	Attempt        int                  `json:"attempt"`
+	MediaID        string               `json:"mediaId,omitempty"`
+	Error          string               `json:"error,omitempty"`
+	RetryRequestID string               `json:"-" gorm:"size:128"`
+	UpdatedAt      time.Time            `json:"updatedAt"`
+	TaskStatus     string               `json:"taskStatus,omitempty" gorm:"-"`
+	Issue          *GenerationTaskIssue `json:"issue,omitempty" gorm:"-"`
 }
 
 type WorkflowOutputAttempt struct {

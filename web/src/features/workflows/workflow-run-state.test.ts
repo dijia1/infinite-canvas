@@ -43,10 +43,10 @@ test("offers original-task resume only when the backend marks an uncertain video
     assert.equal(workflowResumeTaskID(detail, detail.outputs[1]), "image-task");
     assert.equal(workflowResumeTaskID({ ...resumable, run: { ...resumable.run, status: "running" } }, resumable.outputs[0]), undefined);
     assert.equal(workflowResumeTaskID({ ...resumable, attempts: resumable.attempts.filter((attempt) => attempt.attempt === 1) }, resumable.outputs[0]), undefined);
-    assert.match(workflowRunAttentionText(detail), /恢复原任务继续查询/);
+    assert.match(workflowRunAttentionText(detail), /恢复查询.*继续处理原任务/);
     const needsConfirmation = { ...detail, attempts: detail.attempts.map(({ resumeTaskId: _, ...attempt }) => attempt) };
     assert.match(workflowRunAttentionText(needsConfirmation), /可在对应输出选择“重新生成”/);
-    assert.match(workflowRunAttentionText(resumable), /恢复原任务继续查询/);
+    assert.match(workflowRunAttentionText(resumable), /恢复查询.*继续处理原任务/);
 });
 
 test("labels run history from its immutable scope snapshot", () => {

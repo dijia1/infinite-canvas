@@ -238,7 +238,8 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 		if providerTaskID == "" {
 			failImageTask(ctx, item, err)
 		} else {
-			releaseImageTaskForRetry(item, "图片供应商暂时不可用，系统将继续查询原任务")
+			item.ErrorKind, item.ErrorStage = ai.TaskIssueConfiguration, "query"
+			pauseImageTask(item, "供应商配置不可用，请修正后恢复查询")
 		}
 		return
 	}
@@ -335,9 +336,20 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 				releaseImageTask(item, "图片任务等待中断，系统将继续查询原任务", false)
 				return
 			}
-			releaseImageTaskForRetry(item, "图片任务查询失败，系统将继续查询原任务")
+			item.ErrorKind, item.ErrorStage = "", "query"
+			kind, message := generationQueryIssue(pollErr)
+			item.ErrorKind = kind
+			switch kind {
+			case ai.TaskIssueConfiguration:
+				pauseImageTask(item, message)
+			case ai.TaskIssueMissing, ai.TaskIssueUnknown:
+				markImageTaskUncertain(item, message)
+			default:
+				releaseImageTaskForRetry(item, message)
+			}
 			return
 		}
+		item.ErrorStage = "query"
 		if urls, failure, terminal := imageTaskTerminalResult(remote); terminal {
 			if failure != nil {
 				if imageTaskProviderFailed(remote) {
@@ -352,11 +364,12 @@ func executeImageTask(ctx context.Context, item model.ImageGenerationTask) {
 			completeImageTask(ctx, item, urls)
 			return
 		}
-		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "poll_failures": 0, "error_message": "", "updated_at": now()}); err != nil {
+		if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{"status": model.ImageTaskRunning, "progress": clampTaskProgress(remote.Progress), "poll_failures": 0, "error_message": "", "error_kind": "", "error_stage": "", "updated_at": now()}); err != nil {
 			log.Printf("image task %s progress update failed: %v", item.ID, err)
 			return
 		}
 		item.PollFailures = 0
+		item.ErrorKind, item.ErrorStage = "", ""
 		if !waitForImageTask(ctx, imageTaskPollInterval) {
 			releaseImageTask(item, "图片任务等待中断，系统将继续查询原任务", false)
 			return
@@ -446,6 +459,7 @@ func completeImageTask(ctx context.Context, item model.ImageGenerationTask, urls
 }
 
 func completeImageTaskResults(ctx context.Context, item model.ImageGenerationTask, results []ai.ImageResult) {
+	item.ErrorStage = "save"
 	userContext := WithPortalUser(ctx, PortalUser{UID: item.OwnerUID})
 	prepared, err := prepareImageTaskResultMedia(userContext, results)
 	if err != nil {
@@ -489,7 +503,7 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 	message := imageTaskFailureMessage(reason)
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
 		"status": model.ImageTaskFailed, "error_message": message, "claim_id": "", "lease_until": nil, "updated_at": now(), "finished_at": now(),
-		"provider_config": "",
+		"provider_config": "", "error_kind": "", "error_stage": "",
 	}); err != nil {
 		log.Printf("image task %s failure update failed: %v", item.ID, err)
 		return
@@ -501,8 +515,14 @@ func failImageTask(ctx context.Context, item model.ImageGenerationTask, reason e
 }
 
 func markImageTaskUncertain(item model.ImageGenerationTask, message string) {
+	if item.ErrorKind == "" {
+		item.ErrorKind = ai.TaskIssueUnknown
+	}
+	if item.ErrorStage == "" {
+		item.ErrorStage = "submit"
+	}
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
-		"status": model.ImageTaskUncertain, "error_message": message, "claim_id": "", "lease_until": nil, "updated_at": now(),
+		"status": model.ImageTaskUncertain, "error_message": message, "error_kind": item.ErrorKind, "error_stage": item.ErrorStage, "claim_id": "", "lease_until": nil, "updated_at": now(),
 	}); err != nil {
 		log.Printf("image task %s uncertain update failed: %v", item.ID, err)
 		return
@@ -515,12 +535,22 @@ func markImageTaskUncertain(item model.ImageGenerationTask, message string) {
 }
 
 func releaseImageTaskForRetry(item model.ImageGenerationTask, message string) {
+	item.ErrorKind = ai.TaskIssueTransient
+	if item.ErrorStage == "" {
+		item.ErrorStage = "query"
+	}
 	releaseImageTask(item, message, true)
 }
 
 func pauseImageTask(item model.ImageGenerationTask, message string) {
+	if item.ErrorKind == "" {
+		item.ErrorKind = ai.TaskIssueTransient
+	}
+	if item.ErrorStage == "" {
+		item.ErrorStage = "query"
+	}
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
-		"status": model.ImageTaskPaused, "error_message": message, "claim_id": "", "lease_until": nil, "poll_failures": item.PollFailures, "updated_at": now(),
+		"status": model.ImageTaskPaused, "error_message": message, "error_kind": item.ErrorKind, "error_stage": item.ErrorStage, "claim_id": "", "lease_until": nil, "poll_failures": item.PollFailures, "updated_at": now(),
 	}); err != nil {
 		log.Printf("image task pause failed id=%s category=%s", item.ID, TaskErrorCategory(err))
 	}
@@ -545,7 +575,7 @@ func releaseImageTask(item model.ImageGenerationTask, message string, failure bo
 		delay = imageTaskFailureRetryBase * time.Duration(item.PollFailures)
 	}
 	if err := repository.UpdateClaimedImageGenerationTask(item, map[string]any{
-		"status": model.ImageTaskRunning, "error_message": message, "claim_id": "", "lease_until": current.Add(delay), "poll_failures": item.PollFailures, "updated_at": current.Format(time.RFC3339Nano),
+		"status": model.ImageTaskRunning, "error_message": message, "error_kind": item.ErrorKind, "error_stage": item.ErrorStage, "claim_id": "", "lease_until": current.Add(delay), "poll_failures": item.PollFailures, "updated_at": current.Format(time.RFC3339Nano),
 	}); err != nil {
 		log.Printf("image task %s release for retry failed: %v", item.ID, err)
 	}

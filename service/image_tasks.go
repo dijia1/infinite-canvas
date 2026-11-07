@@ -21,6 +21,8 @@ const (
 )
 
 type CreateImageTaskRequest struct {
+	ReplaceTaskID     string
+	ConfirmUncertain  bool
 	ClientRequestID   string
 	ProviderID        string
 	Mode              string
@@ -32,12 +34,13 @@ type CreateImageTaskRequest struct {
 }
 
 type ImageTaskView struct {
-	ID              string        `json:"id"`
-	ClientRequestID string        `json:"clientRequestId"`
-	Status          string        `json:"status"`
-	Progress        int           `json:"progress"`
-	Error           string        `json:"error,omitempty"`
-	Images          []MediaAccess `json:"images"`
+	ID              string                     `json:"id"`
+	ClientRequestID string                     `json:"clientRequestId"`
+	Status          string                     `json:"status"`
+	Progress        int                        `json:"progress"`
+	Error           string                     `json:"error,omitempty"`
+	Issue           *model.GenerationTaskIssue `json:"issue,omitempty"`
+	Images          []MediaAccess              `json:"images"`
 }
 
 // CreateImageTask persists one image request before a worker contacts the
@@ -175,13 +178,21 @@ func CreateImageTask(ctx context.Context, request CreateImageTaskRequest) (Image
 		Action: imageTaskAction(item), Status: model.OperationStatusSubmitted, TargetType: "image_generation", TargetID: item.ID,
 		Prompt: item.Prompt, RequestSummary: requestSummary, CreatedAt: time.Now().UTC(),
 	}
-	created, inserted, err := repository.CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, snapshotInputs)
+	replacement, err := taskReplacement(user, "image", request.ReplaceTaskID, request.ClientRequestID, request.ConfirmUncertain)
 	if err != nil {
 		_ = DeleteImageTaskInputs(ctx, legacyInputs)
 		return ImageTaskView{}, err
 	}
+	created, inserted, err := repository.CreateImageGenerationTaskWithInputsAndOperationLog(item, operation, snapshotInputs, replacement)
+	if err != nil {
+		_ = DeleteImageTaskInputs(ctx, legacyInputs)
+		return ImageTaskView{}, generationReplacementError(err)
+	}
 	if !inserted {
 		_ = DeleteImageTaskInputs(ctx, legacyInputs)
+	}
+	if inserted && replacement != nil {
+		cleanupClosedImageTask(ctx, replacement.TaskID)
 	}
 	return imageTaskView(ctx, user, created)
 }
@@ -426,8 +437,19 @@ func ResumeImageGenerationTask(ctx context.Context, id string) (ImageTaskView, e
 	if err != nil {
 		return ImageTaskView{}, err
 	}
+	item, found, err := repository.GetImageGenerationTask(id)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
+	if !found || item.OwnerUID != user.UID {
+		return ImageTaskView{}, safeMessageError{message: "任务不存在"}
+	}
+	credentials, err := refreshedGenerationCredentials(item.ProviderID, item.ProviderType, item.ProviderConfig)
+	if err != nil {
+		return ImageTaskView{}, err
+	}
 	global, _ := workflowConcurrency()
-	if err := repository.ResumeImageGenerationTask(id, user.UID, time.Now().UTC(), timeout, global); err != nil {
+	if err := repository.ResumeImageGenerationTask(id, user.UID, time.Now().UTC(), timeout, global, credentials); err != nil {
 		return ImageTaskView{}, generationResumeError(err)
 	}
 	return GetImageTask(ctx, id)
@@ -451,7 +473,7 @@ func GetImageTaskByClientRequest(ctx context.Context, clientRequestID string) (I
 func imageTaskView(ctx context.Context, user PortalUser, item model.ImageGenerationTask) (ImageTaskView, error) {
 	view := ImageTaskView{
 		ID: item.ID, ClientRequestID: item.ClientRequestID, Status: string(item.Status), Progress: item.Progress,
-		Error: strings.TrimSpace(item.ErrorMessage), Images: []MediaAccess{},
+		Error: strings.TrimSpace(item.ErrorMessage), Issue: imageGenerationTaskIssue(item), Images: []MediaAccess{},
 	}
 	if item.Status == model.ImageTaskPreparing {
 		view.Status = string(model.ImageTaskQueued)

@@ -1,3 +1,4 @@
+import type { GenerationTaskIssue, GenerationTaskStatus } from "@/lib/generation-task-state";
 import type { CanvasFrameData } from "@/lib/canvas-frame";
 
 export type WorkflowMediaType = "image" | "video" | "text";
@@ -115,6 +116,8 @@ export type WorkflowOutputExecution = {
     mediaId?: string;
     error?: string;
     updatedAt: string;
+    taskStatus?: GenerationTaskStatus;
+    issue?: GenerationTaskIssue;
 };
 
 export type WorkflowOutputAttempt = {

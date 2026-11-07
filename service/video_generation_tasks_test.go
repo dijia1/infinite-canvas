@@ -241,7 +241,7 @@ func pauseVideoAfterFivePollFailures(t *testing.T, id string, ownerUID string, c
 		Status:    model.OperationStatusSubmitted,
 		CreatedAt: current,
 	}
-	if _, err := repository.CreateVideoGenerationTask(item, operation, nil); err != nil {
+	if _, err := repository.CreateVideoGenerationTask(item, operation, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -344,7 +344,7 @@ func TestVideoWorkerDownloadFailurePausesAndResumesOriginalTask(t *testing.T) {
 	if got.Status != "paused" || got.ProviderTaskID != "upstream" || calls != 0 {
 		t.Fatal(got.Status, calls)
 	}
-	if err := repository.ResumeVideoGenerationTask(item.ID, item.OwnerUID, current, time.Hour, 4); err != nil {
+	if err := repository.ResumeVideoGenerationTask(item.ID, item.OwnerUID, current, time.Hour, 4, ""); err != nil {
 		t.Fatal(err)
 	}
 	got = readWorkerVideo(t, item)
