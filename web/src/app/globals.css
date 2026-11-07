@@ -316,6 +316,10 @@
     font-size: 12px;
 }
 
+.canvas-config-full .canvas-config-model .ant-select {
+    height: 36px;
+}
+
 .canvas-config-compact-settings.ant-btn {
     flex: 1 1 auto;
     justify-content: flex-start;
