@@ -17,8 +17,11 @@ func privateImageTitle(item model.Media) string {
 		return title
 	}
 	name := strings.TrimSuffix(filepath.Base(item.Filename), filepath.Ext(item.Filename))
-	if strings.TrimSpace(name) != "" {
+	if name = strings.TrimSpace(name); name != "" && name != "." {
 		return name
+	}
+	if strings.HasPrefix(item.ContentType, "video/") {
+		return "视频"
 	}
 	return "图片"
 }
@@ -55,7 +58,7 @@ func UpdatePrivateImage(_ context.Context, user PortalUser, id string, title *st
 		return model.Media{}, err
 	}
 	if !found || item.OwnerUID != user.UID {
-		return model.Media{}, safeMessageError{message: "图片不存在"}
+		return model.Media{}, safeMessageError{message: "素材不存在"}
 	}
 	if _, public, err := repository.GetPublicImageByMediaID(id); err != nil {
 		return model.Media{}, err
@@ -81,7 +84,7 @@ func UpdatePrivateImage(_ context.Context, user PortalUser, id string, title *st
 		return model.Media{}, err
 	}
 	if !found {
-		return model.Media{}, safeMessageError{message: "图片不存在"}
+		return model.Media{}, safeMessageError{message: "素材不存在"}
 	}
 	updated.Title = privateImageTitle(updated)
 	return updated, nil
@@ -142,7 +145,7 @@ func DeletePrivateFolder(_ context.Context, user PortalUser, id string) error {
 	deleted, err := repository.DeletePrivateFolder(user.UID, id)
 	if err != nil {
 		if errors.Is(err, repository.ErrPrivateFolderNotEmpty) {
-			return safeMessageError{message: "文件夹包含图片或子文件夹，请先整理内容"}
+			return safeMessageError{message: "文件夹包含素材或子文件夹，请先整理内容"}
 		}
 		return err
 	}

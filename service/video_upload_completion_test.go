@@ -18,8 +18,20 @@ import (
 )
 
 func TestVideoUploadCompletionAndShareCopyInsideOSSWithoutDownload(t *testing.T) {
-	for _, rejectCopy := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reject-copy-%v", rejectCopy), func(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		intent     string
+		rejectCopy bool
+	}{
+		{name: "canvas", intent: "canvas"},
+		{name: "library", intent: "library"},
+		{name: "default-library"},
+		{name: "legacy-canvas", intent: "CANVAS"},
+		{name: "canvas-copy-rejected", intent: "canvas", rejectCopy: true},
+		{name: "library-copy-rejected", intent: "library", rejectCopy: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rejectCopy := test.rejectCopy
 			const bytes = 80 << 20 // Exceeds the old image/video limit without allocating a large fixture.
 			source := newID("video-source") + ".mp4"
 			var mu sync.Mutex
@@ -85,7 +97,7 @@ func TestVideoUploadCompletionAndShareCopyInsideOSSWithoutDownload(t *testing.T)
 			config.Cfg.OSSAccessKeySecret = "fake"
 			config.Cfg.OSSSignedURLTTL = "15m"
 			user := PortalUser{UID: newID("video-owner")}
-			intent := model.MediaUploadIntent{ID: newID("video-upload"), OwnerUID: user.UID, ObjectKey: source, Filename: "input.mp4", ContentType: "video/mp4", ExpectedBytes: bytes, Intent: "canvas", ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
+			intent := model.MediaUploadIntent{ID: newID("video-upload"), OwnerUID: user.UID, ObjectKey: source, Filename: "input.mp4", ContentType: "video/mp4", ExpectedBytes: bytes, Intent: test.intent, ExpiresAt: time.Now().Add(time.Hour).UTC().Format(time.RFC3339Nano), CreatedAt: now()}
 			if err := repository.SaveMediaUploadIntent(intent); err != nil {
 				t.Fatal(err)
 			}
@@ -106,6 +118,17 @@ func TestVideoUploadCompletionAndShareCopyInsideOSSWithoutDownload(t *testing.T)
 				item, found, err := repository.GetMedia(access.MediaID)
 				if err != nil || !found || item.ObjectVersionID != "final-version" || item.ObjectETag != "final-etag" || access.Duration != 16.25 || access.Width != 720 || access.Height != 1280 || access.Bytes != bytes {
 					t.Fatalf("wrong bound video: %+v %v", item, err)
+				}
+				temporary := strings.EqualFold(test.intent, "canvas")
+				if temporary != (item.ExpiresAt != nil) || temporary != (access.MediaExpiresAt != nil) {
+					t.Fatalf("intent %q: unexpected media expiry: stored=%v access=%v", test.intent, item.ExpiresAt, access.MediaExpiresAt)
+				}
+				if temporary && (item.ExpiresAt.Before(time.Now().Add(24*time.Hour-time.Minute)) || item.ExpiresAt.After(time.Now().Add(24*time.Hour))) {
+					t.Fatalf("canvas upload expiry = %v, want 24 hours", item.ExpiresAt)
+				}
+				library, err := ListPrivateImages(context.Background(), user, "video")
+				if err != nil || temporary && len(library.Items) != 0 || !temporary && (len(library.Items) != 1 || library.Items[0].ID != item.ID) {
+					t.Fatalf("intent %q: private videos = %+v, error=%v", test.intent, library, err)
 				}
 				again, created, err := CompleteMediaUploadIntent(context.Background(), user, intent.ID, MediaUploadCompletionInput{})
 				if err != nil || created || again.MediaID != access.MediaID {

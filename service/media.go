@@ -218,8 +218,11 @@ func CompleteMediaUploadIntent(ctx context.Context, user PortalUser, id string, 
 		defer cancel()
 		item.Duration, item.Width, item.Height = input.Duration, input.Width, input.Height
 		item.ObjectKey = intent.FinalObjectKey
-		expiry := time.Now().UTC().Add(24 * time.Hour)
-		item.ExpiresAt = &expiry
+		// Canvas uploads are temporary until saved; library uploads are formal assets.
+		if strings.EqualFold(intent.Intent, "canvas") {
+			expiry := completedAt.Add(24 * time.Hour)
+			item.ExpiresAt = &expiry
+		}
 		// Copy the HEAD-bound version inside OSS. Uploaded video bytes never
 		// pass through this server; the browser supplies playback metadata.
 		versioned, ok := store.(versionedImageStore)
@@ -448,7 +451,7 @@ func DeletePrivateMedia(ctx context.Context, user PortalUser, id string) error {
 		return privateMediaDeleteFailure(id, err)
 	}
 	if !allowed {
-		return safeMessageError{message: "无权删除该图片"}
+		return safeMessageError{message: "无权删除该素材"}
 	}
 	_, isPublic, err := repository.GetPublicImageByMediaID(item.ID)
 	if err != nil {

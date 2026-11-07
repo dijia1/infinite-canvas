@@ -288,9 +288,9 @@ func videoResultMedia(item model.VideoGenerationTask, output videoOutputReservat
 		return model.Media{}, safeMessageError{message: "视频大小无效，最大 100 MB"}
 	}
 	current := time.Now().UTC()
-	expiry := current.Add(24 * time.Hour)
+	// Generated results enter the private library like generated images.
 	// Duration follows the generation request. Actual pixel dimensions remain
 	// unknown; the canvas already retains the selected generation aspect ratio.
-	media := model.Media{ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: "video/mp4", Bytes: metadata.Bytes, Duration: float64(seconds), Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), ExpiresAt: &expiry, CleanupStatus: model.MediaCleanupActive}
+	media := model.Media{ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: "video/mp4", Bytes: metadata.Bytes, Duration: float64(seconds), Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), CleanupStatus: model.MediaCleanupActive}
 	return media, nil
 }

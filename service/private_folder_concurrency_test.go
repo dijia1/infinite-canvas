@@ -197,7 +197,7 @@ func TestPrivateFolderChildCreationMakesConcurrentDeleteRefuse(t *testing.T) {
 	if create.err != nil {
 		t.Fatalf("create child: %v", create.err)
 	}
-	if got := fmt.Sprint(remove.err); got != "文件夹包含图片或子文件夹，请先整理内容" {
+	if got := fmt.Sprint(remove.err); got != "文件夹包含素材或子文件夹，请先整理内容" {
 		t.Fatalf("delete error = %q", got)
 	}
 	if _, found, err := repository.GetPrivateFolder(owner, parent.ID); err != nil || !found {
@@ -253,7 +253,7 @@ func TestPrivateMediaMoveMakesConcurrentFolderDeleteRefuse(t *testing.T) {
 	if move.err != nil {
 		t.Fatalf("move media: %v", move.err)
 	}
-	if got := fmt.Sprint(remove.err); got != "文件夹包含图片或子文件夹，请先整理内容" {
+	if got := fmt.Sprint(remove.err); got != "文件夹包含素材或子文件夹，请先整理内容" {
 		t.Fatalf("delete error = %q", got)
 	}
 	stored, found, err := repository.GetMedia(media.ID)

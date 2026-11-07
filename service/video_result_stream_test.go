@@ -115,6 +115,22 @@ func TestGeneratedVideoStreamsToOSSAndRecoversWithoutProbeOrDownload(t *testing.
 			if err != nil || !found || media.Duration != 5 || media.Width != 0 || media.Height != 0 || media.Bytes != int64(len(first)+len(last)) || media.ObjectVersionID != "result-version" {
 				t.Fatalf("wrong result metadata: %+v %v", media, err)
 			}
+			if media.ExpiresAt != nil {
+				t.Fatalf("generated video must enter the formal library: expires=%v", media.ExpiresAt)
+			}
+			library, err := ListPrivateImages(ctx, PortalUser{UID: item.OwnerUID}, "video")
+			if err != nil {
+				t.Fatal(err)
+			}
+			inLibrary := false
+			for _, saved := range library.Items {
+				if saved.ID == output.ID {
+					inLibrary = true
+				}
+			}
+			if !inLibrary {
+				t.Fatalf("generated video missing from library: %+v", library)
+			}
 			item.ResultURLsJSON = `["https://expired.invalid/video.mp4"]`
 			results, err := saveVideoTaskResults(ctx, item)
 			if err != nil || len(results) != 1 || results[0].ID != output.ID {
