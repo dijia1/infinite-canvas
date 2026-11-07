@@ -1,7 +1,7 @@
 import type { WorkflowRunScope } from "./types";
 
 export type PendingWorkflowRunRequest = { workflowId: string; revision: number; requestId: string; scope: WorkflowRunScope };
-export type PendingWorkflowRetryRequest = { runId: string; nodeId: string; slotId: string; attempt: number; requestId: string };
+export type PendingWorkflowRetryRequest = { runId: string; nodeId: string; slotId: string; attempt: number; requestId: string; confirmUncertain?: boolean };
 type RequestStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 const memoryRunRequests = new Map<string, PendingWorkflowRunRequest>();

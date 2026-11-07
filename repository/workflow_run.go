@@ -465,12 +465,18 @@ func RequestWorkflowRunStop(ownerUID, id string, current time.Time) (bool, error
 	return result.RowsAffected > 0, result.Error
 }
 
-func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string, current time.Time) (model.WorkflowOutputExecution, error) {
+type WorkflowOutputRetryResult struct {
+	Output            model.WorkflowOutputExecution
+	ClosedImageTaskID string
+}
+
+func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string, confirmation *model.OperationLog, current time.Time) (WorkflowOutputRetryResult, error) {
 	database, err := DB()
 	if err != nil {
-		return model.WorkflowOutputExecution{}, err
+		return WorkflowOutputRetryResult{}, err
 	}
 	output := model.WorkflowOutputExecution{}
+	closedImageTaskID := ""
 	err = database.Transaction(func(tx *gorm.DB) error {
 		var run model.WorkflowRun
 		if err := tx.Where("owner_uid = ? AND id = ?", ownerUID, runID).First(&run).Error; err != nil {
@@ -504,7 +510,7 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 		if run.StopRequested || run.Status == "stopped" {
 			return ErrWorkflowRunActive
 		}
-		if output.Status != "failed" {
+		if output.Status != "failed" && (output.Status != "uncertain" || confirmation == nil) {
 			return ErrWorkflowRunActive
 		}
 		var steps []model.WorkflowStepExecution
@@ -516,6 +522,46 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 		} else if conflict != nil {
 			return conflict
 		}
+		if output.Status == "uncertain" {
+			var attempt model.WorkflowOutputAttempt
+			if err := tx.Where("run_id = ? AND node_id = ? AND slot_id = ? AND attempt = ? AND owner_uid = ?", runID, nodeID, slotID, output.Attempt, ownerUID).First(&attempt).Error; err != nil {
+				return err
+			}
+			if attempt.Status != "uncertain" {
+				return ErrGenerationTaskResolutionConflict
+			}
+			table := "image_generation_tasks"
+			if attempt.TaskType == "video" {
+				table = "video_generation_tasks"
+			}
+			// A timed-out create response may not have linked the local task yet.
+			taskID := attempt.TaskID
+			if taskID == "" {
+				var task struct{ ID string }
+				if err := tx.Table(table).Where("owner_uid = ? AND client_request_id = ?", ownerUID, attempt.RequestID).Limit(1).Find(&task).Error; err != nil {
+					return err
+				}
+				taskID = task.ID
+			}
+			if taskID != "" {
+				if err := resolveGenerationTask(tx, attempt.TaskType, taskID, ownerUID, "close", "", current, 0, 0, *confirmation); err != nil {
+					return err
+				}
+				if attempt.TaskType == "image" {
+					closedImageTaskID = taskID
+				}
+			} else if err := tx.Create(confirmation).Error; err != nil {
+				return err
+			}
+			result := tx.Model(&attempt).Where("status = 'uncertain' AND (lease_until IS NULL OR lease_until <= ?)", current).
+				Updates(map[string]any{"status": "failed", "error": "用户已确认结束原尝试并重新生成", "task_id": taskID, "claim_id": "", "lease_until": nil, "finished_at": current, "updated_at": current})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected != 1 {
+				return ErrGenerationTaskResolutionConflict
+			}
+		}
 		output.Attempt++
 		output.Status, output.Error, output.MediaID, output.RetryRequestID, output.UpdatedAt = "waiting", "", "", retryRequestID, current
 		if err := tx.Save(&output).Error; err != nil {
@@ -523,7 +569,7 @@ func RetryWorkflowOutput(ownerUID, runID, nodeID, slotID, retryRequestID string,
 		}
 		return tx.Model(&model.WorkflowRun{}).Where("id = ?", runID).Updates(map[string]any{"status": "running", "finished_at": nil, "updated_at": current, "state_version": gorm.Expr("state_version + 1")}).Error
 	})
-	return output, err
+	return WorkflowOutputRetryResult{Output: output, ClosedImageTaskID: closedImageTaskID}, err
 }
 
 func workflowRunConflict(tx *gorm.DB, candidate model.WorkflowRun, steps []model.WorkflowStepExecution, excludeRunID string) (*WorkflowRunAdmissionConflict, error) {

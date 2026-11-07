@@ -28,6 +28,7 @@ const actionLabels: Record<string, string> = {
     image_edit: "图片编辑",
     video_generate: "视频生成",
     generation_task_resolution: "核对生成任务",
+    workflow_output_retry: "重新生成流程输出",
     private_image_upload: "上传私人图片",
     private_image_delete: "删除私人图片",
     public_image_upload: "上传公共图片",

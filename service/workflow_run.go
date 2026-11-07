@@ -19,9 +19,10 @@ type CreateWorkflowRunInput struct {
 }
 
 type RetryWorkflowOutputInput struct {
-	RequestID string `json:"requestId"`
-	NodeID    string `json:"nodeId"`
-	SlotID    string `json:"slotId"`
+	RequestID        string `json:"requestId"`
+	NodeID           string `json:"nodeId"`
+	SlotID           string `json:"slotId"`
+	ConfirmUncertain bool   `json:"confirmUncertain,omitempty"`
 }
 
 type WorkflowRunDetail struct {
@@ -367,7 +368,7 @@ func StopWorkflowRun(_ context.Context, user PortalUser, id string) (WorkflowRun
 	return GetWorkflowRun(context.Background(), user, id)
 }
 
-func RetryWorkflowOutput(_ context.Context, user PortalUser, id string, input RetryWorkflowOutputInput) (WorkflowRunDetail, error) {
+func RetryWorkflowOutput(ctx context.Context, user PortalUser, id string, input RetryWorkflowOutputInput) (WorkflowRunDetail, error) {
 	if !workflowsEnabled() {
 		return WorkflowRunDetail{}, workflowValidationError{message: "自动化流程运行暂不可用"}
 	}
@@ -382,13 +383,25 @@ func RetryWorkflowOutput(_ context.Context, user PortalUser, id string, input Re
 	if requestID == "" || nodeID == "" || slotID == "" || len(requestID) > 128 || len(nodeID) > 128 || len(slotID) > 128 {
 		return WorkflowRunDetail{}, workflowValidationError{message: "重试槽位无效"}
 	}
-	if _, err := repository.RetryWorkflowOutput(user.UID, id, nodeID, slotID, requestID, time.Now().UTC()); err != nil {
+	current := time.Now().UTC()
+	var confirmation *model.OperationLog
+	if input.ConfirmUncertain {
+		summary, err := json.Marshal(RetryWorkflowOutputInput{RequestID: requestID, NodeID: nodeID, SlotID: slotID, ConfirmUncertain: true})
+		if err != nil {
+			return WorkflowRunDetail{}, err
+		}
+		confirmation = &model.OperationLog{ID: newID("operation"), ActorUID: user.UID, ActorName: PortalDisplayName(user), ActorRoles: append([]string{}, user.Roles...), Action: "workflow_output_retry", Status: model.OperationStatusSuccess, TargetType: "workflow_run", TargetID: id, RequestSummary: string(summary), CreatedAt: current}
+	}
+	result, err := repository.RetryWorkflowOutput(user.UID, id, nodeID, slotID, requestID, confirmation, current)
+	if err != nil {
 		var conflict *repository.WorkflowRunAdmissionConflict
 		switch {
 		case errors.Is(err, repository.ErrWorkflowRunNotFound):
 			return WorkflowRunDetail{}, safeMessageError{message: "运行记录不存在"}
 		case errors.Is(err, repository.ErrWorkflowRunActive):
-			return WorkflowRunDetail{}, workflowValidationError{message: "当前槽位不可重试"}
+			return WorkflowRunDetail{}, workflowValidationError{message: "当前槽位不可重试，提交结果不确定时请先确认重新生成"}
+		case errors.Is(err, repository.ErrGenerationTaskResolutionConflict):
+			return WorkflowRunDetail{}, workflowValidationError{message: "任务状态已变化或正在更新，请刷新后重试"}
 		case errors.As(err, &conflict):
 			data := map[string]any{"runId": conflict.RunID, "workflowRunId": id, "nodeId": nodeID, "slotId": slotID}
 			if len(conflict.NodeIDs) > 0 {
@@ -399,7 +412,10 @@ func RetryWorkflowOutput(_ context.Context, user PortalUser, id string, input Re
 			return WorkflowRunDetail{}, err
 		}
 	}
-	return GetWorkflowRun(context.Background(), user, id)
+	if result.ClosedImageTaskID != "" {
+		cleanupClosedImageTask(ctx, result.ClosedImageTaskID)
+	}
+	return GetWorkflowRun(ctx, user, id)
 }
 
 func DeleteWorkflowRun(_ context.Context, user PortalUser, id string) error {

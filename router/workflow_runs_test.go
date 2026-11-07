@@ -351,3 +351,45 @@ func TestWorkflowRunExpectedRevisionPreventsWrongSnapshotAndPreservesReplay(t *t
 		t.Fatalf("replay duplicated run: count=%d err=%v", count, err)
 	}
 }
+
+func TestWorkflowRunOwnerCanConfirmUncertainRetryWithoutAdmin(t *testing.T) {
+	restore := configureWorkflowRouteRuntime(t)
+	defer restore()
+	owner := fixtureUID("self-retry-owner-" + time.Now().Format("150405.000000000"))
+	seedRouteWorkflowMember(t, owner, true)
+	workflowID := createRouteWorkflow(t, owner, "1k")
+	start := workflowRequest(http.MethodPost, "/api/v1/workflows/"+workflowID+"/runs", owner, `{"requestId":"self-retry-start"}`)
+	var detail struct {
+		Run     model.WorkflowRun               `json:"run"`
+		Outputs []model.WorkflowOutputExecution `json:"outputs"`
+	}
+	if err := json.Unmarshal(workflowResponse(t, start).Data, &detail); err != nil || detail.Run.ID == "" {
+		t.Fatalf("start: %s %v", start.Body.String(), err)
+	}
+	db, _ := repository.DB()
+	current := time.Now().UTC()
+	attempt := model.WorkflowOutputAttempt{ID: "attempt-" + detail.Run.ID, RunID: detail.Run.ID, OwnerUID: owner, NodeID: "generate", SlotID: "slot", Attempt: 1, RequestID: "task-" + detail.Run.ID, TaskType: "image", Status: "uncertain", CreatedAt: current, UpdatedAt: current}
+	if err := db.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.WorkflowOutputExecution{}).Where("run_id = ?", detail.Run.ID).Update("status", "uncertain").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Model(&model.WorkflowRun{}).Where("id = ?", detail.Run.ID).Update("status", "attention_required").Error; err != nil {
+		t.Fatal(err)
+	}
+	path := "/api/v1/workflow-runs/" + detail.Run.ID + "/retry"
+	unconfirmed := workflowRequest(http.MethodPost, path, owner, `{"requestId":"self-retry","nodeId":"generate","slotId":"slot"}`)
+	if workflowResponse(t, unconfirmed).Code == 0 {
+		t.Fatal("unconfirmed retry accepted")
+	}
+	for click := 0; click < 2; click++ {
+		response := workflowRequest(http.MethodPost, path, owner, `{"requestId":"self-retry","nodeId":"generate","slotId":"slot","confirmUncertain":true}`)
+		if workflowResponse(t, response).Code != 0 {
+			t.Fatalf("owner retry rejected: %d %s", response.Code, response.Body.String())
+		}
+		if err := json.Unmarshal(workflowResponse(t, response).Data, &detail); err != nil || len(detail.Outputs) != 1 || detail.Outputs[0].Attempt != 2 {
+			t.Fatalf("retry response: %s %v", response.Body.String(), err)
+		}
+	}
+}

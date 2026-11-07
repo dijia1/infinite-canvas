@@ -153,7 +153,7 @@ func TestRetryWorkflowOutputRejectsCorruptMissingWorkflowIdentity(t *testing.T) 
 	if _, inserted, err := createWorkflowRunFixture(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil || !inserted {
 		t.Fatalf("fixture inserted=%t err=%v", inserted, err)
 	}
-	if _, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-corrupt", now.Add(time.Second)); !errors.Is(err, ErrWorkflowRunCorrupt) {
+	if _, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-corrupt", nil, now.Add(time.Second)); !errors.Is(err, ErrWorkflowRunCorrupt) {
 		t.Fatalf("retry corrupt run error = %v", err)
 	}
 }
@@ -176,7 +176,7 @@ func TestWorkflowRunRetryAndNewAdmissionAreAtomic(t *testing.T) {
 	go func() {
 		defer wait.Done()
 		<-start
-		_, err := RetryWorkflowOutput(owner, old.ID, "a", "slot", "retry-request", time.Now().UTC())
+		_, err := RetryWorkflowOutput(owner, old.ID, "a", "slot", "retry-request", nil, time.Now().UTC())
 		results <- err
 	}()
 	go func() {
@@ -225,7 +225,7 @@ func TestWorkflowRunRetryAndSchedulerClaimDoNotDeadlock(t *testing.T) {
 	results := make(chan error, 2)
 	go func() {
 		<-start
-		_, err := RetryWorkflowOutput(owner, run.ID, "a", "failed-slot", "retry-claim-request", now.Add(time.Second))
+		_, err := RetryWorkflowOutput(owner, run.ID, "a", "failed-slot", "retry-claim-request", nil, now.Add(time.Second))
 		results <- err
 	}()
 	go func() {

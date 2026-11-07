@@ -143,8 +143,8 @@ export function latestWorkflowRun(items: WorkflowRun[] | undefined, workflowId: 
     return items?.find((run) => run.workflowId === workflowId);
 }
 
-export function isRetryableImageOutput(slot: WorkflowOutputSlot, output: WorkflowOutputExecution | undefined, run: WorkflowRun | undefined) {
-    return slot.type === "image" && output?.status === "failed" && Boolean(run && !run.stopRequested && run.status !== "stopped");
+export function isRetryableWorkflowOutput(slot: WorkflowOutputSlot, output: WorkflowOutputExecution | undefined, run: WorkflowRun | undefined) {
+    return (slot.type === "image" || slot.type === "video") && (output?.status === "failed" || output?.status === "uncertain") && Boolean(run && !run.stopRequested && run.status !== "stopped");
 }
 
 export function workflowResumeTaskID(detail: WorkflowRunDetail, output: WorkflowOutputExecution) {
@@ -161,8 +161,8 @@ export function workflowRunAttentionText(detail: WorkflowRunDetail) {
     const uncertain = detail.outputs.filter((output) => output.status === "uncertain");
     const resumable = uncertain.filter((output) => Boolean(workflowResumeTaskID(detail, output)));
     return [
-        resumable.length ? "任务已暂停。请恢复原任务以继续检查，系统不会重新提交生成。" : "",
-        uncertain.length > resumable.length ? "提交结果需要管理员核对。请联系管理员在操作记录中绑定原供应商任务或结案，勿重复生成。" : "",
+        resumable.length ? "任务查询已暂停，可恢复原任务继续查询；也可选择“重新生成”。" : "",
+        uncertain.length > resumable.length ? "提交结果不确定。修正模型配置后，可在对应输出选择“重新生成”。" : "",
     ].filter(Boolean).join(" ");
 }
 

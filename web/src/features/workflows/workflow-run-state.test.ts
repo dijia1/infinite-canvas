@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableImageOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunScopeLabel, workflowRunStatusText, workflowResumeTaskID } from "./workflow-run-state";
+import { findCompatibleWorkflowOutput, findWorkflowOutput, indexWorkflowRunDetailsByNode, isRetryableWorkflowOutput, isWorkflowRunActive, latestWorkflowRun, workflowOutputKey, workflowOutputResourceNodeId, workflowOutputStatusText, workflowRunAttentionText, workflowRunScopeLabel, workflowRunStatusText, workflowResumeTaskID } from "./workflow-run-state";
 import type { WorkflowGraph, WorkflowOutputExecution, WorkflowOutputSlot, WorkflowRun, WorkflowRunDetail } from "./types";
 
 const run = (id: string, workflowId: string, status: WorkflowRun["status"], createdAt: string): WorkflowRun => ({ id, workflowId, status, createdAt, updatedAt: createdAt, requestId: `${id}-request`, revision: 1, title: id, scopeType: "workflow", frameId: "", frameName: "", stopRequested: false });
@@ -43,10 +43,10 @@ test("offers original-task resume only when the backend marks an uncertain video
     assert.equal(workflowResumeTaskID(detail, detail.outputs[1]), "image-task");
     assert.equal(workflowResumeTaskID({ ...resumable, run: { ...resumable.run, status: "running" } }, resumable.outputs[0]), undefined);
     assert.equal(workflowResumeTaskID({ ...resumable, attempts: resumable.attempts.filter((attempt) => attempt.attempt === 1) }, resumable.outputs[0]), undefined);
-    assert.match(workflowRunAttentionText(detail), /请恢复原任务/);
-    const needsAdmin = { ...detail, attempts: detail.attempts.map(({ resumeTaskId: _, ...attempt }) => attempt) };
-    assert.match(workflowRunAttentionText(needsAdmin), /需要管理员核对/);
-    assert.match(workflowRunAttentionText(resumable), /请恢复原任务/);
+    assert.match(workflowRunAttentionText(detail), /恢复原任务继续查询/);
+    const needsConfirmation = { ...detail, attempts: detail.attempts.map(({ resumeTaskId: _, ...attempt }) => attempt) };
+    assert.match(workflowRunAttentionText(needsConfirmation), /可在对应输出选择“重新生成”/);
+    assert.match(workflowRunAttentionText(resumable), /恢复原任务继续查询/);
 });
 
 test("labels run history from its immutable scope snapshot", () => {
@@ -61,16 +61,19 @@ test("selects the latest run for one workflow without mixing deleted definitions
     assert.equal(latestWorkflowRun(items, "missing"), undefined);
 });
 
-test("identifies outputs by node and slot and only retries failed image outputs", () => {
+test("identifies outputs by node and slot and retries failed or uncertain media outputs", () => {
     const outputs = [output("failed"), { ...output("succeeded"), nodeId: "node-2" }];
     assert.equal(workflowOutputKey("node-1", "slot-1"), JSON.stringify(["node-1", "slot-1"]));
     assert.equal(findWorkflowOutput(outputs, "node-2", "slot-1")?.status, "succeeded");
     const image: WorkflowOutputSlot = { id: "slot-1", type: "image" };
     const video: WorkflowOutputSlot = { id: "slot-1", type: "video" };
-    assert.equal(isRetryableImageOutput(image, output("failed"), run("run-1", "workflow-1", "failed", "2026-09-09T00:00:00Z")), true);
-    assert.equal(isRetryableImageOutput(video, output("failed"), run("run-1", "workflow-1", "failed", "2026-09-09T00:00:00Z")), false);
-    assert.equal(isRetryableImageOutput(image, output("uncertain"), run("run-1", "workflow-1", "attention_required", "2026-09-09T00:00:00Z")), false);
-    assert.equal(isRetryableImageOutput(image, output("failed"), { ...run("run-1", "workflow-1", "stopped", "2026-09-09T00:00:00Z"), stopRequested: true }), false);
+    assert.equal(isRetryableWorkflowOutput(image, output("failed"), run("run-1", "workflow-1", "failed", "2026-09-09T00:00:00Z")), true);
+    assert.equal(isRetryableWorkflowOutput(video, output("failed"), run("run-1", "workflow-1", "failed", "2026-09-09T00:00:00Z")), true);
+    assert.equal(isRetryableWorkflowOutput(image, output("uncertain"), run("run-1", "workflow-1", "attention_required", "2026-09-09T00:00:00Z")), true);
+    for (const status of ["running", "succeeded", "stopped", "waiting"] as const) {
+        assert.equal(isRetryableWorkflowOutput(image, output(status), run("run-1", "workflow-1", "running", "2026-09-09T00:00:00Z")), false);
+    }
+    assert.equal(isRetryableWorkflowOutput(image, output("failed"), { ...run("run-1", "workflow-1", "stopped", "2026-09-09T00:00:00Z"), stopRequested: true }), false);
 });
 
 test("keeps legal identifiers with colons collision free", () => {

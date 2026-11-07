@@ -72,16 +72,20 @@ func ResolveGenerationTask(ctx context.Context, kind, id string, input Generatio
 		return generationResumeError(err)
 	}
 	if kind == "image" && input.Action == "close" {
-		item, found, loadErr := repository.GetImageGenerationTask(id)
-		if loadErr != nil {
-			log.Printf("image task %s closed task cleanup lookup failed: %v", id, loadErr)
-		} else if found {
-			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-			defer cancel()
-			if cleanupErr := cleanupImageTaskResources(cleanupCtx, item); cleanupErr != nil {
-				log.Printf("image task %s closed task cleanup deferred category=%s", id, TaskErrorCategory(cleanupErr))
-			}
-		}
+		cleanupClosedImageTask(ctx, id)
 	}
 	return nil
+}
+
+func cleanupClosedImageTask(ctx context.Context, id string) {
+	item, found, loadErr := repository.GetImageGenerationTask(id)
+	if loadErr != nil {
+		log.Printf("image task %s closed task cleanup lookup failed: %v", id, loadErr)
+	} else if found {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if cleanupErr := cleanupImageTaskResources(cleanupCtx, item); cleanupErr != nil {
+			log.Printf("image task %s closed task cleanup deferred category=%s", id, TaskErrorCategory(cleanupErr))
+		}
+	}
 }

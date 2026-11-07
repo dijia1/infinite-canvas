@@ -67,7 +67,7 @@ import { WorkflowImageAssetCard } from "./workflow-image-asset-card";
 import { WorkflowRunDetail } from "./workflow-run-detail";
 import { pendingWorkflowRetryKey, workflowRunScopeKey } from "./workflow-run-requests";
 import { useWorkflowRuns } from "./use-workflow-runs";
-import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableImageOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
+import { workflowDownloadImageCount, indexWorkflowRunOutputsByNode, findCompatibleWorkflowOutput, isRetryableWorkflowOutput, workflowOutputKey, workflowOutputResourceNodeId, workflowRunStatusText } from "./workflow-run-state";
 import { observeWorkflowViewport } from "./workflow-viewport";
 import { buildWorkflowPathData, selectWorkflowViewportScene, workflowConnectionPathCache, workflowOutputLinks, workflowOutputPathCache, workflowSelectedImageResourceIds, workflowVisualRenderDetail } from "./workflow-viewport-rendering";
 import type { WorkflowConnection, WorkflowGraph, WorkflowNode, WorkflowNodeType, WorkflowOutputSlot, WorkflowPosition, WorkflowRunScope } from "./types";
@@ -381,10 +381,24 @@ function WorkflowEditorContent() {
     const startOutputRetry = async (runId: string, nodeId: string, slotId: string) => {
         const key = pendingWorkflowRetryKey({ runId, nodeId, slotId });
         if (retryingKeys.has(key)) return;
-        setRetryingKeys((current) => new Set([...current, key]));
-        try { await runs.retry(runId, nodeId, slotId); message.success("已重新提交失败输出"); }
-        catch (error) { message.error(error instanceof Error ? error.message : "重试请求结果待确认，可再次点击确认"); }
-        finally { setRetryingKeys((current) => new Set([...current].filter((item) => item !== key))); }
+        const submit = async (confirmUncertain = false) => {
+            setRetryingKeys((current) => new Set([...current, key]));
+            try { await runs.retry(runId, nodeId, slotId, confirmUncertain); message.success("已重新提交输出"); }
+            catch (error) { message.error(error instanceof Error ? error.message : "重试请求结果待确认，可再次点击确认"); }
+            finally { setRetryingKeys((current) => new Set([...current].filter((item) => item !== key))); }
+        };
+        const output = runs.detailsByRunId.get(runId)?.outputs.find((item) => item.nodeId === nodeId && item.slotId === slotId);
+        if (output?.status === "uncertain") {
+            modal.confirm({
+                title: "确认重新生成？",
+                content: "原请求可能已被供应商接收。重新生成会创建新任务，可能重复扣费。已完成的其他结果会保留。",
+                okText: "确认重新生成",
+                cancelText: "取消",
+                onOk: () => submit(true),
+            });
+        } else {
+            await submit();
+        }
     };
     const resumeWorkflowTask = async (taskID: string, taskType: "image" | "video") => {
         if (resumingTaskIDsRef.current.has(taskID)) return;
@@ -1183,7 +1197,7 @@ function WorkflowEditorContent() {
                                     retrying={retryingKeys.has(retryKey)}
                                     confirmingRetry={runs.pendingRetryKeys.has(retryKey)}
                                     onReloadMedia={resourceNodeId ? () => imageResources.retry(resourceNodeId) : undefined}
-                                    onRetryOutput={detail && isRetryableImageOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
+                                    onRetryOutput={detail && isRetryableWorkflowOutput(slot, output, detail.run) ? () => void startOutputRetry(detail.run.id, node.id, slot.id) : undefined}
                                     onImageLoaded={(storageKey) => resourceNodeId && imageResources.acknowledgeRendered(resourceNodeId, storageKey)}
                                     onMediaDimensions={(dimensions) => {
                                         if (output?.mediaId) fitLoadedMedia(node.id, output.mediaId, dimensions, slot.id, slot.type);

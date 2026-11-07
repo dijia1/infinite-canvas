@@ -96,7 +96,7 @@ export function stopWorkflowRun(id: string) {
     return apiPost<WorkflowRunDetail>(`/api/v1/workflow-runs/${encodeURIComponent(id)}/stop`);
 }
 
-export function retryWorkflowOutput(id: string, input: { requestId: string; nodeId: string; slotId: string }) {
+export function retryWorkflowOutput(id: string, input: { requestId: string; nodeId: string; slotId: string; confirmUncertain?: boolean }) {
     return apiPost<WorkflowRunDetail>(`/api/v1/workflow-runs/${encodeURIComponent(id)}/retry`, input);
 }
 

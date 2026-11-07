@@ -137,8 +137,8 @@ func TestRetryWorkflowOutputIsIdempotentPerClientRequest(t *testing.T) {
 	if _, _, err := createWorkflowRunFixture(run, nil, []model.WorkflowOutputExecution{output}, nil); err != nil {
 		t.Fatal(err)
 	}
-	first, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", current.Add(time.Second))
-	if err != nil || first.Attempt != 2 || first.Status != "waiting" {
+	first, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", nil, current.Add(time.Second))
+	if err != nil || first.Output.Attempt != 2 || first.Output.Status != "waiting" {
 		t.Fatalf("first retry = %#v, %v", first, err)
 	}
 	database, _ := DB()
@@ -148,19 +148,19 @@ func TestRetryWorkflowOutputIsIdempotentPerClientRequest(t *testing.T) {
 	if err := database.Create(&model.WorkflowOutputAttempt{ID: "retry-attempt-one", RunID: run.ID, NodeID: output.NodeID, SlotID: output.SlotID, Attempt: 2, OwnerUID: run.OwnerUID, RequestID: "retry-attempt-request-one", RetryRequestID: "retry-request-one", Status: "failed", CreatedAt: current, UpdatedAt: current}).Error; err != nil {
 		t.Fatal(err)
 	}
-	duplicate, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", current.Add(2*time.Second))
-	if err != nil || duplicate.Attempt != 2 || duplicate.Status != "failed" {
+	duplicate, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", nil, current.Add(2*time.Second))
+	if err != nil || duplicate.Output.Attempt != 2 || duplicate.Output.Status != "failed" {
 		t.Fatalf("duplicate retry = %#v, %v", duplicate, err)
 	}
-	second, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-two", current.Add(3*time.Second))
-	if err != nil || second.Attempt != 3 || second.Status != "waiting" {
+	second, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-two", nil, current.Add(3*time.Second))
+	if err != nil || second.Output.Attempt != 3 || second.Output.Status != "waiting" {
 		t.Fatalf("second logical retry = %#v, %v", second, err)
 	}
 	if err := database.Model(&model.WorkflowOutputExecution{}).Where("run_id = ? AND node_id = ? AND slot_id = ?", run.ID, output.NodeID, output.SlotID).Updates(map[string]any{"status": "failed", "error": "third failure"}).Error; err != nil {
 		t.Fatal(err)
 	}
-	lateFirst, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", current.Add(4*time.Second))
-	if err != nil || lateFirst.Attempt != 3 || lateFirst.Status != "failed" {
+	lateFirst, err := RetryWorkflowOutput(run.OwnerUID, run.ID, output.NodeID, output.SlotID, "retry-request-one", nil, current.Add(4*time.Second))
+	if err != nil || lateFirst.Output.Attempt != 3 || lateFirst.Output.Status != "failed" {
 		t.Fatalf("late first retry replay = %#v, %v", lateFirst, err)
 	}
 }

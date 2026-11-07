@@ -67,7 +67,7 @@ function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
     });
     const retry = useMutation({
         retry: false,
-        mutationFn: (request: PendingWorkflowRetryRequest) => retryWorkflowOutput(request.runId, { requestId: request.requestId, nodeId: request.nodeId, slotId: request.slotId }),
+        mutationFn: (request: PendingWorkflowRetryRequest) => retryWorkflowOutput(request.runId, { requestId: request.requestId, nodeId: request.nodeId, slotId: request.slotId, ...(request.confirmUncertain ? { confirmUncertain: true } : {}) }),
         onSuccess: (value, request) => {
             updateDetail(value);
             const key = pendingWorkflowRetryKey(request);
@@ -131,11 +131,25 @@ function WorkflowRunHistoryContent({ ownerUID }: { ownerUID?: string }) {
         if (!detail.data) return;
         const output = detail.data.outputs.find((item) => item.nodeId === nodeId && item.slotId === slotId);
         if (!output) return;
-        const key = pendingWorkflowRetryKey({ runId: detail.data.run.id, nodeId, slotId });
-        const request = ensureWorkflowRetryRequest(pendingRetryRequests[key], { runId: detail.data.run.id, nodeId, slotId, attempt: output.attempt }, nanoid);
-        if (ownerUID && typeof window !== "undefined") writePendingWorkflowRetryRequest(window.sessionStorage, ownerUID, request);
-        setPendingRetryRequests((current) => ({ ...current, [key]: request }));
-        retry.mutate(request);
+        const runId = detail.data.run.id;
+        const submit = (confirmUncertain = false) => {
+            const key = pendingWorkflowRetryKey({ runId, nodeId, slotId });
+            const request = ensureWorkflowRetryRequest(pendingRetryRequests[key], { runId, nodeId, slotId, attempt: output.attempt, ...(confirmUncertain ? { confirmUncertain: true } : {}) }, nanoid);
+            if (ownerUID && typeof window !== "undefined") writePendingWorkflowRetryRequest(window.sessionStorage, ownerUID, request);
+            setPendingRetryRequests((current) => ({ ...current, [key]: request }));
+            retry.mutate(request);
+        };
+        if (output.status === "uncertain") {
+            modal.confirm({
+                title: "确认重新生成？",
+                content: "原请求可能已被供应商接收。重新生成会创建新任务，可能重复扣费。已完成的其他结果会保留。",
+                okText: "确认重新生成",
+                cancelText: "取消",
+                onOk: () => submit(true),
+            });
+        } else {
+            submit();
+        }
     };
 
     return (

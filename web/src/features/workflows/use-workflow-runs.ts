@@ -325,7 +325,7 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
     );
 
     const retry = useCallback(
-        (runId: string, nodeId: string, slotId: string) => {
+        (runId: string, nodeId: string, slotId: string, confirmUncertain = false) => {
             const startedIdentity = identityRef.current;
             return withOperation(startedIdentity, async () => {
                 if (!ownerUID || !workflowId) throw new Error("流程尚未加载");
@@ -339,12 +339,12 @@ export function useWorkflowRuns({ ownerUID, workflowId, graph, visibleNodeIds }:
                     pending = undefined;
                 }
                 if (!pending && !output) throw new Error("运行结果尚未加载");
-                const request = pending || ensureWorkflowRetryRequest(undefined, { runId, nodeId, slotId, attempt: output!.attempt }, nanoid);
+                const request = pending || ensureWorkflowRetryRequest(undefined, { runId, nodeId, slotId, attempt: output!.attempt, ...(confirmUncertain ? { confirmUncertain: true } : {}) }, nanoid);
                 writePendingWorkflowRetryRequest(browserSessionStorage(), ownerUID, request);
                 pendingRetriesRef.current.set(key, request);
                 setPendingRetryKeys(new Set(pendingRetriesRef.current.keys()));
                 try {
-                    const nextDetail = await retryWorkflowOutput(runId, { requestId: request.requestId, nodeId: request.nodeId, slotId: request.slotId });
+                    const nextDetail = await retryWorkflowOutput(runId, { requestId: request.requestId, nodeId: request.nodeId, slotId: request.slotId, ...(request.confirmUncertain ? { confirmUncertain: true } : {}) });
                     assertCurrent(startedIdentity);
                     clearPendingWorkflowRetryRequest(browserSessionStorage(), ownerUID, request);
                     pendingRetriesRef.current.delete(key);

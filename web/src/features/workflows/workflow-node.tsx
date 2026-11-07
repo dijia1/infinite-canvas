@@ -398,7 +398,7 @@ export function WorkflowOutputCard({
                             {execution?.error ? <span className="line-clamp-3 opacity-80">{execution.error}</span> : null}
                         </div>
                     )}
-                    {!readOnly && slot.type === "image" && execution?.status === "failed" && onRetryOutput ? (
+                    {!readOnly && onRetryOutput ? (
                         <Button
                             type="text"
                             size="small"
@@ -413,7 +413,7 @@ export function WorkflowOutputCard({
                                 onRetryOutput();
                             }}
                         >
-                            {confirmingRetry ? "确认重试" : "重试"}
+                            {confirmingRetry ? "确认重试" : execution?.status === "uncertain" ? "重新生成" : "重试"}
                         </Button>
                     ) : null}
                 </div>

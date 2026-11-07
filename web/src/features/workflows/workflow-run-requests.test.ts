@@ -16,7 +16,7 @@ test("persists unresolved ids per authenticated owner across component remounts"
     const values = new Map<string, string>();
     const storage = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => values.set(key, value), removeItem: (key: string) => values.delete(key) };
     const run = { workflowId: "workflow-persisted", revision: 7, requestId: "run-request", scope: { type: "workflow" } as const };
-    const retry = { runId: "run-persisted", nodeId: "node", slotId: "slot", attempt: 2, requestId: "retry-request" };
+    const retry = { runId: "run-persisted", nodeId: "node", slotId: "slot", attempt: 2, requestId: "retry-request", confirmUncertain: true };
     writePendingWorkflowRunRequest(storage, "owner-a", run);
     writePendingWorkflowRetryRequest(storage, "owner-a", retry);
     assert.deepEqual(readPendingWorkflowRunRequest(storage, "owner-a", run.workflowId), run);

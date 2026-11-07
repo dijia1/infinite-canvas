@@ -63,7 +63,7 @@ test("uses the workflow run contract and preserves retry request ids across tran
         const replay = { requestId: "retry-click-1", nodeId: "image-node", slotId: "output-a" };
         await retryWorkflowOutput("run/1", replay);
         await retryWorkflowOutput("run/1", replay);
-        await retryWorkflowOutput("run/1", { ...replay, requestId: "retry-click-2" });
+        await retryWorkflowOutput("run/1", { ...replay, requestId: "retry-click-2", confirmUncertain: true });
         await deleteWorkflowRun("run/1");
 
         assert.deepEqual(
@@ -79,7 +79,7 @@ test("uses the workflow run contract and preserves retry request ids across tran
                 { url: "/api/v1/workflow-runs/run%2F1/stop", method: "POST", params: undefined, data: undefined },
                 { url: "/api/v1/workflow-runs/run%2F1/retry", method: "POST", params: undefined, data: replay },
                 { url: "/api/v1/workflow-runs/run%2F1/retry", method: "POST", params: undefined, data: replay },
-                { url: "/api/v1/workflow-runs/run%2F1/retry", method: "POST", params: undefined, data: { ...replay, requestId: "retry-click-2" } },
+                { url: "/api/v1/workflow-runs/run%2F1/retry", method: "POST", params: undefined, data: { ...replay, requestId: "retry-click-2", confirmUncertain: true } },
                 { url: "/api/v1/workflow-runs/run%2F1", method: "DELETE", params: undefined, data: undefined },
             ],
         );
