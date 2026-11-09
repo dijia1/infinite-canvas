@@ -25,6 +25,24 @@ docker compose -f docker-compose.local.yml logs --tail=100 app
 
 若只是旧版本在 Docker 同时启动时后端退出，数据库恢复健康后可用 `docker compose -f docker-compose.local.yml restart app` 临时恢复。新版镜像会管理前后端退出联动；健康检查失败本身不会触发 Docker 重启，不能把 healthcheck 当作进程监护。
 
+## OSS 公网区域 Endpoint
+
+`OSS_PUBLIC_ENDPOINT` 填写区域 Endpoint，不包含 Bucket 名。公网客户端使用 SDK 默认的虚拟主机寻址，由 `OSS_BUCKET` 自动拼接完整资源域名，不再使用自定义域名模式。例如：
+
+```dotenv
+OSS_REGION=cn-hongkong
+OSS_BUCKET=companyfabricdataimageinformation
+OSS_PUBLIC_ENDPOINT=https://oss-cn-hongkong.aliyuncs.com
+```
+
+生成的上传 PUT、读取 GET、缩略图、视频第一帧、播放及下载签名均使用 `https://companyfabricdataimageinformation.oss-cn-hongkong.aliyuncs.com/<ObjectKey>`。保留原来的对象版本、处理参数和签名有效期。`OSS_INTERNAL_ENDPOINT` 仍供服务端读写，不随公网配置切换而改变。
+
+同一个 Bucket 只切换访问配置，不迁移文件或数据库。已入库媒体按 `mediaId`、ObjectKey 和版本重新生成签名；不要直接替换旧签名 URL 的域名。图片及视频封面缓存按素材 ID 保留。页面重新进入或上传重试后获取新地址。本地环境保留自己的 Bucket，不能复制生产 Bucket 配置。
+
+从包含 Bucket 前缀或自定义域名的旧配置升级时，镜像与区域 Endpoint 必须配套切换。发布前记录旧镜像和旧 Endpoint；回滚时同时恢复二者。仅修改 `.env` 不会更新运行中容器的环境变量，需要通过现有发布流程重建应用容器。这次切换无需数据库迁移，也不改变 Bucket 的私有访问权限。
+
+验收需覆盖我的画布和自动化流程的图片、视频上传及重试、旧素材显示、缩略图、视频封面、播放与拖动、文件下载，并核对 CORS。官方域名的强制下载规则仍然适用，必须通过浏览器实际验证，不能只以签名或上传成功作为完成依据。参见 [Endpoint 与 Bucket 域名](https://help.aliyun.com/zh/oss/user-guide/access-oss-via-bucket-domain-name) 和 [视频播放限制](https://help.aliyun.com/zh/oss/how-to-play-videos-online-in-oss)。
+
 ## 一次性生产初始化
 
 1. 启动 Portal，并确认外部 Docker 网络 `portal_gateway`、`internal_tools_database` 与 `portal_directory` 已存在。
