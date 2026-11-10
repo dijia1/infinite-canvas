@@ -84,7 +84,7 @@ func TestReleaseWorkflowBuildsAndDeploysPrivateImageSecurely(t *testing.T) {
 		"scripts/cleanup-release-images.sh",
 		"scripts/release-state.sh",
 		"bash -n",
-		"docker compose config -q",
+		`docker compose --env-file "$env_file" config -q`,
 		"DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}",
 		"DEPLOY_USER: ${{ secrets.DEPLOY_USER }}",
 		"DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}",
