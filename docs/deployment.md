@@ -39,7 +39,7 @@ OSS_PUBLIC_ENDPOINT=https://oss-cn-hongkong.aliyuncs.com
 
 同一个 Bucket 只切换访问配置，不迁移文件或数据库。已入库媒体按 `mediaId`、ObjectKey 和版本重新生成签名；不要直接替换旧签名 URL 的域名。图片及视频封面缓存按素材 ID 保留。页面重新进入或上传重试后获取新地址。本地环境保留自己的 Bucket，不能复制生产 Bucket 配置。
 
-从包含 Bucket 前缀或自定义域名的旧配置升级时，镜像与区域 Endpoint 必须配套切换。发布前记录旧镜像和旧 Endpoint；回滚时同时恢复二者。仅修改 `.env` 不会更新运行中容器的环境变量，需要通过现有发布流程重建应用容器。这次切换无需数据库迁移，也不改变 Bucket 的私有访问权限。
+生产 Compose 按 `.env` 的 `OSS_REGION` 派生 `https://oss-<region>.aliyuncs.com`，覆盖容器的 `OSS_PUBLIC_ENDPOINT`。该配置与 SDK 随同一 Git 版本发布，不原地改写生产 `.env`；若发布失败，旧版 Compose 仍从原文件读取旧 Endpoint，随旧镜像一起回滚。发布前记录旧镜像和旧 Endpoint。独立启动和本地 Compose 仍使用上面示例中的区域 Endpoint。此次切换无需数据库迁移，也不改变 Bucket 的私有访问权限。
 
 验收需覆盖我的画布和自动化流程的图片、视频上传及重试、旧素材显示、缩略图、视频封面、播放与拖动、文件下载，并核对 CORS。官方域名的强制下载规则仍然适用，必须通过浏览器实际验证，不能只以签名或上传成功作为完成依据。参见 [Endpoint 与 Bucket 域名](https://help.aliyun.com/zh/oss/user-guide/access-oss-via-bucket-domain-name) 和 [视频播放限制](https://help.aliyun.com/zh/oss/how-to-play-videos-online-in-oss)。
 

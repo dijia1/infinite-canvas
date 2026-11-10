@@ -4,6 +4,10 @@ services:
     container_name: infinite-canvas
     env_file:
       - ${INFINITE_CANVAS_ENV_FILE:-.env}
+    # Keep the regional SDK endpoint paired with this release. Older Compose
+    # releases still read their original endpoint from the unchanged env file.
+    environment:
+      OSS_PUBLIC_ENDPOINT: https://oss-${OSS_REGION:?OSS_REGION is required}.aliyuncs.com
     expose:
       - "3000"
     healthcheck:

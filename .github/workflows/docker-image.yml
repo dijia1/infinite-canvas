@@ -45,14 +45,14 @@ jobs:
           bash -n scripts/deploy-production.sh scripts/initialize-release-state.sh scripts/release-state.sh scripts/cleanup-release-images.sh
           env_file=$(mktemp)
           trap 'rm -f "$env_file"' EXIT
-          INFINITE_CANVAS_IMAGE=ghcr.io/dijia1/infinite-canvas:sha-${{ github.sha }} INFINITE_CANVAS_ENV_FILE="$env_file" docker compose config -q
+          OSS_REGION=cn-hongkong INFINITE_CANVAS_IMAGE=ghcr.io/dijia1/infinite-canvas:sha-${{ github.sha }} INFINITE_CANVAS_ENV_FILE="$env_file" docker compose --env-file "$env_file" config -q
 
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
 
       - name: Test container startup lifecycle
-        run: node --test scripts/start-app.test.mjs scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs
+        run: node --test scripts/start-app.test.mjs scripts/deployment.test.mjs scripts/check-gateway-health.test.mjs scripts/oss-release-config.test.mjs
 
       - run: go test ./...
 
