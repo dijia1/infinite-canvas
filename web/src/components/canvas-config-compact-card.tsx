@@ -5,7 +5,7 @@ import { Button } from "antd";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
-// CanvasNode picks the form (controls or icons) through data-config-form, and globals.css lays each one out.
+// Shared compact layout for canvas and workflow configuration nodes.
 export function CanvasConfigCompactCard({
     theme,
     modeSwitch,

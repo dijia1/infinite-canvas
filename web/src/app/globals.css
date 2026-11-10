@@ -337,10 +337,6 @@
     border-color: var(--config-compact-muted);
 }
 
-.canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-settings-icon {
-    display: none;
-}
-
 .canvas-config-compact-run.ant-btn {
     flex: none;
     width: 100%;
@@ -356,51 +352,14 @@
     pointer-events: none;
 }
 
-[data-config-form="icons"] .canvas-config-compact-layout {
-    flex-direction: row;
-    gap: 3px;
-    padding: 3px;
-}
-
-[data-config-form="icons"] .canvas-config-compact-title,
-[data-config-form="icons"] .canvas-config-compact-model {
-    display: none;
-}
-
-[data-config-form="icons"] .canvas-config-compact-layout > span {
-    flex: 1 1 0;
-}
-
-[data-config-form="icons"] .canvas-config-compact-settings.ant-btn,
-[data-config-form="icons"] .canvas-config-compact-run.ant-btn {
-    flex: 1 1 0;
-    justify-content: center;
-    height: 100%;
-    padding: 0;
-}
-
-[data-config-form="icons"] .canvas-config-compact-settings.ant-btn > :not(.ant-btn-icon),
-[data-config-form="icons"] .canvas-config-compact-run.ant-btn > :not(.ant-btn-icon),
-[data-config-form="icons"] .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-mode-icon {
-    display: none;
-}
-
-[data-config-form="icons"] .canvas-config-compact-settings.ant-btn .ant-btn-icon .canvas-config-compact-settings-icon {
-    display: block;
-}
-
 .canvas-config-view-transition {
     animation: canvas-config-full-in 180ms cubic-bezier(.2, .8, .2, 1);
     transform-origin: center;
 }
 
-/* Different names restart the same entrance treatment when a compact layout changes form in place. */
+/* Keep the entrance animation when switching between full and compact cards. */
 [data-config-form="controls"] .canvas-config-view-transition {
     animation-name: canvas-config-controls-in;
-}
-
-[data-config-form="icons"] .canvas-config-view-transition {
-    animation-name: canvas-config-icons-in;
 }
 
 @keyframes canvas-config-full-in {
@@ -410,11 +369,6 @@
 
 @keyframes canvas-config-controls-in {
     from { opacity: 0; transform: translateY(3px) scale(.98); }
-    to { opacity: 1; transform: none; }
-}
-
-@keyframes canvas-config-icons-in {
-    from { opacity: 0; transform: scale(.94); }
     to { opacity: 1; transform: none; }
 }
 

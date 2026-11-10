@@ -335,7 +335,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            data-config-form={data.type === CanvasNodeType.Config ? configCard?.form || "full" : undefined}
+            data-config-form={data.type === CanvasNodeType.Config ? (configCard ? "controls" : "full") : undefined}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${isSelected ? "z-50" : "z-10"}`}
             style={{
                 ...(configCard ? { "--config-card-design-scale": configCard.designScale } : undefined),
@@ -468,7 +468,6 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
         prev.batchMotion?.x === next.batchMotion?.x &&
         prev.batchMotion?.y === next.batchMotion?.y &&
         prev.batchMotion?.index === next.batchMotion?.index &&
-        prev.configCard?.form === next.configCard?.form &&
         prev.configCard?.designScale === next.configCard?.designScale
     );
 }

@@ -2,7 +2,7 @@
 
 import { App, Segmented } from "antd";
 import type { CSSProperties } from "react";
-import { Eye, Image as ImageIcon, Settings2, Video } from "lucide-react";
+import { Eye, Image as ImageIcon, Video } from "lucide-react";
 import { CanvasConfigModelSelect } from "@/components/canvas-config-model-select";
 import { CanvasConfigFullFrame } from "@/components/canvas-config-full-frame";
 import { CanvasConfigCompactCard } from "@/components/canvas-config-compact-card";
@@ -114,10 +114,7 @@ export function WorkflowConfigPanel({
                     {...(compact
                         ? {
                               buttonIcon: (
-                                  <>
-                                      <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
-                                      <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
-                                  </>
+                                  <ModeIcon className="size-3.5" />
                               ),
                           }
                         : {})}
@@ -138,10 +135,7 @@ export function WorkflowConfigPanel({
                         ? {
                               formatSummary: shortSettingsSummary,
                               buttonIcon: (
-                                  <>
-                                      <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
-                                      <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
-                                  </>
+                                  <ModeIcon className="size-3.5" />
                               ),
                           }
                         : {})}

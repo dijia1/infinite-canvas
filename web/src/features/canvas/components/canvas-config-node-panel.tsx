@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Settings2, Video } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
 import { resolveImageUrl } from "@/services/image-storage";
@@ -192,10 +192,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 action={{ label: "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
                 settings={renderSettings("canvas-config-compact-settings", {
                     buttonIcon: (
-                        <>
-                            <ModeIcon className="canvas-config-compact-mode-icon size-3.5" />
-                            <Settings2 className="canvas-config-compact-settings-icon size-3.5" />
-                        </>
+                        <ModeIcon className="size-3.5" />
                     ),
                 })}
             />

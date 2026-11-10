@@ -99,7 +99,7 @@ export function WorkflowNodeCard({
     const width = node.width || 340;
     const height = node.height || 240;
     const generation = node.type === "image_generation" || node.type === "video_generation";
-    const configCard = generation && scale < CONFIG_COMPACT_MAX_SCALE ? getConfigCardView({ width, height }, scale) : undefined;
+    const configCard = generation && scale < CONFIG_COMPACT_MAX_SCALE ? getConfigCardView({ width, height }) : undefined;
     const mediaType = node.type === "image_input" ? "image" : node.type === "video_input" ? "video" : undefined;
     const hasMedia = Boolean(mediaType && (node.mediaId || imageUrl));
     useEffect(() => {
@@ -138,7 +138,7 @@ export function WorkflowNodeCard({
             data-workflow-object
             data-node-id={canvasNodeId || node.id}
             data-workflow-node-id={node.id}
-            data-config-form={generation ? configCard?.form || "full" : undefined}
+            data-config-form={generation ? (configCard ? "controls" : "full") : undefined}
             className={`node-element absolute flex select-none flex-col transition-shadow duration-200 ${selected ? "z-50" : "z-10"}`}
             style={{ ...(configCard ? { "--config-card-design-scale": configCard.designScale } : {}), transform: `translate(${node.position.x}px, ${node.position.y}px)`, width, height, contain: "layout style" }}
             onPointerDown={(event) => onDragStart(event, node)}

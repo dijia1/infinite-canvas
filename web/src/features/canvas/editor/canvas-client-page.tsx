@@ -2270,7 +2270,7 @@ function InfiniteCanvasPage() {
                                 taskConnectionError={getTaskConnectionError(node.id)}
                                 onRetryImage={retryCanvasImage}
                                 renderDetail={canvasRenderDetail === "overview" && node.type !== CanvasNodeType.Config && !selectedNodeIds.has(node.id) && dialogNodeId !== node.id && (!localVideoUploads.has(node.id) || localVideoUploads.get(node.id)?.stage === "ready") ? "overview" : "full"}
-                                configCard={node.type === CanvasNodeType.Config && configCompact ? getConfigCardView(node, viewport.k) : undefined}
+                                configCard={node.type === CanvasNodeType.Config && configCompact ? getConfigCardView(node) : undefined}
                                 inputBadgeLabel={focusedConfigInputBadges.get(node.id)?.label}
                                 panelVersion={dialogNodeId === node.id && !selectionBox ? `${runningNodeId === node.id ? "running" : "idle"}:${nodeImageSettingsOpen ? "settings-open" : "settings-closed"}:${theme.node.text}:${(node.type === CanvasNodeType.Video ? aiStatus?.videoModels?.find((model) => model.id === node.metadata?.videoProviderId)?.name : aiStatus?.imageModels?.find((model) => model.id === node.metadata?.imageProviderId)?.name) || ""}` : undefined}
                                 contentVersion={node.type === CanvasNodeType.Config ? JSON.stringify([
