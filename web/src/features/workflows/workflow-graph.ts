@@ -189,3 +189,23 @@ export function workflowInputNodeIdsForScope(graph: WorkflowGraph, scope: Workfl
     for (const connection of graph.connections) if (members.has(connection.targetNodeId)) inputs.add(connection.sourceNodeId);
     return inputs;
 }
+
+// Keep non-image input positions and port identities unchanged when the preview is reordered.
+export function reorderWorkflowImageInputs(graph: WorkflowGraph, targetId: string, keys: string[]): WorkflowGraph {
+    const nodes = new Map(graph.nodes.map((node) => [node.id, node]));
+    const ordered = graph.connections.filter((connection) => connection.targetNodeId === targetId).sort((a, b) => a.order - b.order);
+    const images = new Map(ordered.filter((connection) => {
+        const source = nodes.get(connection.sourceNodeId);
+        return source && workflowSourceType(source, connection.sourceSlotId) === "image";
+    }).map((connection) => [connection.targetPortId, connection]));
+    let index = 0;
+    const next = ordered.map((connection) => images.has(connection.targetPortId) ? images.get(keys[index++]!)! : connection);
+    const orders = new Map(next.map((connection, order) => [connection.targetPortId, order]));
+    let changed = false;
+    const connections = graph.connections.map((connection) => {
+        if (connection.targetNodeId !== targetId || connection.order === orders.get(connection.targetPortId)) return connection;
+        changed = true;
+        return { ...connection, order: orders.get(connection.targetPortId)! };
+    });
+    return changed ? { ...graph, connections } : graph;
+}

@@ -52,13 +52,14 @@ import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "..
 import { canvasImageDownloadTargets, selectedDownloadableImageNodes } from "../utils/canvas-download-utils";
 import { collectDroppedImageFiles, collectDroppedMediaFiles, importDroppedImageFiles, layoutDroppedImageGrid } from "../utils/canvas-file-drop";
 import { createPublicImageImportController } from "../utils/canvas-public-image-import";
-import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
+import { fitNodeSize, nodeSizeFromRatio, videoNodeSize, fitVideoNode } from "../utils/canvas-node-size";
 import { isCanvasNodeNearViewport } from "../utils/canvas-node-visibility";
 import { getCanvasViewportSize } from "../utils/canvas-viewport-size";
 import { App, Button, Modal } from "antd";
 import { flushSync } from "react-dom";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import { ActiveConnectionPath, ConnectionPath } from "../components/canvas-connections";
+import { imageInputLabel } from "@/lib/generation-input-order";
 import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "@/lib/canvas-config-card";
 import { CanvasConfigNodePanel } from "../components/canvas-config-node-panel";
 import { CanvasNodeContextMenu } from "../components/canvas-context-menu";
@@ -114,8 +115,6 @@ type ConfigInputBadge = {
     label: string;
 };
 
-const VIDEO_NODE_MAX_WIDTH = 420;
-const VIDEO_NODE_MAX_HEIGHT = 420;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 const CANVAS_MEDIA_PREFETCH_PADDING = 384;
@@ -326,7 +325,7 @@ function InfiniteCanvasPage() {
                 const metadata = videoMetadata({ url: remote.url, storageKey: "", mediaId: remote.mediaId, duration: remote.duration, bytes: remote.bytes, mimeType: remote.contentType, width: remote.width, height: remote.height });
                 setNodes((current) => current.map((node) => {
                     if (node.id !== id || videoUploadSourceIdentity(node) !== videoUploadSourceIdentity(source)) return node;
-                    return replaceNodeWithUploadedVideo(node, file.name, metadata, preparedMetadata ? undefined : fitNodeSize(remote.width, remote.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT));
+                    return replaceNodeWithUploadedVideo(node, file.name, metadata, preparedMetadata ? undefined : videoNodeSize(remote));
                 }));
             },
         }),
@@ -1129,21 +1128,23 @@ function InfiniteCanvasPage() {
         [canvasRenderDetail, overviewInteractiveConnectionIds, visibleConnections],
     );
     const focusedConfigNodeId = useMemo(() => {
+        const previewConfig = Object.keys(configPreviewImageIds).find((id) => nodeById.has(id));
+        if (previewConfig) return previewConfig;
         const dialogNode = dialogNodeId ? nodeById.get(dialogNodeId) : null;
         if (dialogNode?.type === CanvasNodeType.Config) return dialogNode.id;
         const activeNode = activeNodeId ? nodeById.get(activeNodeId) : null;
         if (activeNode?.type === CanvasNodeType.Config) return activeNode.id;
         return null;
-    }, [activeNodeId, dialogNodeId, nodeById]);
+    }, [activeNodeId, dialogNodeId, nodeById, configPreviewImageIds]);
 
     const configInputsById = useMemo(() => {
         const map = new Map<string, NodeGenerationInput[]>();
         nodes.forEach((node) => {
             if (node.type !== CanvasNodeType.Config) return;
-            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections));
+            map.set(node.id, buildNodeGenerationInputs(node.id, nodes, connections, maskResources));
         });
         return map;
-    }, [connections, nodes]);
+    }, [connections, nodes, maskResources]);
     const focusedConfigInputBadges = useMemo(() => {
         const map = new Map<string, ConfigInputBadge>();
         if (!focusedConfigNodeId) return map;
@@ -1153,7 +1154,7 @@ function InfiniteCanvasPage() {
         inputs.forEach((input) => {
             if (input.type === "image") {
                 imageIndex += 1;
-                map.set(input.nodeId, { kind: "image", index: imageIndex, configNodeId: focusedConfigNodeId, label: `图 ${imageIndex}` });
+                map.set(input.nodeId, { kind: "image", index: imageIndex, configNodeId: focusedConfigNodeId, label: imageInputLabel(imageIndex - 1) });
                 return;
             }
             if (input.type === "text") {
@@ -1591,7 +1592,7 @@ function InfiniteCanvasPage() {
         const scope = getVideoSessionScope();
         const dimensions = await videoAssetDimensions(asset, mediaId);
         if (!videoCanEditRef.current || scope !== getVideoSessionScope()) return;
-        const size = fitNodeSize(dimensions.width, dimensions.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+        const size = videoNodeSize(dimensions);
         const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { mediaId, assetId: asset.id, status: "success", naturalWidth: dimensions.width, naturalHeight: dimensions.height, duration: asset.data.duration, mimeType: asset.data.mimeType, bytes: asset.data.bytes }), ...size, title: asset.title };
         node.position = { x: position.x - node.width / 2, y: position.y - node.height / 2 };
         setNodes(previous => [...previous, node]);
@@ -1605,7 +1606,7 @@ function InfiniteCanvasPage() {
         const scope = getVideoSessionScope();
         const metadata = await prepareVideoUpload(file);
         if (!videoCanEditRef.current || scope !== getVideoSessionScope()) return;
-        const size = fitNodeSize(metadata.width, metadata.height, VIDEO_NODE_MAX_WIDTH, VIDEO_NODE_MAX_HEIGHT);
+        const size = videoNodeSize(metadata);
         const node: CanvasNodeData = { ...createCanvasNode(CanvasNodeType.Video, position, { status: "success", naturalWidth: metadata.width, naturalHeight: metadata.height, duration: metadata.duration, mimeType: file.type, bytes: file.size }), ...size, title: file.name };
         node.position = { x: position.x - node.width / 2, y: position.y - node.height / 2 };
         setNodes((prev) => [...prev, node]);
@@ -1685,6 +1686,15 @@ function InfiniteCanvasPage() {
             setCropNodeId(null);
         },
     });
+
+    const handleVideoDimensions = useCallback((nodeId: string, mediaId: string | undefined, dimensions: { width: number; height: number }) => {
+        setNodes((current) => current.map((node) => {
+            if (node.id !== nodeId || node.type !== CanvasNodeType.Video || node.metadata?.mediaId !== mediaId) return node;
+            const fitted = fitVideoNode(node, dimensions, false, node.metadata?.videoSize);
+            if (fitted === node && node.metadata?.naturalWidth === dimensions.width && node.metadata?.naturalHeight === dimensions.height) return node;
+            return { ...fitted, metadata: { ...node.metadata, naturalWidth: dimensions.width, naturalHeight: dimensions.height } };
+        }));
+    }, []);
 
     const handleNodeResize = useCallback((nodeId: string, width: number, height: number, position?: Position) => {
         setNodes((prev) => prev.map((node) => (node.id === nodeId ? { ...node, width, height, position: position || node.position } : node)));
@@ -1970,6 +1980,7 @@ function InfiniteCanvasPage() {
                     inputSummary={panelMeta?.summary || getInputSummary(inputs)}
                     inputs={inputs}
                     compact={configCompact}
+                    readOnly={isProjectReadonly}
                     onConfigChange={handleConfigNodeChange}
                     onTextInputChange={handleNodeContentChange}
                     onPreviewImagesChange={handleConfigPreviewImagesChange}
@@ -1984,7 +1995,7 @@ function InfiniteCanvasPage() {
                 />
             );
         },
-        [configCompact, configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
+        [configCompact, isProjectReadonly, configInputPanelMetaById, configInputsById, handleConfigNodeChange, handleGenerateNode, handleNodeContentChange, handleConfigPreviewImagesChange, canvasImageResources, canvasImageErrors, retryCanvasImage, acknowledgeCanvasImageRendered],
     );
 
     const handleCanvasNodeHoverStart = useCallback(
@@ -2297,6 +2308,7 @@ function InfiniteCanvasPage() {
                                 onHoverStart={handleCanvasNodeHoverStart}
                                 onHoverEnd={handleCanvasNodeHoverEnd}
                                 onConnectStart={handleConnectStart}
+                                onVideoDimensions={isProjectReadonly ? undefined : handleVideoDimensions}
                                 onResize={handleNodeResize}
                                 onResizeStart={pause}
                                 onResizeEnd={handleNodeResizeEnd}

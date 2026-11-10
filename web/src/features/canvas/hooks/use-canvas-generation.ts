@@ -27,7 +27,7 @@ import {
     withoutLegacyModel,
     type CanvasAngleParameters,
 } from "../utils/canvas-generation-utils";
-import { fitNodeSize, nodeSizeFromRatio } from "../utils/canvas-node-size";
+import { fitNodeSize, nodeSizeFromRatio, fitVideoNode, videoNodeSize } from "../utils/canvas-node-size";
 import { NODE_DEFAULT_SIZE, getNodeSpec } from "../constants";
 import type { CanvasMaskResources } from "../image-mask/mask-resources";
 import { CanvasNodeType, type CanvasConnection, type CanvasGenerationMode, type CanvasNodeData, type CanvasNodeMetadata, type Position } from "../types";
@@ -387,7 +387,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                     !current(previous, observedTask) ? previous : previous.map((node) =>
                         node.id === nodeId
                             ? {
-                                  ...node,
+                                  ...(observedTask.status === "succeeded" && (video.width || 0) > 0 && (video.height || 0) > 0 ? fitVideoNode(node, { width: video.width!, height: video.height! }, false, node.metadata?.videoSize) : node),
                                   metadata: {
                                       ...node.metadata,
                                       videoTaskId: observedTask.id,
@@ -652,7 +652,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             }
 
             if (mode === "video") {
-                const spec = nodeSizeFromRatio(generationConfig.videoSize || "", NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height) || NODE_DEFAULT_SIZE[CanvasNodeType.Video];
+                const ratioSize = nodeSizeFromRatio(generationConfig.videoSize || "", NODE_DEFAULT_SIZE[CanvasNodeType.Video].width, NODE_DEFAULT_SIZE[CanvasNodeType.Video].height);
+                const spec = ratioSize ? videoNodeSize(ratioSize) : NODE_DEFAULT_SIZE[CanvasNodeType.Video];
                 const isEmptyVideoNode = sourceNode?.type === CanvasNodeType.Video && !sourceNode.metadata?.content && !sourceNode.metadata?.mediaId;
                 const videoId = isEmptyVideoNode ? nodeId : options.createId();
                 const parent = sourceNode?.position || { x: 0, y: 0 };

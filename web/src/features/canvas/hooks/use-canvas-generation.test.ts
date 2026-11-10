@@ -1238,3 +1238,22 @@ test("a rejected regeneration keeps the old paused task available for recovery",
         assert.equal(metadata.errorDetails, "模型配置错误");
     }
 });
+
+
+test("completed video fits actual dimensions while preserving a resize made during generation", async () => {
+    for (const manual of [false, true]) {
+        const pending = deferred<VideoGenerationTask>();
+        const source = node("source", CanvasNodeType.Config, { generationMode: "video", videoSize: "16:9" });
+        const { controller, nodesRef } = setup([source], [], { requestVideoGeneration: () => pending.promise });
+        const generation = controller.generateNode(source.id, "video", "test video");
+        await settleGeneration();
+        const output = nodesRef.current.find(item => item.type === CanvasNodeType.Video)!;
+        if (manual) { output.width = 300; output.height = 500; }
+        pending.resolve({ id: "task", status: "succeeded", progress: 100, resultMediaIds: ["media"], videos: [{ mediaId: "media", url: "unused", width: 360, height: 640 }] });
+        await generation;
+        const completed = nodesRef.current.find(item => item.id === output.id)!;
+        assert.deepEqual([completed.width, completed.height], manual ? [300, 500] : [360, 640]);
+        assert.equal(completed.metadata?.status, "success");
+        assert.equal(completed.metadata?.naturalHeight, 640);
+    }
+});

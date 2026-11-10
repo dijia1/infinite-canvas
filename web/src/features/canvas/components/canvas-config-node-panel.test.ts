@@ -49,7 +49,7 @@ test("input reordering swaps only matching types and ignores moves past either b
         ["config", { inputOrder: ["text-b", "image-a", "text-a", "image-b"] }],
         ["config", { inputOrder: ["text-a", "image-b", "text-b", "image-a"] }],
     ]);
-    for (const name of ["VerticalOrderButtons", "HorizontalOrderButtons"]) {
+    for (const name of ["VerticalOrderButtons"]) {
         const offsets: number[] = [];
         const component = sourceBehavior(sourceURL, { Button: "button", ArrowUp: "i", ArrowDown: "i", ArrowLeft: "i", ArrowRight: "i" }).named(name);
         const buttons = (index: number) => elements(component({ index, total: 3, onMove: (offset: number) => offsets.push(offset) })).filter((node) => node.type === "button");

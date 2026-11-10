@@ -22,13 +22,14 @@ import type { CanvasRenderDetail } from "../media/canvas-media-policy";
 import { useCanvasPerfRender } from "../utils/canvas-performance-debug";
 import { CONFIG_NODE_MIN_SIZE, type ConfigCardView } from "@/lib/canvas-config-card";
 
-import { CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
+import { CanvasInputBadge, CanvasNodeFrame, CanvasResizeHandle as ResizeHandle, CanvasConnectionHandle as ConnectionHandleDot, canvasNodeSelectionColor as selectionBlue, type CanvasResizeCorner as ResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
 import { CanvasReadyImage } from "@/components/canvas-ready-image";
 
 type CanvasNodeProps = {
     data: CanvasNodeData;
     videoVisible?: boolean;
+    onVideoDimensions?: (nodeId: string, mediaId: string | undefined, dimensions: { width: number; height: number }) => void;
     videoUpload?: LocalVideoUploadView;
     onRetryVideoUpload?: (nodeId: string) => void;
     onCancelVideoUpload?: (nodeId: string) => void;
@@ -80,6 +81,7 @@ type CanvasNodeProps = {
 
 type NodeContentRendererProps = {
     videoVisible?: boolean;
+    onVideoDimensions?: (nodeId: string, mediaId: string | undefined, dimensions: { width: number; height: number }) => void;
     videoUpload?: LocalVideoUploadView;
     onRetryVideoUpload?: (nodeId: string) => void;
     onCancelVideoUpload?: (nodeId: string) => void;
@@ -113,6 +115,7 @@ type NodeContentRendererProps = {
 export const CanvasNode = React.memo(function CanvasNode({
     data,
     videoVisible,
+    onVideoDimensions,
     videoUpload,
     onRetryVideoUpload,
     onCancelVideoUpload,
@@ -328,6 +331,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onImageLoaded={(storageKey) => onImageLoaded?.(data.id, storageKey)}
             >
                 {connectionHandles}
+                {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} kind={data.type === CanvasNodeType.Text ? "text" : "image"} /> : null}
             </CanvasOverviewNode>
         );
     }
@@ -383,6 +387,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     <NodeContent
                         videoVisible={videoVisible}
+                        onVideoDimensions={onVideoDimensions}
                         videoUpload={videoUpload}
                         onRetryVideoUpload={onRetryVideoUpload}
                         onCancelVideoUpload={onCancelVideoUpload}
@@ -414,7 +419,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                     />
                 </div>
 
-                {inputBadgeLabel ? <InputBadge label={inputBadgeLabel} node={data} /> : null}
+                {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} kind={data.type === CanvasNodeType.Text ? "text" : "image"} /> : null}
 
                 {showImageInfo && hasImageContent ? <ImageInfoBar node={data} /> : null}
 
@@ -437,6 +442,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         prev.data === next.data &&
         prev.videoVisible === next.videoVisible &&
+        prev.onVideoDimensions === next.onVideoDimensions &&
         prev.videoUpload === next.videoUpload &&
         prev.onRetryVideoUpload === next.onRetryVideoUpload &&
         prev.onCancelVideoUpload === next.onCancelVideoUpload &&
@@ -469,22 +475,6 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
         prev.batchMotion?.y === next.batchMotion?.y &&
         prev.batchMotion?.index === next.batchMotion?.index &&
         prev.configCard?.designScale === next.configCard?.designScale
-    );
-}
-
-function InputBadge({ label, node }: { label: string; node: CanvasNodeData }) {
-    const theme = canvasThemes[useThemeStore((state) => state.theme)];
-    const isText = node.type === CanvasNodeType.Text;
-
-    return (
-        <div className={`pointer-events-none absolute z-40 ${isText ? "left-3 top-3" : "left-1/2 top-full -translate-x-1/2 pt-2"}`}>
-            <span
-                className="inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] font-semibold shadow-[0_8px_18px_rgba(15,23,42,.12)] backdrop-blur-md"
-                style={{ background: `${theme.toolbar.panel}dd`, borderColor: theme.node.stroke, color: theme.node.text }}
-            >
-                {label}
-            </span>
-        </div>
     );
 }
 
@@ -662,8 +652,8 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, videoVisible }: NodeContentRendererProps) {
-    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} />;
+function VideoNodeContent({ node, videoVisible, onVideoDimensions }: NodeContentRendererProps) {
+    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} onDimensions={onVideoDimensions ? (dimensions) => onVideoDimensions(node.id, node.metadata?.mediaId, dimensions) : undefined} />;
 }
 
 function ImageContent({

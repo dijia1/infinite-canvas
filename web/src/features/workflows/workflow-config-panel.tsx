@@ -144,7 +144,7 @@ export function WorkflowConfigPanel({
             )}
         </span>
     );
-    if (compact) return <CanvasConfigCompactCard theme={theme} modeSwitch={modeSwitch} modelSelect={modelSelect} settings={settings} action={{ label: "预览", icon: <Eye className="size-3.5" />, onClick: onPreview }} />;
+    if (compact) return <CanvasConfigCompactCard theme={theme} modeSwitch={modeSwitch} onPreview={onPreview} modelSelect={modelSelect} settings={settings} />;
     return (
         <CanvasConfigFullFrame width={node.width || 360} height={node.height || 274} style={{ color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
             <div className="flex min-w-0 shrink-0 flex-col gap-2">

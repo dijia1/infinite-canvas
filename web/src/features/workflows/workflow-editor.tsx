@@ -9,6 +9,8 @@ import { nanoid } from "nanoid";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type SetStateAction } from "react";
 
+import { ImageInputSorter } from "@/components/image-input-sorter";
+import { imageInputLabel } from "@/lib/generation-input-order";
 import { CanvasFrame } from "@/components/canvas-frame";
 import { useCanvasFrameResize } from "@/components/use-canvas-frame-resize";
 import { autoAssignWorkflowFrameMembers, createWorkflowFrame, deleteWorkflowFrame, expandWorkflowFrames, renameWorkflowFrame } from "./workflow-frames";
@@ -59,7 +61,7 @@ import { reconcileProviderConfig, useConfigStore } from "@/stores/use-config-sto
 import { useThemeStore } from "@/stores/use-theme-store";
 import { reconcileVideoConfig } from "@/lib/video-config";
 import { workflowConfigFromAiConfig } from "./workflow-config";
-import { createWorkflowNode, emptyWorkflowGraph, fitWorkflowImage, workflowViewportCenter, removeWorkflowNode, removeWorkflowOutput, setWorkflowOutputCount, workflowSourceType } from "./workflow-graph";
+import { createWorkflowNode, emptyWorkflowGraph, fitWorkflowImage, workflowViewportCenter, removeWorkflowNode, removeWorkflowOutput, setWorkflowOutputCount, workflowSourceType, reorderWorkflowImageInputs } from "./workflow-graph";
 import { applyWorkflowSaveResult, cacheSavedWorkflow, clearWorkflowDraft, readWorkflowDraft, remoteWorkflowEditorState, workflowDetailQueryKey, workflowEditorSnapshot, writeWorkflowDraft, type WorkflowEditorDocument } from "./workflow-editor-state";
 import { WorkflowNodeCard, WorkflowOutputCard, type WorkflowPreviewInput } from "./workflow-node";
 import { WorkflowMediaPreview } from "./workflow-media-preview";
@@ -683,6 +685,21 @@ function WorkflowEditorContent() {
         [compatibleOutputs, inputConnectionsByTarget, nodesById, imageResources.errors, imageResources.resources, localImages.version],
     );
     const activePreviewInputs = previewNodeId ? previewInputs(previewNodeId) : [];
+    const previewImages = activePreviewInputs.filter((input) => input.type === "image");
+    const focusedInputBadges = useMemo(() => {
+        const selected = canvas.selectedNodeIds.size === 1 ? parseWorkflowVisualId([...canvas.selectedNodeIds][0]!) : undefined;
+        const selectedNode = selected?.kind === "node" ? nodesById.get(selected.nodeId) : undefined;
+        const targetId = previewNodeId || (selectedNode?.type.endsWith("_generation") ? selectedNode.id : undefined);
+        const labels = new Map<string, string>();
+        if (!targetId) return labels;
+        for (const connection of inputConnectionsByTarget.get(targetId) || []) {
+            const source = nodesById.get(connection.sourceNodeId);
+            if (!source || workflowSourceType(source, connection.sourceSlotId) !== "image") continue;
+            const id = source.type === "image_input" ? workflowVisualNodeId(source.id) : workflowVisualOutputId(source.id, connection.sourceSlotId);
+            labels.set(id, imageInputLabel(labels.size));
+        }
+        return labels;
+    }, [canvas.selectedNodeIds, previewNodeId, nodesById, inputConnectionsByTarget]);
     const outputLinks = useMemo(() => workflowOutputLinks(graph), [graph]);
     const visualNodeById = useMemo(() => new Map(canvas.nodes.map((node) => [node.id, node])), [canvas.nodes]);
     const connectionPathCache = useMemo(() => workflowConnectionPathCache(canvas.connections, visualNodeById), [canvas.connections, visualNodeById]);
@@ -1137,6 +1154,7 @@ function WorkflowEditorContent() {
                                 node={node}
                                 selected={canvas.selectedNodeIds.has(workflowVisualNodeId(node.id))}
                                 canvasNodeId={workflowVisualNodeId(node.id)}
+                                inputBadgeLabel={focusedInputBadges.get(workflowVisualNodeId(node.id))}
                                 renderDetail={workflowVisualRenderDetail(renderDetail, workflowVisualNodeId(node.id), retainedVisualNodeIds)}
                                 readOnly={editBlocked}
                                 scale={viewport.k}
@@ -1214,6 +1232,7 @@ function WorkflowEditorContent() {
                                     }}
                                     selected={canvas.selectedNodeIds.has(workflowVisualOutputId(node.id, slot.id))}
                                     canvasNodeId={workflowVisualOutputId(node.id, slot.id)}
+                                    inputBadgeLabel={focusedInputBadges.get(workflowVisualOutputId(node.id, slot.id))}
                                     renderDetail={workflowVisualRenderDetail(renderDetail, workflowVisualOutputId(node.id, slot.id), retainedVisualNodeIds)}
                                     readOnly={editBlocked}
                                     onResizeStart={startResize}
@@ -1427,30 +1446,22 @@ function WorkflowEditorContent() {
                         : null}
                 </Modal>
                 <Modal title="输入预览" open={Boolean(previewNodeId)} footer={null} width={760} onCancel={() => setPreviewNodeId(undefined)} destroyOnHidden>
-                    {activePreviewInputs.length ? (
-                        <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-auto sm:grid-cols-3">
-                            {activePreviewInputs.map((input) => (
+                    <div className="max-h-[65vh] space-y-4 overflow-y-auto" onDrop={(event) => { event.preventDefault(); event.stopPropagation(); }}>
+                        {previewImages.length ? <ImageInputSorter theme={theme} readOnly={editBlocked} onReorder={(keys) => {
+                            if (!editBlockedRef.current && previewNodeId) setGraph((current) => reorderWorkflowImageInputs(current, previewNodeId, keys));
+                        }} items={previewImages.map((input) => ({
+                            key: input.key,
+                            preview: <div className="aspect-square">{input.imageUrl || input.mediaId ? <WorkflowMediaPreview nodeId={`preview-${input.sourceNodeId}-${input.key}`} type="image" mediaId={input.mediaId} imageUrl={input.imageUrl} imageStorageKey={input.imageStorageKey} imageError={input.imageError} /> : <div className="flex h-full items-center justify-center text-xs opacity-50">运行后显示</div>}</div>,
+                        }))} /> : null}
+                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                            {activePreviewInputs.filter((input) => input.type !== "image").map((input) => (
                                 <div key={input.key} className="aspect-square overflow-hidden rounded-xl border border-stone-200 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
-                                    {input.type === "text" ? (
-                                        <div className="h-full overflow-auto whitespace-pre-wrap p-3 text-xs leading-5">{input.text || "空文本"}</div>
-                                    ) : input.mediaId ? (
-                                        <WorkflowMediaPreview
-                                            nodeId={`preview-${input.sourceNodeId}-${input.key}`}
-                                            type={input.type}
-                                            mediaId={input.mediaId}
-                                            imageUrl={input.imageUrl}
-                                            imageStorageKey={input.imageStorageKey}
-                                            imageError={input.imageError}
-                                        />
-                                    ) : (
-                                        <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-stone-400">{input.type === "image" ? <ImageIcon className="size-6" /> : <Video className="size-6" />}运行后显示</div>
-                                    )}
+                                    {input.type === "text" ? <div className="h-full overflow-auto whitespace-pre-wrap p-3 text-xs leading-5">{input.text || "空文本"}</div> : input.mediaId ? <WorkflowMediaPreview nodeId={`preview-${input.sourceNodeId}-${input.key}`} type="video" mediaId={input.mediaId} /> : <div className="flex h-full items-center justify-center text-xs opacity-50">运行后显示</div>}
                                 </div>
                             ))}
                         </div>
-                    ) : (
-                        <div className="py-12 text-center text-sm text-stone-500">暂无输入</div>
-                    )}
+                        {!activePreviewInputs.length ? <div className="py-12 text-center text-sm text-stone-500">暂无输入</div> : null}
+                    </div>
                 </Modal>
                 <Drawer title="本次运行" open={runDetailOpen} width="min(920px, 94vw)" destroyOnHidden onClose={() => setRunDetailOpen(false)}>
                     {currentRun.isError ? (

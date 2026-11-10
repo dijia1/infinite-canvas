@@ -1,6 +1,6 @@
 import type { VideoMediaAccess, VideoUploadMetadata } from "@/services/api/video-media";
 import type { LocalVideoUploadView } from "@/features/canvas/media/canvas-local-video-upload-controller";
-import { fitNodeSize } from "@/features/canvas/utils/canvas-node-size";
+import { fitVideoNode } from "@/features/canvas/utils/canvas-node-size";
 import { canvasFrameContainsRect, canvasFrameRectsOverlap } from "@/lib/canvas-frame";
 import { expandWorkflowFrames } from "./workflow-frames";
 import { workflowInputNodeIdsForScope } from "./workflow-graph";
@@ -64,10 +64,7 @@ export function pendingRunVideos(graph: WorkflowGraph, scope: WorkflowRunScope, 
     });
 }
 export function fitWorkflowVideo<T extends { width?: number; height?: number; position?: { x: number; y: number } }>(node: T, dimensions: { width: number; height: number }, force = false): T {
-    if (!force && ((node.width || 420) !== 420 || (node.height || 236) !== 236)) return node;
-    const size = fitNodeSize(dimensions.width, dimensions.height, 420, 420);
-    if (size.width === node.width && size.height === node.height) return node;
-    return { ...node, ...size, ...(node.position ? { position: { x: node.position.x + ((node.width || 420) - size.width) / 2, y: node.position.y + ((node.height || 236) - size.height) / 2 } } : {}) };
+    return fitVideoNode(node, dimensions, force);
 }
 export function replaceWorkflowVideoSize(graph: WorkflowGraph, id: string, dimensions: VideoUploadMetadata) {
     const nodes = graph.nodes.map((node) => (node.id === id ? { ...fitWorkflowVideo(node, dimensions, true), position: node.position } : node));

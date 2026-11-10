@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { sourceBehavior } from "@/test-utils/source-behavior";
-import { fitNodeSize } from "../utils/canvas-node-size";
+import { videoNodeSize } from "../utils/canvas-node-size";
 import { replaceNodeWithUploadedVideo } from "../utils/canvas-generation-utils";
 import { videoUploadSourceIdentity } from "../media/canvas-local-video-upload-controller";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
@@ -23,9 +23,7 @@ for (const [width, height] of [
             videoCanEditRef: { current: true },
             getVideoSessionScope: () => "scope",
             prepareVideoUpload: () => pending,
-            fitNodeSize,
-            VIDEO_NODE_MAX_WIDTH: 420,
-            VIDEO_NODE_MAX_HEIGHT: 420,
+            videoNodeSize,
             createCanvasNode: (type: CanvasNodeType, position: object, metadata: object) => ({ id: "video", type, position, metadata }),
             CanvasNodeType,
             setNodes: (update: (current: CanvasNodeData[]) => CanvasNodeData[]) => {
@@ -69,9 +67,7 @@ test("upload completion preserves a prepared video node's current size and posit
         videoCanEditRef: { current: true },
         nodesRef: { current: nodes },
         setLocalVideoUploads: () => {},
-        fitNodeSize,
-        VIDEO_NODE_MAX_WIDTH: 420,
-        VIDEO_NODE_MAX_HEIGHT: 420,
+        videoNodeSize,
         videoMetadata: (value: { mediaId: string }) => ({ mediaId: value.mediaId }),
         videoUploadSourceIdentity,
         replaceNodeWithUploadedVideo,

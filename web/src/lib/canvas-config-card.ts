@@ -5,7 +5,7 @@ export const CONFIG_NODE_MIN_SIZE = { width: 360, height: 274 };
 export const CONFIG_COMPACT_MAX_SCALE = 0.8;
 
 // The compact layout size in globals.css.
-const CONTROLS_DESIGN_SIZE = { width: 176, height: 134 };
+const CONTROLS_DESIGN_SIZE = { width: 216, height: 164 };
 
 // The layout scales with the node size and never reflows while zooming.
 export type ConfigCardView = { designScale: number };

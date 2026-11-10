@@ -6,7 +6,7 @@ import { Image as ImageIcon, Maximize2, Pencil, Trash2, Upload, Video } from "lu
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 
-import { CanvasConnectionHandle, CanvasNodeFrame, CanvasResizeHandle, canvasNodeSelectionColor, canvasResizeCorners, type CanvasResizeCorner } from "@/components/canvas-node-primitives";
+import { CanvasInputBadge, CanvasConnectionHandle, CanvasNodeFrame, CanvasResizeHandle, canvasNodeSelectionColor, canvasResizeCorners, type CanvasResizeCorner } from "@/components/canvas-node-primitives";
 import { CanvasOverviewNode } from "@/components/canvas-overview-node";
 import { CONFIG_COMPACT_MAX_SCALE, getConfigCardView } from "@/lib/canvas-config-card";
 import { CanvasMediaUploadStatus } from "@/features/canvas/components/canvas-media-upload-status";
@@ -27,6 +27,7 @@ type ResizeStart = (event: ReactPointerEvent, node: WorkflowNode, corner: Canvas
 export function WorkflowNodeCard({
     node,
     canvasNodeId,
+    inputBadgeLabel,
     renderDetail = "full",
     scale = 1,
     videoUpload, onRetryVideoUpload, onCancelVideoUpload,
@@ -58,6 +59,7 @@ export function WorkflowNodeCard({
 }: {
     node: WorkflowNode;
     canvasNodeId?: string;
+    inputBadgeLabel?: string;
     renderDetail?: CanvasRenderDetail;
     scale?: number;
     videoUpload?: LocalVideoUploadView;
@@ -130,7 +132,7 @@ export function WorkflowNodeCard({
             onPointerDown={(event) => onDragStart(event, node)}
             onImageLoaded={onImageLoaded}
             onContextMenu={onContextMenu}
-        >{uploadStatus}</CanvasOverviewNode>;
+        >{uploadStatus}{inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}</CanvasOverviewNode>;
     }
     return (
         <div
@@ -217,6 +219,7 @@ export function WorkflowNodeCard({
                 {uploadStatus}
                 {!readOnly && onResizeStart ? canvasResizeCorners.map((corner) => <CanvasResizeHandle key={corner} corner={corner} onPointerDown={(event) => onResizeStart(event, node, corner)} />) : null}
             </CanvasNodeFrame>
+            {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}
             {!readOnly && generation ? (
                 <CanvasConnectionHandle
                     side="left"
@@ -265,6 +268,7 @@ export function WorkflowOutputCard({
     parent,
     slot,
     canvasNodeId,
+    inputBadgeLabel,
     renderDetail = "full",
     selected,
     readOnly = false,
@@ -296,6 +300,7 @@ export function WorkflowOutputCard({
     parent: WorkflowNode;
     slot: WorkflowOutputSlot;
     canvasNodeId?: string;
+    inputBadgeLabel?: string;
     renderDetail?: CanvasRenderDetail;
     selected: boolean;
     readOnly?: boolean;
@@ -351,7 +356,7 @@ export function WorkflowOutputCard({
             onPointerDown={(event) => onDragStart(event, parent, slot)}
             onImageLoaded={onImageLoaded}
             onContextMenu={onContextMenu}
-        />;
+        >{inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}</CanvasOverviewNode>;
     }
     return (
         <div
@@ -399,6 +404,7 @@ export function WorkflowOutputCard({
                 </div>
                 {!readOnly && onResizeStart ? canvasResizeCorners.map((corner) => <CanvasResizeHandle key={corner} corner={corner} onPointerDown={(event) => onResizeStart(event, parent, corner, slot)} />) : null}
             </CanvasNodeFrame>
+            {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}
             {!readOnly ? (
                 <CanvasConnectionHandle
                     side="right"

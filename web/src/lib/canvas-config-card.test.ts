@@ -8,7 +8,7 @@ const defaultCard = { width: 360, height: 274 };
 test("the compact layout fits both axes for every node shape", () => {
     for (const card of [defaultCard, { width: 720, height: 274 }, { width: 360, height: 600 }, { width: 220, height: 160 }]) {
         const { designScale } = getConfigCardView(card);
-        assert.ok(card.width * designScale >= 176 - 1e-9 && card.height * designScale >= 134 - 1e-9);
+        assert.ok(card.width * designScale >= 216 - 1e-9 && card.height * designScale >= 164 - 1e-9);
     }
 });
 

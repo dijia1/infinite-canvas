@@ -98,3 +98,10 @@ export function CanvasInputChip({ label, value, style }: { label: string; value:
         </div>
     );
 }
+
+export function CanvasInputBadge({ label, kind = "image" }: { label: string; kind?: "image" | "video" | "text" }) {
+    const theme = canvasThemes[useThemeStore((state) => state.theme)];
+    return <div className={`pointer-events-none absolute z-40 ${kind === "text" ? "left-3 top-3" : "left-1/2 top-full -translate-x-1/2 pt-2"}`}>
+        <span className="inline-flex h-7 items-center rounded-full border px-2.5 text-[11px] font-semibold shadow-[0_8px_18px_rgba(15,23,42,.12)] backdrop-blur-md" style={{ background: `${theme.toolbar.panel}dd`, borderColor: theme.node.stroke, color: theme.node.text }}>{label}</span>
+    </div>;
+}

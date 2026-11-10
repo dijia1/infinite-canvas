@@ -2,6 +2,7 @@
 
 import { useRef, type CSSProperties, type ReactNode } from "react";
 import { Button } from "antd";
+import { Eye } from "lucide-react";
 
 import type { CanvasTheme } from "@/lib/canvas-theme";
 
@@ -9,15 +10,17 @@ import type { CanvasTheme } from "@/lib/canvas-theme";
 export function CanvasConfigCompactCard({
     theme,
     modeSwitch,
+    onPreview,
     modelSelect,
     settings,
     action,
 }: {
     theme: CanvasTheme;
     modeSwitch: ReactNode;
+    onPreview: () => void;
     modelSelect: ReactNode;
     settings: ReactNode;
-    action: { label: string; icon: ReactNode; disabled?: boolean; onClick: () => void };
+    action?: { label: string; icon: ReactNode; disabled?: boolean; onClick: () => void };
 }) {
     const pressRef = useRef({ x: 0, y: 0 });
     const style = { color: theme.node.text, "--config-compact-control": theme.node.panel, "--config-compact-stroke": theme.node.stroke, "--config-compact-muted": theme.node.muted } as CSSProperties;
@@ -38,12 +41,15 @@ export function CanvasConfigCompactCard({
             }}
         >
             <div className="canvas-config-compact-layout canvas-config-view-transition">
-                <div className="canvas-config-compact-title">{modeSwitch}</div>
+                <div className="canvas-config-compact-title">
+                    <Button size="small" className="canvas-config-compact-preview" icon={<Eye className="size-3.5" />} onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()} onClick={onPreview}>预览</Button>
+                    {modeSwitch}
+                </div>
                 <div className="canvas-config-compact-model">{modelSelect}</div>
                 {settings}
-                <Button type="primary" className="canvas-config-compact-run" aria-label={action.label} icon={action.icon} disabled={action.disabled} onClick={action.onClick}>
+                {action ? <Button type="primary" className="canvas-config-compact-run" aria-label={action.label} icon={action.icon} disabled={action.disabled} onClick={action.onClick}>
                     <span>{action.label}</span>
-                </Button>
+                </Button> : null}
             </div>
         </div>
     );

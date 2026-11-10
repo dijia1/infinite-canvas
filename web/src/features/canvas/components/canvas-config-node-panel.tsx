@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Video } from "lucide-react";
+import { ArrowDown, ArrowUp, Edit3, Eye, Image as ImageIcon, Play, Video } from "lucide-react";
 import { App, Button, Empty, Input, Modal, Segmented } from "antd";
 
 import { resolveImageUrl } from "@/services/image-storage";
@@ -18,6 +18,8 @@ import { useThemeStore } from "@/stores/use-theme-store";
 import { hasImageMask } from "@/lib/image-mask/mask-utils";
 import { buildGenerationConfig } from "../utils/canvas-generation-utils";
 import { CanvasConfigFullFrame } from "@/components/canvas-config-full-frame";
+import { ImageInputSorter } from "@/components/image-input-sorter";
+import { imageInputLabel } from "@/lib/generation-input-order";
 import { CanvasConfigCompactCard } from "@/components/canvas-config-compact-card";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -37,9 +39,10 @@ type CanvasConfigNodePanelProps = {
     onRetryImage?: (nodeId: string) => void;
     onImageLoaded?: (nodeId: string, storageKey: string) => void;
     compact?: boolean;
+    readOnly?: boolean;
 };
 
-export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate, onPreviewImagesChange, imageResources, imageErrors, onRetryImage, onImageLoaded, compact = false }: CanvasConfigNodePanelProps) {
+export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChange, onTextInputChange, onGenerate, onPreviewImagesChange, imageResources, imageErrors, onRetryImage, onImageLoaded, compact = false, readOnly = false }: CanvasConfigNodePanelProps) {
     const { message } = App.useApp();
     const previewContentRef = useRef<HTMLDivElement>(null);
     const [previewOpen, setPreviewOpen] = useState(false);
@@ -182,11 +185,12 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 onProviderOptionsChange={(providerOptions) => onConfigChange(node.id, { providerOptions, imageProviderType: config.imageProviderType, imageRequestSchemaVersion: config.imageRequestSchemaVersion })}
             />
         ) : null;
-    if (compact) {
+    const compactCard = () => {
         const ModeIcon = mode === "video" ? Video : ImageIcon;
         return (
             <CanvasConfigCompactCard
                 theme={theme}
+                onPreview={() => setPreviewOpen(true)}
                 modeSwitch={modeSwitch}
                 modelSelect={modelSelect}
                 action={{ label: "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
@@ -197,7 +201,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 })}
             />
         );
-    }
+    };
 
     const previewModal = (
         <Modal className="canvas-config-preview-modal" rootClassName="canvas-config-preview-modal-root" title="输入预览" open={previewOpen} onCancel={() => setPreviewOpen(false)} footer={null} width={860} centered destroyOnHidden>
@@ -206,11 +210,17 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                     <div className="flex h-[min(66vh,580px)] flex-col gap-3 overflow-hidden">
                         <div className="shrink-0">
                             <PreviewSection title="图片提示词" count={imageInputs.length} empty="暂无图片提示词">
-                                <div className="thin-scrollbar flex gap-1.5 overflow-x-auto pb-1">
-                                    {imageInputs.map((input, index) => (
-                                        <ImageSortCard key={input.nodeId} input={input} resource={imageResources?.get(input.nodeId)} error={imageErrors?.get(input.nodeId)} onRetry={onRetryImage} onLoaded={onImageLoaded} imageIndex={index} imageTotal={imageInputs.length} theme={theme} onMove={moveInput} />
-                                    ))}
-                                </div>
+                                <ImageInputSorter theme={theme} readOnly={readOnly} onReorder={(keys) => {
+                                    const ordered = new Map(imageInputs.map((input) => [input.nodeId, input]));
+                                    let index = 0;
+                                    const next = inputs.map((input) => input.type === "image" ? ordered.get(keys[index++]!)! : input);
+                                    onConfigChange(node.id, { inputOrder: next.map((input) => input.nodeId) });
+                                }} items={imageInputs.map((input, index) => ({
+                                    key: input.nodeId,
+                                    title: input.title,
+                                    badge: hasImageMask(input.image?.mask) ? `${imageInputLabel(index)} · ${index === 0 ? "遮罩目标" : "遮罩须放图1"}` : undefined,
+                                    preview: <InputPreviewImage input={input} resource={imageResources?.get(input.nodeId)} error={imageErrors?.get(input.nodeId)} onRetry={onRetryImage} onLoaded={onImageLoaded} />,
+                                }))} />
                             </PreviewSection>
                         </div>
                         <div className="grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-hidden">
@@ -258,8 +268,8 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
         </Modal>
     );
 
-    return (
-        <CanvasConfigFullFrame width={node.width} height={node.height} style={{ color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
+    return <>
+        {compact ? compactCard() : <CanvasConfigFullFrame width={node.width} height={node.height} style={{ color: theme.node.text, "--config-compact-control": theme.node.panel } as CSSProperties}>
             <div className="flex min-w-0 shrink-0 flex-col gap-2">
                 <div className="flex shrink-0 items-center justify-between gap-2">
                     <div className="flex min-w-0 items-center gap-2">
@@ -291,9 +301,9 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                     <span>开始生成</span>
                 </span>
             </Button>
-            {previewModal}
-        </CanvasConfigFullFrame>
-    );
+        </CanvasConfigFullFrame>}
+        {previewModal}
+    </>;
 }
 
 function PreviewSection({ title, count, empty, children }: { title: string; count: number; empty: string; children: React.ReactNode }) {
@@ -371,42 +381,10 @@ function InputPreviewImage({ input, resource, error, onRetry, onLoaded }: {
                     else setAttempt((value) => value + 1);
                 }}>图片加载失败，点击重试</button>
             ) : source ? (
-                <img src={source} alt={input.title} className="aspect-square w-full object-cover" onError={() => setFailedUrl(source)} onLoad={() => {
+                <img src={source} alt={input.title} draggable={false} className="aspect-square w-full object-cover" onError={() => setFailedUrl(source)} onLoad={() => {
                     if (resource) onLoaded?.(input.nodeId, resource.storageKey);
                 }} />
             ) : <span role="status" className="text-[10px]">图片加载中…</span>}
-        </div>
-    );
-}
-
-function ImageSortCard({
-    input, resource, error, onRetry, onLoaded,
-    imageIndex,
-    imageTotal,
-    theme,
-    onMove,
-}: {
-    resource?: CanvasImageResource;
-    error?: string;
-    onRetry?: (nodeId: string) => void;
-    onLoaded?: (nodeId: string, storageKey: string) => void;
-    input: NodeGenerationInput;
-    imageIndex: number;
-    imageTotal: number;
-    theme: (typeof canvasThemes)[keyof typeof canvasThemes];
-    onMove: (input: NodeGenerationInput, offset: number) => void;
-}) {
-    if (!input.image) return null;
-    const masked = hasImageMask(input.image.mask);
-    const inputLabel = imageIndex === 0 ? (masked ? "主图 A · 遮罩目标" : "主图 A") : masked ? "遮罩必须置于主图 A" : `参考图 ${String.fromCharCode("B".charCodeAt(0) + imageIndex - 1)}`;
-    return (
-        <div className="w-24 shrink-0 overflow-hidden rounded-lg border" style={{ background: theme.node.fill, borderColor: theme.node.stroke }}>
-            <div className="relative">
-                <InputPreviewImage input={input} resource={resource} error={error} onRetry={onRetry} onLoaded={onLoaded} />
-                <span className="absolute left-1 top-1 rounded bg-black/50 px-1 py-0.5 text-[9px] font-medium text-white">{inputLabel}</span>
-                <HorizontalOrderButtons index={imageIndex} total={imageTotal} onMove={(offset) => onMove(input, offset)} />
-            </div>
-            <div className="truncate px-1.5 py-1 text-[10px] opacity-60">{input.title || `图 ${imageIndex + 1}`}</div>
         </div>
     );
 }
@@ -417,14 +395,5 @@ function VerticalOrderButtons({ index, total, onMove }: { index: number; total: 
             <Button size="small" className="!h-6 !w-6 !min-w-6 !p-0" icon={<ArrowUp className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
             <Button size="small" className="!h-6 !w-6 !min-w-6 !p-0" icon={<ArrowDown className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
         </>
-    );
-}
-
-function HorizontalOrderButtons({ index, total, onMove }: { index: number; total: number; onMove: (offset: number) => void }) {
-    return (
-        <div className="absolute inset-x-1 bottom-1 flex justify-between">
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowLeft className="size-3" />} disabled={index <= 0} onClick={() => onMove(-1)} />
-            <Button size="small" className="!h-6 !w-6 !min-w-6 !rounded-full !bg-white/85 !p-0 !shadow-sm" icon={<ArrowRight className="size-3" />} disabled={index >= total - 1} onClick={() => onMove(1)} />
-        </div>
     );
 }

@@ -3,7 +3,7 @@ import test from "node:test";
 import { sourceModule } from "@/test-utils/source-component";
 import { sourceBehavior } from "@/test-utils/source-behavior";
 import { CanvasNodeType } from "../types";
-import { fitNodeSize } from "../utils/canvas-node-size";
+import { videoNodeSize } from "../utils/canvas-node-size";
 
 const dimensionsURL = new URL("./material-video-asset.ts", import.meta.url);
 test("known video geometry needs no preview or video request", async () => {
@@ -31,8 +31,8 @@ test("private video drops create a video reference without uploading or copying 
     const create = sourceBehavior(new URL("../editor/canvas-client-page.tsx", import.meta.url), {
         useCallback: (callback: unknown) => callback,
         videoCanEditRef: { current: true },
-        getVideoSessionScope: () => "canvas", videoAssetDimensions: async () => ({ width: 720, height: 1280 }), fitNodeSize,
-        VIDEO_NODE_MAX_WIDTH: 640, VIDEO_NODE_MAX_HEIGHT: 640, CanvasNodeType,
+        getVideoSessionScope: () => "canvas", videoAssetDimensions: async () => ({ width: 720, height: 1280 }), videoNodeSize,
+        CanvasNodeType,
         createCanvasNode: (type: string, position: unknown, metadata: unknown) => ({ id: "node", type, position, metadata }),
         setNodes: (update: (previous: any[]) => any[]) => nodes.push(...update([])),
         setSelectedNodeIds() {}, setSelectedConnectionId() {}, setDialogNodeId() {},
