@@ -303,8 +303,8 @@ export const CanvasNode = React.memo(function CanvasNode({
     };
     const handlesVisible = data.type === CanvasNodeType.Image ? hovered : hovered || isSelected || isConnecting;
     const connectionHandles = <>
-        <ConnectionHandleDot side="left" visible={handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
-        <ConnectionHandleDot side="right" visible={data.type !== CanvasNodeType.Config && handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
+        <ConnectionHandleDot nodeWidth={data.width} nodeHeight={data.height} side="left" visible={handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
+        <ConnectionHandleDot nodeWidth={data.width} nodeHeight={data.height} side="right" visible={data.type !== CanvasNodeType.Config && handlesVisible} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
     </>;
 
     if (renderDetail === "overview") {

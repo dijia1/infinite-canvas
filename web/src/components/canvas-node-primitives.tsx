@@ -63,12 +63,16 @@ export function CanvasResizeHandle({
 }
 
 export function CanvasConnectionHandle({
+    nodeWidth,
+    nodeHeight,
     side,
     visible,
     label,
     onMouseDown,
     onPointerDown,
 }: {
+    nodeWidth: number;
+    nodeHeight: number;
     side: "left" | "right";
     visible: boolean;
     label?: string;
@@ -81,11 +85,17 @@ export function CanvasConnectionHandle({
             data-canvas-connection={side}
             aria-label={label}
             className={`group/connection absolute top-1/2 z-30 flex -translate-y-1/2 cursor-crosshair items-center justify-center transition-opacity duration-150 ${side === "left" ? "left-0 -translate-x-1/2" : "right-0 translate-x-1/2"} ${visible ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"}`}
-            style={{ width: "calc(36px * var(--canvas-inverse-scale, 1))", height: "calc(36px * var(--canvas-inverse-scale, 1))" }}
-            onMouseDown={onMouseDown}
-            onPointerDown={onPointerDown}
+            style={{
+                // The zoom transform and inverse scale change together; CSS keeps this
+                // screen-space limit current without subscribing every node to zoom.
+                "--canvas-connection-hit-size": `min(calc(28px * var(--canvas-inverse-scale, 1)), ${Math.min(nodeWidth, nodeHeight) * 0.4}px)`,
+                width: "var(--canvas-connection-hit-size)",
+                height: "var(--canvas-connection-hit-size)",
+            } as CSSProperties}
+            onMouseDown={onMouseDown ? (event) => { if (event.button === 0) onMouseDown(event); } : undefined}
+            onPointerDown={onPointerDown ? (event) => { if (event.button === 0) onPointerDown(event); } : undefined}
         >
-            <div className="rounded-full border-solid transition-transform group-hover/connection:scale-125" style={{ width: "calc(12px * var(--canvas-inverse-scale, 1))", height: "calc(12px * var(--canvas-inverse-scale, 1))", borderWidth: "calc(2px * var(--canvas-inverse-scale, 1))", background: theme.node.panel, borderColor: theme.node.text }} />
+            <div className="rounded-full border-solid transition-[filter] group-hover/connection:brightness-125" style={{ width: "min(calc(12px * var(--canvas-inverse-scale, 1)), calc(var(--canvas-connection-hit-size) / 2))", height: "min(calc(12px * var(--canvas-inverse-scale, 1)), calc(var(--canvas-connection-hit-size) / 2))", borderWidth: "min(calc(2px * var(--canvas-inverse-scale, 1)), calc(var(--canvas-connection-hit-size) / 12))", background: theme.node.panel, borderColor: theme.node.text }} />
         </div>
     );
 }

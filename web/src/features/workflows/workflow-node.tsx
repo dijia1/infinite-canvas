@@ -222,22 +222,24 @@ export function WorkflowNodeCard({
             {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}
             {!readOnly && generation ? (
                 <CanvasConnectionHandle
+                    nodeWidth={width}
+                    nodeHeight={height}
                     side="left"
                     visible={hovered || selected || connecting}
                     label="连接到生成配置"
                     onPointerDown={(event) => {
-                        if (event.button !== 0) return;
                         event.stopPropagation();
                         onConnectTarget(event);
                     }}
                 />
             ) : !readOnly ? (
                 <CanvasConnectionHandle
+                    nodeWidth={width}
+                    nodeHeight={height}
                     side="right"
                     visible={mediaType === "image" ? hovered : hovered || selected || connecting}
                     label="开始连接"
                     onPointerDown={(event) => {
-                        if (event.button !== 0) return;
                         event.stopPropagation();
                         onStartSource(event);
                     }}
@@ -407,11 +409,12 @@ export function WorkflowOutputCard({
             {inputBadgeLabel ? <CanvasInputBadge label={inputBadgeLabel} /> : null}
             {!readOnly ? (
                 <CanvasConnectionHandle
+                    nodeWidth={width}
+                    nodeHeight={height}
                     side="right"
                     visible={slot.type === "image" ? hovered : hovered || selected || connecting}
                     label="从输出开始连接"
                     onPointerDown={(event) => {
-                        if (event.button !== 0) return;
                         event.stopPropagation();
                         onStartSource(event);
                     }}
