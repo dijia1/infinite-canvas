@@ -55,14 +55,22 @@ test("default provider selection uses actual capabilities and configured image p
     assert.equal(supports(types, providers, "hybrid", "video_generate"), false, "image-capable providers still require pricing");
 });
 
-test("image providers require explicit ratios except Seedream 5 Pro", () => {
+test("image providers require configured ratios when their schema exposes size", () => {
     const supportsImagePricing = sourceBehavior(pageURL).named("supportsImagePricing");
     const supportsAspectRatios = sourceBehavior(pageURL).named("supportsAspectRatios");
     const supports = sourceBehavior(pageURL, { supportsImagePricing, supportsAspectRatios }).named("supports");
-    const types = ["gpt-image", "doubao-seedream-5-pro"].map((id) => ({ id, capabilities: ["image_generate"] }));
+    const types = ["gpt-image", "maizi-seedream-5-5", "doubao-seedream-5-pro"].map((id) => ({
+        id,
+        capabilities: ["image_generate"],
+        imageRequestSchema: { fields: id === "doubao-seedream-5-pro" ? [{ key: "resolution" }] : [{ key: "size" }, { key: "resolution" }] },
+    }));
     const providers = types.map((type) => ({ id: type.id, type: type.id, imagePrices: [{ resolution: "2K", amount: "1" }] }));
     assert.equal(supports(types, providers, "gpt-image", "image_generate"), false);
+    assert.equal(supports(types, providers, "maizi-seedream-5-5", "image_generate"), false);
     assert.equal(supports(types, providers, "doubao-seedream-5-pro", "image_generate"), true);
+    const configuredProviders = providers.map((provider) => ({ ...provider, aspectRatios: ["1:1"] }));
+    assert.equal(supports(types, configuredProviders, "gpt-image", "image_generate"), true);
+    assert.equal(supports(types, configuredProviders, "maizi-seedream-5-5", "image_generate"), true);
 });
 
 test("image and video tabs scope both types and provider lists", () => {
