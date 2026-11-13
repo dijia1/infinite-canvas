@@ -29,3 +29,11 @@ test("rejects more than ten edit images and invalid mask placement", () => {
     assert.equal(imageEditReferenceError([reference("main"), reference("masked", true)]), "带遮罩的主图必须位于第一张参考图");
     assert.equal(imageEditReferenceError([reference("main", true), reference("second", true)]), "图像编辑只能使用一个遮罩");
 });
+
+
+test("applies model reference and mask limits before uploading", () => {
+    const schema = { version: "v1", fields: [], maxReferenceImages: 10, supportsMask: false };
+    assert.equal(imageEditReferenceError([reference("main", true)], schema), "当前模型不支持遮罩编辑");
+    assert.equal(imageEditReferenceError(Array.from({ length: 10 }, (_, i) => reference(String(i))), schema), undefined);
+    assert.equal(imageEditReferenceError([reference("a"), reference("b")], { ...schema, maxReferenceImages: 1 }), "当前模型最多支持 1 张参考图");
+});

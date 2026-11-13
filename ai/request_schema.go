@@ -26,13 +26,15 @@ type ImageRequestFieldOption struct {
 }
 
 type ImageRequestField struct {
-	Key         string                    `json:"key"`
-	Label       string                    `json:"label"`
-	Type        ImageRequestFieldType     `json:"type"`
-	Description string                    `json:"description,omitempty"`
-	Required    bool                      `json:"required"`
-	Default     json.RawMessage           `json:"default,omitempty"`
-	Options     []ImageRequestFieldOption `json:"options,omitempty"`
+	Key         string                `json:"key"`
+	Label       string                `json:"label"`
+	Type        ImageRequestFieldType `json:"type"`
+	Description string                `json:"description,omitempty"`
+	Required    bool                  `json:"required"`
+	Default     json.RawMessage       `json:"default,omitempty"`
+	// FixedOptions limits administrator configuration to this declared set.
+	FixedOptions bool                      `json:"fixedOptions,omitempty"`
+	Options      []ImageRequestFieldOption `json:"options,omitempty"`
 }
 
 // ImageRequestSchema is public metadata for the active provider. It never

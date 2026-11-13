@@ -56,13 +56,14 @@ func TestNormalizeWorkflowGraphRejectsInvalidStructure(t *testing.T) {
 		want   string
 	}{
 		{
-			name: "ten input ports",
+			name: "twelve input ports",
 			mutate: func(graph *model.WorkflowGraph) {
 				graph.Nodes[2].InputPorts = append(graph.Nodes[2].InputPorts, []model.WorkflowInputPort{
 					{ID: "three", Type: model.WorkflowPortImage}, {ID: "four", Type: model.WorkflowPortImage},
 					{ID: "five", Type: model.WorkflowPortImage}, {ID: "six", Type: model.WorkflowPortImage},
 					{ID: "seven", Type: model.WorkflowPortImage}, {ID: "eight", Type: model.WorkflowPortImage},
 					{ID: "nine", Type: model.WorkflowPortImage}, {ID: "ten", Type: model.WorkflowPortImage},
+					{ID: "eleven", Type: model.WorkflowPortImage}, {ID: "twelve", Type: model.WorkflowPortImage},
 				}...)
 			},
 			want: "输入端口",

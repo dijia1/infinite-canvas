@@ -27,6 +27,10 @@ export default function AdminSettingsPage() {
     const [form] = Form.useForm<ProviderFormValues>();
     const selectedType = Form.useWatch("type", form);
     const selectedProviderType = types.find((item) => item.id === selectedType);
+    const fixedOptions = (key: string) => {
+        const field = selectedProviderType?.imageRequestSchema?.fields.find((item) => item.key === key);
+        return field?.fixedOptions ? field.options : undefined;
+    };
     const configFields = selectedProviderType?.configFields || [];
     const acceptsOpaqueAspectRatios = selectedProviderType?.capabilities.includes("video_generate") ?? false;
 
@@ -88,7 +92,7 @@ export default function AdminSettingsPage() {
             name: values.name.trim(),
             imagePrices,
             videoPrices: (values.videoPrices || []).map((item) => ({ resolution: item.resolution.trim(), amount: item.amount.trim() })),
-            aspectRatios: supportsAspectRatios(values.type) ? [...new Set((values.aspectRatios || []).map((value) => value.trim()))] : [],
+            aspectRatios: supportsAspectRatios(types, values.type) ? [...new Set((values.aspectRatios || []).map((value) => value.trim()))] : [],
             config,
         };
         setSettings((current) => ({ ...current, ai: { ...current.ai, providers: editingId ? current.ai.providers.map((item) => (item.id === editingId ? provider : item)) : [...current.ai.providers, provider] } }));
@@ -157,7 +161,7 @@ export default function AdminSettingsPage() {
                             { title: "类型", dataIndex: "type", render: (value) => types.find((item) => item.id === value)?.name || value },
                             { title: "能力", dataIndex: "type", render: (value) => (types.find((item) => item.id === value)?.capabilities || []).map((item) => <Tag key={item}>{capabilityName(item)}</Tag>) },
                             { title: activeTab === "image" ? "图片价格（元/张）" : "视频价格（元/秒）", render: (_, provider) => formatImagePrices(activeTab === "image" ? provider.imagePrices || [] : provider.videoPrices || []) },
-                            { title: "比例", render: (_, provider) => (supportsAspectRatios(provider.type) ? (provider.aspectRatios || []).join("、") || "待配置" : "通过提示词控制") },
+                            { title: "比例", render: (_, provider) => (supportsAspectRatios(types, provider.type) ? (provider.aspectRatios || []).join("、") || "待配置" : "通过提示词控制") },
                             {
                                 title: "状态",
                                 render: (_, provider) => (
@@ -227,7 +231,7 @@ export default function AdminSettingsPage() {
                                                     ]}
                                                     className="mb-0 flex-1"
                                                 >
-                                                    <Input placeholder="例如：2K 或 2048x1152" />
+                                                    {fixedOptions("resolution") ? <Select options={fixedOptions("resolution")} placeholder="选择分辨率" /> : <Input placeholder="例如：2K 或 2048x1152" />}
                                                 </Form.Item>
                                                 <Form.Item
                                                     name={[field.name, "amount"]}
@@ -288,7 +292,7 @@ export default function AdminSettingsPage() {
                             )}
                         </Form.List>
                     ) : null}
-                    {supportsAspectRatios(selectedType) ? (
+                    {supportsAspectRatios(types, selectedType) ? (
                         <Form.List name="aspectRatios">
                             {(fields, { add, remove }) => (
                                 <Form.Item label="画布比例选项" extra="按上游支持的比例逐行配置。留空可保存，但模型会标记为待配置。">
@@ -312,7 +316,7 @@ export default function AdminSettingsPage() {
                                                         },
                                                     ]}
                                                 >
-                                                    <Input placeholder={acceptsOpaqueAspectRatios ? "例如：portrait 或 16:9" : "例如：16:9"} />
+                                                    {fixedOptions("size") ? <Select options={fixedOptions("size")} placeholder="选择比例" /> : <Input placeholder={acceptsOpaqueAspectRatios ? "例如：portrait 或 16:9" : "例如：16:9"} />}
                                                 </Form.Item>
                                                 <Button danger type="text" icon={<DeleteOutlined />} onClick={() => remove(field.name)} aria-label="删除该比例" />
                                             </Space>
@@ -357,7 +361,7 @@ function supports(types: AdminAIProviderType[], providers: AdminAIProvider[], pr
     const provider = providers.find((item) => item.id === providerId);
     if (!provider || !types.find((item) => item.id === provider.type)?.capabilities.includes(capability)) return false;
     if (capability === "video_generate") return (provider.videoPrices || []).length > 0 && (provider.aspectRatios || []).length > 0;
-    return (provider.imagePrices || []).length > 0 && (!supportsAspectRatios(provider.type) || (provider.aspectRatios || []).length > 0);
+    return (provider.imagePrices || []).length > 0 && (!supportsAspectRatios(types, provider.type) || (provider.aspectRatios || []).length > 0);
 }
 
 function supportsImagePricing(types: AdminAIProviderType[], type: string) {
@@ -369,6 +373,7 @@ function capabilityName(value: AdminAIProviderType["capabilities"][number]) {
     return ({ image_generate: "文生图", image_edit: "图像编辑", video_generate: "生视频" } as Record<string, string>)[value];
 }
 
-function supportsAspectRatios(type: string) {
-    return type !== "doubao-seedream-5-pro";
+function supportsAspectRatios(types: AdminAIProviderType[], type: string) {
+    const definition = types.find((item) => item.id === type);
+    return Boolean(definition?.capabilities.includes("video_generate") || definition?.imageRequestSchema?.fields.some((field) => field.key === "size"));
 }

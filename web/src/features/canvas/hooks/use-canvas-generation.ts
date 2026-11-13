@@ -6,6 +6,7 @@ import { hasCanvasImage } from "../components/canvas-node-actions";
 
 import { useEffect, useReducer, useRef, useState } from "react";
 
+import type { ImageRequestSchema } from "@/lib/image-request-schema";
 import type { AiConfig } from "@/lib/ai-config";
 import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config";
 import type { AICapability } from "@/stores/use-config-store";
@@ -46,6 +47,7 @@ export type CanvasGenerationControllerOptions = {
     nodesRef: MutableRef<CanvasNodeData[]>;
     connectionsRef: MutableRef<CanvasConnection[]>;
     effectiveConfig: AiConfig;
+    getImageModelSchema?: (providerId: string | undefined) => ImageRequestSchema | undefined;
     getImageModelName?: (providerId: string) => string | undefined;
     getVideoModelStatus?: () => VideoModelStatus | null;
     defaultConfig: AiConfig;
@@ -537,7 +539,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         const sourceReference = sourceNode?.type === CanvasNodeType.Image && (sourceNode.metadata?.content || sourceNode.metadata?.mediaId) ? sourceNodeReferenceImages(sourceNode, options.maskResources) : [];
         const referenceImages = sourceReference.length ? sourceReference : generationContext.referenceImages;
         if (mode === "image") {
-            const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages) : undefined;
+            const referenceError = referenceImages.length ? imageEditReferenceError(referenceImages, options.getImageModelSchema?.(generationConfig.imageProviderId)) : undefined;
             if (referenceError) {
                 options.message.error(referenceError);
                 return;
@@ -785,6 +787,13 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             if (useReferenceImages && !retryReferenceImages) {
                 missingReference(node.id);
                 return;
+            }
+            if (node.type === CanvasNodeType.Image && useReferenceImages) {
+                const referenceError = imageEditReferenceError(retryReferenceImages || [], options.getImageModelSchema?.(generationConfig.imageProviderId));
+                if (referenceError) {
+                    options.message.error(referenceError);
+                    return;
+                }
             }
             setRunningNodeId(node.id);
             options.setNodes((prev) => !current(prev) ? prev : prev.map((item) => (item.id === node.id ? { ...item, metadata: { ...withoutLegacyModel(item.metadata), status: NODE_STATUS_LOADING, errorDetails: undefined } } : item)));

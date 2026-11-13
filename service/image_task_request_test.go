@@ -18,8 +18,8 @@ func TestNormalizeImageTaskRequestDefaultsAndValidatesImageAndMaskCounts(t *test
 	if err != nil {
 		t.Fatalf("normalizeImageTaskRequest() error = %v", err)
 	}
-	if request.Request.OutputFormat != "jpeg" || request.Request.Background != "auto" {
-		t.Fatalf("defaults = %q/%q, want jpeg/auto", request.Request.OutputFormat, request.Request.Background)
+	if request.Request.OutputFormat != "" || request.Request.Background != "" {
+		t.Fatalf("defaults = %q/%q, want deferred model defaults", request.Request.OutputFormat, request.Request.Background)
 	}
 
 	for _, item := range []ai.ImageRequest{

@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -158,6 +159,9 @@ func validateSettings(settings model.AISettings) error {
 		if err := validateProviderImagePrices(provider); err != nil {
 			return err
 		}
+		if err := validateConfiguredImageOptions(provider, typeInfo); err != nil {
+			return err
+		}
 		if err := validateProviderVideoSettings(provider, typeInfo); err != nil {
 			return err
 		}
@@ -222,36 +226,87 @@ func validateImageResolutionParameter(resolution string) error {
 	return nil
 }
 
+// Fixed option lists are model constraints; legacy lists remain administrator-defined.
+func validateConfiguredImageOptions(provider model.AIProvider, info ai.ProviderType) error {
+	if info.ImageRequestSchema == nil {
+		return nil
+	}
+	for _, field := range info.ImageRequestSchema.Fields {
+		if !field.FixedOptions {
+			continue
+		}
+		values := []string{}
+		if field.Key == "size" {
+			values = provider.AspectRatios
+		}
+		if field.Key == "resolution" {
+			for _, price := range provider.ImagePrices {
+				values = append(values, price.Resolution)
+			}
+		}
+		for _, value := range values {
+			found := false
+			for _, option := range field.Options {
+				if value == option.Value {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("%s 不支持%s：%s", info.Name, field.Label, value)
+			}
+		}
+	}
+	return nil
+}
+
 func configuredImageRequestSchema(provider model.AIProvider, schema ai.ImageRequestSchema) ai.ImageRequestSchema {
 	schema.Fields = append([]ai.ImageRequestField(nil), schema.Fields...)
 	for index := range schema.Fields {
 		field := &schema.Fields[index]
-		if field.Key == "size" {
-			field.Required = true
-			field.Type = ai.ImageRequestFieldSelect
-			field.Options = make([]ai.ImageRequestFieldOption, 0, len(provider.AspectRatios))
-			for _, ratio := range provider.AspectRatios {
-				field.Options = append(field.Options, ai.ImageRequestFieldOption{Value: ratio, Label: ratio})
-			}
-			field.Default = nil
-			if len(provider.AspectRatios) > 0 {
-				field.Default, _ = json.Marshal(provider.AspectRatios[0])
-			}
-		}
-		if field.Key != "resolution" {
+		if field.Key != "size" && field.Key != "resolution" {
 			continue
+		}
+		declared := *field
+		options := []ai.ImageRequestFieldOption{}
+		if field.Key == "size" {
+			for _, ratio := range provider.AspectRatios {
+				options = append(options, ai.ImageRequestFieldOption{Value: ratio, Label: ratio})
+			}
+		} else {
+			for _, price := range provider.ImagePrices {
+				resolution := strings.TrimSpace(price.Resolution)
+				options = append(options, ai.ImageRequestFieldOption{Value: resolution, Label: resolution, Price: price.Amount.String()})
+			}
 		}
 		field.Type = ai.ImageRequestFieldSelect
 		field.Required = true
-		field.Options = make([]ai.ImageRequestFieldOption, 0, len(provider.ImagePrices))
-		for _, price := range provider.ImagePrices {
-			resolution := strings.TrimSpace(price.Resolution)
-			field.Options = append(field.Options, ai.ImageRequestFieldOption{Value: resolution, Label: resolution, Price: price.Amount.String()})
+		field.Options = nil
+		field.Default = nil
+		var preferred string
+		if declared.FixedOptions {
+			_ = json.Unmarshal(declared.Default, &preferred)
 		}
-		if len(field.Options) > 0 {
+		for _, option := range options {
+			if declared.FixedOptions {
+				allowed := false
+				for _, original := range declared.Options {
+					if option.Value == original.Value {
+						allowed = true
+						break
+					}
+				}
+				if !allowed {
+					continue
+				}
+			}
+			field.Options = append(field.Options, option)
+			if option.Value == preferred {
+				field.Default = declared.Default
+			}
+		}
+		if len(field.Default) == 0 && len(field.Options) > 0 {
 			field.Default, _ = json.Marshal(field.Options[0].Value)
-		} else {
-			field.Default = nil
 		}
 	}
 	return schema

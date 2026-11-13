@@ -316,13 +316,8 @@ func normalizeImageTaskRequest(request CreateImageTaskRequest) (CreateImageTaskR
 	}
 	format := strings.ToLower(strings.TrimSpace(request.Request.OutputFormat))
 	background := strings.ToLower(strings.TrimSpace(request.Request.Background))
-	if format == "" {
-		format = "jpeg"
-	}
-	if background == "" {
-		background = "auto"
-	}
-	if (format != "jpeg" && format != "png") || (background != "auto" && background != "opaque" && background != "transparent") || (format == "jpeg" && background == "transparent") {
+	// Leave absent values to the selected model's schema defaults.
+	if (format != "" && format != "jpeg" && format != "png") || (background != "" && background != "auto" && background != "opaque" && background != "transparent") || (format == "jpeg" && background == "transparent") {
 		return CreateImageTaskRequest{}, safeMessageError{message: fmt.Sprintf("图片输出格式与背景组合无效：%s/%s", format, background)}
 	}
 	request.Request.OutputFormat, request.Request.Background = format, background
@@ -356,9 +351,9 @@ func configuredImageTaskRequestSchema(provider model.AIProvider, typeInfo ai.Pro
 		return nil
 	}
 	schema := configuredImageRequestSchema(provider, *typeInfo.ImageRequestSchema)
-	// Keep resolution validation and its existing price error in the service.
+	// Legacy resolution validation keeps its existing price error in the service.
 	for index, field := range typeInfo.ImageRequestSchema.Fields {
-		if field.Key != "size" {
+		if field.Key != "size" && !field.FixedOptions {
 			schema.Fields[index] = field
 		}
 	}

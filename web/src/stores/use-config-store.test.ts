@@ -56,3 +56,20 @@ test("switching to Seedream NSFW removes hidden quality and transparency setting
     assert.equal(ordinary.quality, "high");
     assert.equal(ordinary.background, "transparent");
 });
+
+test("Seedream 5.5 shares schema reconciliation and removes unsupported quality", () => {
+    const schema = { version: "v1", maxReferenceImages: 10, supportsMask: false, fields: [
+        { key: "size", label: "比例", type: "select" as const, required: true, fixedOptions: true, default: "1:1", options: [{ value: "1:1", label: "1:1" }] },
+        { key: "resolution", label: "尺寸", type: "select" as const, required: true, fixedOptions: true, default: "2K", options: ["1K", "1.5K", "2K"].map(value => ({ value, label: value })) },
+        { key: "outputFormat", label: "格式", type: "select" as const, required: false, default: "png", options: ["png", "jpeg"].map(value => ({ value, label: value })) },
+        { key: "background", label: "背景", type: "select" as const, required: false, default: "auto", options: ["auto", "opaque", "transparent"].map(value => ({ value, label: value })) },
+    ] };
+    const previous = { ...defaultConfig, imageProviderType: "maizi-image", quality: "high", resolution: "4K", outputFormat: "png" as const, background: "transparent" as const, providerOptions: { quality: "high", resolution: "4K" } };
+    const next = reconcileProviderConfig(previous, { imageAvailable: true, imageEditable: true, videoAvailable: false, defaultImageModelId: "55", imageModels: [{ id: "55", name: "Seedream 5.5", type: "maizi-seedream-5-5", imageRequestSchema: schema }] });
+    assert.equal(next.quality, "auto");
+    assert.equal(next.resolution, "2K");
+    assert.equal(next.outputFormat, "png");
+    assert.equal(next.background, "transparent");
+    assert.equal("quality" in next.providerOptions!, false);
+    assert.equal(previous.quality, "high");
+});

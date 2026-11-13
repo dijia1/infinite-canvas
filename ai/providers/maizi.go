@@ -22,9 +22,9 @@ type maiziConfig struct {
 }
 
 type maiziProvider struct {
-	config       maiziConfig
-	client       *http.Client
-	seedreamNSFW bool
+	config maiziConfig
+	client *http.Client
+	model  *maiziImageModel
 }
 
 type maiziTaskCreateResponse struct {
@@ -61,32 +61,10 @@ var maiziImageRequestSchema = ai.ImageRequestSchema{
 	},
 }
 
-func init() {
-	_ = ai.Register(ai.ProviderType{
-		ID:           "maizi-image",
-		Name:         "MaiziAI",
-		Capabilities: []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
-		ConfigFields: []ai.ConfigField{
-			{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
-			{Key: "model", Label: "模型名称", Type: "text", Placeholder: "例如：gpt-image-2", Required: true},
-		},
-		ImageRequestSchema:           &maiziImageRequestSchema,
-		CanonicalizeImageTaskRequest: canonicalizeMaiziImageTaskRequest,
-		New:                          newMaiziProvider,
-	})
-}
+func init() { registerMaiziImageModel(maiziGenericModel) }
 
 func (provider *maiziProvider) NormalizeImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
-	if provider.seedreamNSFW {
-		return normalizeMaiziSeedreamNSFWRequest(request)
-	}
-	if len(request.References) > maiziImageRequestSchema.MaxReferenceImages {
-		return ai.ImageTaskRequest{}, maiziError{message: "MaiziAI 图像编辑最多支持 7 张参考图"}
-	}
-	if request.Mask != nil && len(request.References) == 0 {
-		return ai.ImageTaskRequest{}, maiziError{message: "遮罩编辑需要参考图"}
-	}
-	return canonicalizeMaiziImageTaskRequest(request)
+	return provider.imageModel().Normalize(request)
 }
 
 func canonicalizeMaiziImageTaskRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
@@ -134,7 +112,7 @@ func newMaiziProvider(raw json.RawMessage) (ai.Provider, error) {
 	if config.APIKey == "" || config.Model == "" {
 		return nil, maiziError{message: "请填写 MaiziAI API Key 和模型名称"}
 	}
-	return &maiziProvider{config: config, client: &http.Client{}}, nil
+	return &maiziProvider{config: config, client: &http.Client{}, model: maiziGenericModel}, nil
 }
 
 func (provider *maiziProvider) CreateImageTask(ctx context.Context, request ai.ImageTaskRequest) (ai.ImageTask, error) {
@@ -234,19 +212,24 @@ func (provider *maiziProvider) v1ImageTaskBody(request ai.ImageRequest, referenc
 	if len(masks) > 0 && masks[0] != nil {
 		body["mask_url"] = maiziImageReferenceValue(*masks[0], redacted)
 	}
-	if provider.seedreamNSFW {
-		body["nsfw_check"] = false
-		delete(body, "background")
-		delete(body, "quality")
+	definition := provider.imageModel()
+	for _, key := range definition.OmitBodyFields {
+		delete(body, key)
+	}
+	for key, value := range definition.ExtraBody {
+		body[key] = value
 	}
 	return body
 }
 
-func (provider *maiziProvider) imageBaseURL() string {
-	if provider.seedreamNSFW {
-		return maiziSeedreamNSFWBaseURL
+func (provider *maiziProvider) imageBaseURL() string { return provider.imageModel().BaseURL }
+
+// Zero-value providers are also used by the shared error redactor and transport tests.
+func (provider *maiziProvider) imageModel() *maiziImageModel {
+	if provider.model != nil {
+		return provider.model
 	}
-	return maiziBaseURL
+	return maiziGenericModel
 }
 
 func maiziImageReferenceValue(reference ai.ImageReference, redacted bool) string {

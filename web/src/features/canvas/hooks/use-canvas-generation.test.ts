@@ -1257,3 +1257,16 @@ test("completed video fits actual dimensions while preserving a resize made duri
         assert.equal(completed.metadata?.naturalHeight, 640);
     }
 });
+
+test("unsupported masks are rejected before creating outputs or submitting", async () => {
+    const source = node("source", CanvasNodeType.Config);
+    const references = [{ id: "ref", name: "ref.png", type: "image/png", dataUrl: "", mediaId: "ref", mask: { version: 1, strokes: [{ id: "s", tool: "paint", radius: 0.1, points: [{ x: 0.5, y: 0.5 }] }] } }];
+    const { controller, calls, nodesRef } = setup([source], [], {
+        getImageModelSchema: () => ({ version: "v1", fields: [], maxReferenceImages: 10, supportsMask: false }),
+        hydrateGenerationContext: async () => ({ prompt: "产品图", referenceImages: references, textCount: 1, imageCount: 1 }),
+    });
+    await controller.generateNode("source", "image", "产品图");
+    assert.deepEqual(calls.errors, ["当前模型不支持遮罩编辑"]);
+    assert.equal(calls.edit, 0);
+    assert.equal(nodesRef.current.length, 1);
+});

@@ -16,6 +16,7 @@ export type ImageRequestField = {
     required: boolean;
     default?: unknown;
     options?: ImageRequestFieldOption[];
+    fixedOptions?: boolean;
 };
 
 export type ImageRequestSchema = {

@@ -41,7 +41,7 @@ describe("workflow graph", () => {
         );
     });
 
-    test("rejects cycles, incompatible sources and the tenth input", () => {
+    test("rejects cycles, incompatible sources and the twelfth input", () => {
         let graph = emptyWorkflowGraph();
         const first = createWorkflowNode("image_generation", { x: 100, y: 100 }, "first");
         const second = createWorkflowNode("image_generation", { x: 440, y: 100 }, "second");
@@ -55,10 +55,10 @@ describe("workflow graph", () => {
 
         let inputGraph = emptyWorkflowGraph();
         const target = createWorkflowNode("video_generation", { x: 400, y: 0 }, "target");
-        const inputs = Array.from({ length: 10 }, (_, index) => createWorkflowNode("text_input", { x: 0, y: index * 80 }, `text-${index}`));
+        const inputs = Array.from({ length: 12 }, (_, index) => createWorkflowNode("text_input", { x: 0, y: index * 80 }, `text-${index}`));
         inputGraph = { ...inputGraph, nodes: [...inputs, target] };
-        for (const input of inputs.slice(0, 9)) inputGraph = addWorkflowConnection(inputGraph, { sourceNodeId: input.id, sourceSlotId: "output", targetNodeId: target.id });
-        assert.throws(() => addWorkflowConnection(inputGraph, { sourceNodeId: inputs[9]!.id, sourceSlotId: "output", targetNodeId: target.id }), /最多连接 9 个输入/);
+        for (const input of inputs.slice(0, 11)) inputGraph = addWorkflowConnection(inputGraph, { sourceNodeId: input.id, sourceSlotId: "output", targetNodeId: target.id });
+        assert.throws(() => addWorkflowConnection(inputGraph, { sourceNodeId: inputs[11]!.id, sourceSlotId: "output", targetNodeId: target.id }), /最多连接 11 个输入/);
     });
 
     test("keeps existing output slot ids and blocks removal while connected", () => {

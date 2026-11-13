@@ -20,7 +20,7 @@ const (
 	maxWorkflowGraphNodes    = 1000
 	maxWorkflowGraphFrames   = 1000
 	maxWorkflowConnections   = 5000
-	maxWorkflowNodeInputs    = 9
+	maxWorkflowNodeInputs    = 11
 	maxWorkflowNodeOutputs   = 9
 	maxWorkflowOptionDepth   = 8
 	maxWorkflowOptionEntries = 256
@@ -306,7 +306,7 @@ func normalizeWorkflowGraph(graph model.WorkflowGraph) (model.WorkflowGraph, err
 		orders[orderKey] = struct{}{}
 		incoming[connection.TargetNodeID]++
 		if incoming[connection.TargetNodeID] > maxWorkflowNodeInputs {
-			return model.WorkflowGraph{}, workflowValidationError{message: "生成节点最多连接 9 个输入"}
+			return model.WorkflowGraph{}, workflowValidationError{message: "生成节点最多连接 11 个输入"}
 		}
 		adjacency[connection.SourceNodeID] = append(adjacency[connection.SourceNodeID], connection.TargetNodeID)
 		indegree[connection.TargetNodeID]++
@@ -421,7 +421,7 @@ func normalizeWorkflowNode(node *model.WorkflowNode) error {
 			return workflowValidationError{message: "生成节点字段无效"}
 		}
 		if len(node.InputPorts) > maxWorkflowNodeInputs {
-			return workflowValidationError{message: "生成节点输入端口最多为 9 个"}
+			return workflowValidationError{message: "生成节点输入端口最多为 11 个"}
 		}
 		if len(node.Outputs) < 1 || len(node.Outputs) > maxWorkflowNodeOutputs {
 			return workflowValidationError{message: "生成节点输出槽位应为 1-9 个"}

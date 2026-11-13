@@ -16,6 +16,7 @@ Infinite Canvas：Go（Gin、GORM、PostgreSQL）后端，`web/` 下为 Next.js 
 - 部署、发布与回滚：`docs/deployment.md`
 - 前后端接口响应约定：`docs/api-response.md`
 - 系统配置数据结构：`docs/system-settings.md`
+- 图片模型接入与 Maizi 协议：`docs/ai-providers.md`
 - 画布数据结构：`docs/canvas-data-structure.md`
 - 功能范围：`docs/features.md`
 

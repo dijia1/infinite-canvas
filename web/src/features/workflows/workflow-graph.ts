@@ -4,7 +4,7 @@ import { CONFIG_NODE_MIN_SIZE } from "@/lib/canvas-config-card";
 
 import type { WorkflowConnection, WorkflowGraph, WorkflowMediaType, WorkflowNode, WorkflowNodeType, WorkflowPosition, WorkflowRunScope } from "./types";
 
-const MAX_INPUTS = 9;
+const MAX_INPUTS = 11;
 const MAX_OUTPUTS = 9;
 
 export function emptyWorkflowGraph(): WorkflowGraph {
@@ -50,7 +50,7 @@ export function validateWorkflowConnection(graph: WorkflowGraph, input: Workflow
     if (!sourceType) throw new Error("输出槽位不存在");
     if (target.type === "image_generation" && sourceType === "video") throw new Error("生图配置不支持视频输入");
     if (graph.connections.some((connection) => connection.sourceNodeId === source.id && connection.sourceSlotId === input.sourceSlotId && connection.targetNodeId === target.id)) throw new Error("该输入已经连接");
-    if (graph.connections.filter((connection) => connection.targetNodeId === target.id).length >= MAX_INPUTS) throw new Error("每个生成步骤最多连接 9 个输入");
+    if (graph.connections.filter((connection) => connection.targetNodeId === target.id).length >= MAX_INPUTS) throw new Error("每个生成步骤最多连接 11 个输入");
     if (createsCycle(graph, source.id, target.id)) throw new Error("连接不能形成循环");
 
     return { source, target, sourceType };

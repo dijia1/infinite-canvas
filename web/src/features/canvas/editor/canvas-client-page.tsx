@@ -21,6 +21,7 @@ import { canApplyPublicImageMigration, hasPublicImageMigrationCandidates, normal
 import { fetchPublicImageAccess, importPublicImage } from "@/services/api/public-images";
 import { downloadVideo } from "@/services/video-download";
 import { requestVideoGeneration } from "@/services/api/video";
+import { resolveSelectedModel } from "@/lib/model-selection";
 import { defaultConfig, useConfigStore, useEffectiveConfig } from "@/stores/use-config-store";
 import {
     deleteStoredImages,
@@ -828,6 +829,7 @@ function InfiniteCanvasPage() {
         defaultConfig,
         isAiConfigReady,
         getVideoModelStatus: () => useConfigStore.getState().status,
+        getImageModelSchema: (providerId) => resolveSelectedModel(aiStatus?.imageModels, providerId, aiStatus?.defaultImageModelId)?.imageRequestSchema,
         getImageModelName: (providerId) => useConfigStore.getState().status?.imageModels?.find((model) => model.id === providerId)?.name,
         openConfigDialog,
         message,

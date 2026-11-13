@@ -22,30 +22,7 @@ var maiziSeedreamNSFWRequestSchema = ai.ImageRequestSchema{
 	},
 }
 
-func init() {
-	_ = ai.Register(ai.ProviderType{
-		ID:                           "maizi-seedream-5-pro-nsfw",
-		Name:                         "MaiziAI Seedream 5.0 Pro NSFW",
-		Capabilities:                 []ai.Capability{ai.CapabilityImageGenerate, ai.CapabilityImageEdit},
-		ImageRequestSchema:           &maiziSeedreamNSFWRequestSchema,
-		CanonicalizeImageTaskRequest: canonicalizeMaiziSeedreamNSFWRequest,
-		ConfigFields: []ai.ConfigField{
-			{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
-			{Key: "model", Label: "模型名称", Type: "text", Placeholder: "例如：doubao-seedream-5-0-pro", Required: true},
-		},
-		New: newMaiziSeedreamNSFWProvider,
-	})
-}
-
-func newMaiziSeedreamNSFWProvider(raw json.RawMessage) (ai.Provider, error) {
-	instance, err := newMaiziProvider(raw)
-	if err != nil {
-		return nil, err
-	}
-	provider := instance.(*maiziProvider)
-	provider.seedreamNSFW = true
-	return provider, nil
-}
+func init() { registerMaiziImageModel(maiziSeedreamNSFWModel) }
 
 func normalizeMaiziSeedreamNSFWRequest(request ai.ImageTaskRequest) (ai.ImageTaskRequest, error) {
 	if len(request.References) > maiziSeedreamNSFWRequestSchema.MaxReferenceImages {
