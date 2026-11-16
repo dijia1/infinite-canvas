@@ -11,7 +11,7 @@ import type { AiConfig } from "@/lib/ai-config";
 import { reconcileVideoConfig, type VideoModelStatus } from "@/lib/video-config";
 import type { AICapability } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
-import { VideoQueryTransientError, VideoRequestRejectedError, validateVideoGeneration, getVideoTask, getVideoTaskByClientRequest, resumeVideoTask, type VideoGenerationTask } from "@/services/api/video";
+import { VideoQueryTransientError, VideoRequestRejectedError, validateVideoGeneration, getVideoTask, getVideoTaskByClientRequest, resumeVideoTask, type VideoGenerationTask, type VideoGenerationSource } from "@/services/api/video";
 import { ImageQueryTransientError, ImageRequestRejectedError, type ImageGenerationTask } from "@/services/api/image";
 import { imageMetadata, type StoredCanvasImage } from "@/services/canvas-image-hydration";
 import type { UploadedFile } from "@/services/file-storage";
@@ -92,6 +92,7 @@ export type CanvasGenerationController = {
     stopTaskObservations: (all?: boolean) => void;
     readonly runningNodeId: string | null;
     updateOptions: (options: CanvasGenerationControllerOptions) => void;
+    generateFinalVideo: (nodeId: string, source: VideoGenerationSource) => Promise<void>;
     generateNode: (nodeId: string, mode: CanvasGenerationMode, prompt: string) => Promise<void>;
     retryNode: (node: CanvasNodeData, action?: GenerationRecoveryAction, confirmed?: boolean) => Promise<void>;
     generateImageFromTextNode: (node: CanvasNodeData) => void;
@@ -359,7 +360,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             }
         }
         if (!taskCurrent(identity, options.nodesRef.current, task)) return;
-        if (task.status === "succeeded" || (task.status === "failed" || task.status === "uncertain" || task.status === "paused")) {
+        if (task.status === "succeeded" || task.status === "failed" || task.status === "uncertain" || task.status === "paused") {
             await observeImageTask(nodeId, rootId, task, identity);
             return;
         }
@@ -428,6 +429,8 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         // Capture the submitted config once; polling/recovery only merge task results.
         const snapshot: CanvasNodeMetadata = {
             generationMode: "video",
+            videoMode: config.videoMode,
+            sourceDraftTaskId: config.sourceDraftTaskId,
             prompt,
             videoProviderId: config.videoProviderId,
             videoProviderName: options.getVideoModelStatus?.()?.videoModels?.find(model => model.id === config.videoProviderId)?.name,
@@ -462,6 +465,49 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
         if (!taskCurrent(identity, options.nodesRef.current, task)) return;
         if (["succeeded", "failed", "uncertain", "paused"].includes(task.status)) await observeVideoTask(nodeId, task, identity);
         else void observeVideoTask(nodeId, task, identity);
+    };
+    const generateFinalVideo = async (nodeId: string, source: VideoGenerationSource) => {
+        if (source.mode !== "draft") return;
+        if (options.nodesRef.current.some((n) => n.metadata?.sourceDraftTaskId === source.taskId)) {
+            options.message.warning("该样片已有正式片任务，请查看结果或重试原任务");
+            return;
+        }
+        const parent = options.nodesRef.current.find((n) => n.id === nodeId);
+        if (!parent) return;
+        const id = options.createId();
+        const config: AiConfig = {
+            ...options.defaultConfig,
+            videoMode: "final",
+            sourceDraftTaskId: source.taskId,
+            videoProviderId: source.providerId,
+            vquality: "1080p",
+            videoSize: source.size,
+            videoSeconds: String(source.seconds),
+            generateAudio: String(source.generateAudio),
+        };
+        const size = videoNodeSize(nodeSizeFromRatio(source.size, 420, 236) || { width: 420, height: 236 });
+        const node: CanvasNodeData = {
+            id,
+            type: CanvasNodeType.Video,
+            title: "正式片",
+            position: { x: parent.position.x + parent.width + 96, y: parent.position.y },
+            ...size,
+            metadata: {
+                status: "loading",
+                generationMode: "video",
+                videoMode: "final",
+                sourceDraftTaskId: source.taskId,
+                videoProviderId: source.providerId,
+                vquality: "1080p",
+                seconds: String(source.seconds),
+                videoSize: source.size,
+                generateAudio: String(source.generateAudio),
+            },
+        };
+        options.setNodes((prev) => [...prev, node]);
+        options.setConnections((prev) => [...prev, createConnection(nodeId, id)]);
+        options.setSelectedNodeIds(new Set([id]));
+        await startVideoTask(id, config, "", [], []);
     };
     const resumePendingImageTasks = () => {
         options.nodesRef.current
@@ -556,8 +602,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                     generationConfig,
                     referenceImages,
                     videos.map((video) => video.mediaId || ""),
+                    options.getVideoModelStatus?.()?.videoModels?.find((m) => m.id === generationConfig.videoProviderId)?.videoRequestSchema,
                 );
-                if (videos.some((video) => !video.mediaId) || videos.reduce((total, video) => total + (video.duration || 0), 0) > 15) throw new Error("参考视频必须上传完成，累计不超过 15 秒");
+                const maxDuration = options.getVideoModelStatus?.()?.videoModels?.find((m) => m.id === generationConfig.videoProviderId)?.videoRequestSchema?.maxReferenceVideoDuration ?? 15;
+                if (videos.some(video => !video.mediaId)) throw new Error("参考视频尚未上传完成");
+                if (maxDuration > 0 && videos.reduce((total, video) => total + (video.duration || 0), 0) > maxDuration) throw new Error(`参考视频累计不超过 ${maxDuration} 秒`);
             } catch (error) {
                 options.message.error(error instanceof Error ? error.message : "视频参数无效");
                 return;
@@ -686,7 +735,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
                 );
                 if (!isEmptyVideoNode) options.setConnections((prev) => [...prev, createConnection(nodeId, videoId)]);
                 const videoInputs = generationContext.referenceVideos || [];
-                if (videoInputs.length > 3 || videoInputs.some((video) => !video.mediaId) || videoInputs.reduce((total, video) => total + (video.duration || 0), 0) > 15) throw new Error("参考视频必须上传完成，最多 3 个且累计不超过 15 秒");
+                if (videoInputs.some((video) => !video.mediaId)) throw new Error("参考视频尚未上传完成");
                 submissionStarted = true;
                 await startVideoTask(
                     videoId,
@@ -752,6 +801,11 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             const replacement: GenerationTaskReplacement | undefined = taskId ? { replaceTaskId: taskId, ...(confirmed ? { confirmUncertain: true } : {}) } : undefined;
             if (node.type === CanvasNodeType.Text) {
                 options.message.warning("文本节点不支持重新生成");
+                return;
+            }
+            if (node.type === CanvasNodeType.Video && node.metadata?.videoMode === "final") {
+                const config = buildGenerationConfig(options.effectiveConfig, node, options.defaultConfig);
+                await startVideoTask(node.id, config, "", [], [], replacement);
                 return;
             }
             const sourceNode = findRetrySourceNode(node.id, options.nodesRef.current, options.connectionsRef.current) || node;
@@ -884,6 +938,7 @@ export function createCanvasGenerationController(initialOptions: CanvasGeneratio
             });
         },
         generateNode,
+        generateFinalVideo,
         retryNode,
         generateImageFromTextNode,
         generateAngleNode,
@@ -923,6 +978,7 @@ export function useCanvasGeneration(options: UseCanvasGenerationOptions) {
         getImageResultState: controller.getImageResultState,
         getTaskConnectionError: controller.getTaskConnectionError,
         generateNode: controller.generateNode,
+        generateFinalVideo: controller.generateFinalVideo,
         retryNode: controller.retryNode,
         generateImageFromTextNode: controller.generateImageFromTextNode,
         generateAngleNode: controller.generateAngleNode,

@@ -108,6 +108,7 @@ export function buildGenerationConfig(config: AiConfig, node: CanvasNodeData | u
               }
             : {}),
         ...(node?.metadata?.videoProviderId || currentConfig.videoProviderId ? { videoProviderId: node?.metadata?.videoProviderId || currentConfig.videoProviderId } : {}),
+        ...(node?.metadata?.videoMode || currentConfig.videoMode ? { videoMode: node?.metadata?.videoMode || currentConfig.videoMode, sourceDraftTaskId: node?.metadata?.sourceDraftTaskId } : {}),
         videoSeconds: node?.metadata?.seconds || currentConfig.videoSeconds || defaults.videoSeconds,
         videoSize: node?.metadata?.videoSize ?? currentConfig.videoSize ?? "",
         generateAudio: node?.metadata?.generateAudio ?? currentConfig.generateAudio ?? "false",

@@ -71,7 +71,7 @@ export function WorkflowConfigPanel({
                 size="small"
                 className="canvas-config-mode !rounded-md !p-0.5"
                 value={isImage ? "image" : "video"}
-                disabled={readOnly || !onModeChange}
+                disabled={readOnly || config.videoMode === "final" || !onModeChange}
                 onChange={(value) => onModeChange?.(value as "image" | "video")}
                 options={[
                     {
@@ -98,7 +98,7 @@ export function WorkflowConfigPanel({
     );
     const modelSelect = (
         <div inert={readOnly} className={readOnly ? "pointer-events-none opacity-60" : ""}>
-            <CanvasConfigModelSelect value={selected?.id || node.config?.providerId} options={models} onChange={selectModel} />
+            <CanvasConfigModelSelect value={selected?.id || node.config?.providerId} options={models} onChange={selectModel} disabled={config.videoMode === "final"} />
         </div>
     );
     const ModeIcon = isImage ? ImageIcon : Video;
@@ -139,7 +139,7 @@ export function WorkflowConfigPanel({
                               ),
                           }
                         : {})}
-                    onConfigChange={(key, value) => updateAiConfig({ ...config, [key]: value })}
+                    onConfigChange={(key, value) => updateAiConfig(key === "videoMode" ? { ...config, videoMode: value === "draft" ? "draft" : undefined, ...(value === "draft" ? { vquality: "480p" } : {}) } : { ...config, [key]: value })}
                 />
             )}
         </span>

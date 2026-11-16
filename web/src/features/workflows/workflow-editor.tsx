@@ -1,5 +1,6 @@
 "use client";
 
+import { createWorkflowFinalStep } from "./workflow-drafts";
 import { useWorkflowDraft } from "./use-workflow-draft";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -1026,6 +1027,21 @@ function WorkflowEditorContent() {
     return (
         <ScopedVideoResourceProvider
             scope={`workflow:${draftOwnerUID}:${workflowId}`}
+            finalActionLabel="创建正式片步骤"
+            onGenerateFinal={
+                editBlocked
+                    ? undefined
+                    : (_nodeId, source, mediaId) => {
+                          if (editBlockedRef.current) return;
+                          const result = createWorkflowFinalStep(graph, mediaId, source);
+                          setGraph(result.graph);
+                          setTargetFrameId(result.frameId);
+                          canvas.setSelectedNodeIds(new Set([workflowVisualNodeId(result.nodeId)]));
+                          const position = result.graph.nodes.find((n) => n.id === result.nodeId)!.position;
+                          setViewport({ ...viewport, x: 120 - position.x * viewport.k, y: 120 - position.y * viewport.k });
+                          message.success("已创建正式片包裹框，点击该包裹框的运行按钮生成正式片");
+                      }
+            }
             nodeIds={[
                 ...graph.nodes.filter((node) => node.type === "video_input").map((node) => node.id),
                 ...graph.nodes.flatMap((node) =>
@@ -1145,7 +1161,7 @@ function WorkflowEditorContent() {
                                         />
                                     ) : null;
                                 }) : null}
-                            {interactions.connectingParams ? <ActiveConnectionPath node={viewportScene.nodeById.get(interactions.connectingParams.nodeId)} handle={interactions.connectingParams} mouseWorld={interactions.mouseWorld} /> : null}
+                            {interactions.connectingParams ? (interactions.connectingParams.sourceNodeIds || [interactions.connectingParams.nodeId]).map(nodeId => <ActiveConnectionPath key={nodeId} node={viewportScene.nodeById.get(nodeId)} handle={{...interactions.connectingParams!,nodeId}} mouseWorld={interactions.mouseWorld} />) : null}
                             {interactions.cutConnectionState ? <polyline points={interactions.cutConnectionState.points.map((point) => `${point.x},${point.y}`).join(" ")} fill="none" stroke={theme.node.activeStroke} strokeWidth="2" /> : null}
                         </svg>
                         {graph.nodes.filter((node) => viewportScene.visibleNodeIds.has(workflowVisualNodeId(node.id))).map((node) => (
@@ -1268,7 +1284,7 @@ function WorkflowEditorContent() {
                         ) : null}
                         {interactions.pendingConnectionCreate ? (
                             <CanvasConnectionCreateMenu
-                                title="连接并创建"
+                                title={interactions.pendingConnectionCreate.connection.sourceNodeIds ? `连接所选 ${interactions.pendingConnectionCreate.connection.sourceNodeIds.length} 张图片` : "连接并创建"}
                                 position={interactions.pendingConnectionCreate.position}
                                 containerRef={containerRef}
                                 getViewport={() => canvasRef.current?.getViewport()}

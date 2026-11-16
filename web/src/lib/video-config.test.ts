@@ -80,3 +80,23 @@ test("MiniMax H3 capability drives duration choices and hides audio", () => {
     assert.equal(videoSupportsAudio(schema), false);
     assert.equal(videoSupportsAudio(undefined), true);
 });
+
+test("draft selection locks 480p and leaving a capable model clears draft mode", () => {
+    const capable = {
+        ...status.videoModels![0]!,
+        videoRequestSchema: {
+            ...status.videoModels![0]!.videoRequestSchema!,
+            supportsDraft: true,
+            resolutions: [
+                { value: "720p", label: "720p", price: "1.4" },
+                { value: "480p", label: "480p", price: "0.77" },
+                { value: "1080p", label: "1080p", price: "4.2" },
+            ],
+        },
+    };
+    const next = reconcileVideoConfig({ ...defaultAiConfig, videoProviderId: capable.id, videoMode: "draft", vquality: "720p" }, { videoModels: [capable] });
+    assert.equal(next.vquality, "480p");
+    assert.equal(next.videoMode, "draft");
+    const oldModel = { ...capable, videoRequestSchema: { ...capable.videoRequestSchema, supportsDraft: false } };
+    assert.equal(reconcileVideoConfig(next, { videoModels: [oldModel] }).videoMode, undefined);
+});

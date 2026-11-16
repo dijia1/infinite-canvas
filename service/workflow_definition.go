@@ -20,7 +20,7 @@ const (
 	maxWorkflowGraphNodes    = 1000
 	maxWorkflowGraphFrames   = 1000
 	maxWorkflowConnections   = 5000
-	maxWorkflowNodeInputs    = 11
+	maxWorkflowNodeInputs    = 41
 	maxWorkflowNodeOutputs   = 9
 	maxWorkflowOptionDepth   = 8
 	maxWorkflowOptionEntries = 256
@@ -306,7 +306,7 @@ func normalizeWorkflowGraph(graph model.WorkflowGraph) (model.WorkflowGraph, err
 		orders[orderKey] = struct{}{}
 		incoming[connection.TargetNodeID]++
 		if incoming[connection.TargetNodeID] > maxWorkflowNodeInputs {
-			return model.WorkflowGraph{}, workflowValidationError{message: "生成节点最多连接 11 个输入"}
+			return model.WorkflowGraph{}, workflowValidationError{message: "生成节点最多连接 41 个输入"}
 		}
 		adjacency[connection.SourceNodeID] = append(adjacency[connection.SourceNodeID], connection.TargetNodeID)
 		indegree[connection.TargetNodeID]++
@@ -421,7 +421,7 @@ func normalizeWorkflowNode(node *model.WorkflowNode) error {
 			return workflowValidationError{message: "生成节点字段无效"}
 		}
 		if len(node.InputPorts) > maxWorkflowNodeInputs {
-			return workflowValidationError{message: "生成节点输入端口最多为 11 个"}
+			return workflowValidationError{message: "生成节点输入端口最多为 41 个"}
 		}
 		if len(node.Outputs) < 1 || len(node.Outputs) > maxWorkflowNodeOutputs {
 			return workflowValidationError{message: "生成节点输出槽位应为 1-9 个"}
@@ -487,6 +487,9 @@ func normalizeWorkflowPorts(node *model.WorkflowNode) error {
 func normalizeWorkflowConfig(config *model.WorkflowNodeConfig) error {
 	if config == nil {
 		return nil
+	}
+	if config.VideoMode != "" && config.VideoMode != "draft" && config.VideoMode != "final" {
+		return workflowValidationError{message: "视频生成模式无效"}
 	}
 	for name, value := range map[string]*string{
 		"模型 ID": &config.ProviderID, "尺寸": &config.Size, "分辨率": &config.Resolution,

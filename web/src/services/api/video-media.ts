@@ -1,8 +1,9 @@
+import type { VideoGenerationSource } from "./video";
 import axios from "axios";
 import { uploadDirectlyToOSS } from "./direct-upload";
 import { aiApiPath, type ApiResponse } from "./request";
 
-export type VideoMediaAccess = { mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number; duration: number; expiresAt?: string };
+export type VideoMediaAccess = { videoGeneration?: VideoGenerationSource; mediaId: string; url: string; previewUrl?: string; contentType: string; bytes: number; width: number; height: number; duration: number; expiresAt?: string };
 export type VideoUploadMetadata = Pick<VideoMediaAccess, "duration" | "width" | "height">;
 export class VideoMediaRequestError extends Error {}
 function data<T>(value: ApiResponse<T>): T {

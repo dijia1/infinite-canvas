@@ -3,15 +3,36 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { createVideoResourceManager, type VideoResourceLease, type VideoResourceManager } from "../media/video-resource-manager";
 import { useCanvasStore } from "../stores/use-canvas-store";
 
+import type { VideoGenerationSource } from "@/services/api/video";
+
+type FinalVideoAction = (nodeId: string, source: VideoGenerationSource, mediaId: string) => void | Promise<void>;
 type Playback = { time: number; volume: number; muted: boolean; rate: number };
-type Resources = { manager: VideoResourceManager; playback: Map<string, Playback> };
+type Resources = { manager: VideoResourceManager; playback: Map<string, Playback>; onGenerateFinal?: FinalVideoAction; finalActionLabel?: string };
 const Context = createContext<Resources | null>(null);
-export function VideoResourceProvider({ projectId, nodeIds, children }: { projectId: string; nodeIds: string[]; children: ReactNode }) {
+export function VideoResourceProvider({ projectId, nodeIds, children, onGenerateFinal }: { projectId: string; nodeIds: string[]; children: ReactNode; onGenerateFinal?: FinalVideoAction }) {
     const scope = useCanvasStore((s) => s.syncScope);
-    return <ScopedVideoResourceProvider scope={`${scope}:${projectId}`} nodeIds={nodeIds} resetOnCanvasScopeChange>{children}</ScopedVideoResourceProvider>;
+    return (
+        <ScopedVideoResourceProvider scope={`${scope}:${projectId}`} nodeIds={nodeIds} onGenerateFinal={onGenerateFinal} resetOnCanvasScopeChange>
+            {children}
+        </ScopedVideoResourceProvider>
+    );
 }
 
-export function ScopedVideoResourceProvider({ scope, nodeIds, children, resetOnCanvasScopeChange = false }: { scope: string; nodeIds: string[]; children: ReactNode; resetOnCanvasScopeChange?: boolean }) {
+export function ScopedVideoResourceProvider({
+    scope,
+    nodeIds,
+    children,
+    onGenerateFinal,
+    finalActionLabel,
+    resetOnCanvasScopeChange = false,
+}: {
+    scope: string;
+    nodeIds: string[];
+    children: ReactNode;
+    onGenerateFinal?: FinalVideoAction;
+    finalActionLabel?: string;
+    resetOnCanvasScopeChange?: boolean;
+}) {
     const resources = useMemo<Resources>(() => ({ manager: createVideoResourceManager(), playback: new Map() }), [scope]);
     useLayoutEffect(() => {
         const reset = () => {
@@ -30,14 +51,18 @@ export function ScopedVideoResourceProvider({ scope, nodeIds, children, resetOnC
         const ids = new Set(nodeIds);
         for (const id of resources.playback.keys()) if (!ids.has(id)) resources.playback.delete(id);
     }, [nodeIds, resources]);
-    return <Context.Provider value={resources}>{children}</Context.Provider>;
+    return <Context.Provider value={{ ...resources, onGenerateFinal, finalActionLabel }}>{children}</Context.Provider>;
 }
 
 export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, onDimensions }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean; onDimensions?: (dimensions: { width: number; height: number }) => void }) {
     const naturalSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
     const dimensionsRef = useRef(onDimensions);
     dimensionsRef.current = onDimensions;
-    const resources = useContext(Context);
+    const context = useContext(Context);
+    const resources = useMemo(() => (context ? { manager: context.manager, playback: context.playback } : null), [context?.manager, context?.playback]);
+    const [generation, setGeneration] = useState<VideoGenerationSource>();
+    const [finalBusy, setFinalBusy] = useState(false);
+    const [finalError, setFinalError] = useState("");
     const videoRef = useRef<HTMLVideoElement>(null);
     const leaseRef = useRef<VideoResourceLease | undefined>(undefined);
     const attempt = useRef(0),
@@ -60,6 +85,8 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
     };
     useLayoutEffect(() => {
         setSource(undefined);
+        setGeneration(undefined);
+        setFinalError("");
         naturalSizeRef.current = undefined;
         setPoster(undefined);
         setBusy(false);
@@ -90,6 +117,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
                 .then((value) => {
                     if (live) {
                         setSource(value.url);
+                        setGeneration(value.videoGeneration);
                         if (value.width > 0 && value.height > 0) {
                             naturalSizeRef.current = { width: value.width, height: value.height };
                             dimensionsRef.current?.(naturalSizeRef.current);
@@ -144,6 +172,8 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         const timer = setTimeout(() => {
             save();
             setSource(undefined);
+            setGeneration(undefined);
+            setFinalError("");
         }, 10000);
         return () => clearTimeout(timer);
     }, [visible, external, source]);
@@ -262,8 +292,9 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         }
     };
     return (
-        <div className="relative h-full w-full overflow-hidden rounded-[18px] bg-black">
-            {visible || source ? (
+        <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[18px] bg-black">
+            <div className="relative min-h-0 flex-1">
+                {visible || source ? (
                 <video
                     ref={videoRef}
                     data-video-node-id={nodeId}
@@ -302,8 +333,8 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
             ) : (
                 <div className="h-full w-full bg-black" />
             )}
-            {!playing && !external && !error && <div aria-hidden="true" data-video-drag-surface className="absolute inset-x-0 top-0 cursor-move" style={{ bottom: 54 }} onDragStart={(event) => event.preventDefault()} />}
-            {error && (
+                {!playing && !external && !error && <div aria-hidden="true" data-video-drag-surface className="absolute inset-x-0 top-0 cursor-move" style={{ bottom: 54 }} onDragStart={(event) => event.preventDefault()} />}
+                {error && (
                 <div role="alert" className="absolute inset-x-2 top-2 rounded bg-black/80 p-2 text-xs text-white" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {error}{" "}
                     <button type="button" disabled={busy} onClick={() => void begin()} className="ml-2 underline">
@@ -311,6 +342,38 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
                     </button>
                 </div>
             )}
+            </div>
+            {generation?.mode === "draft" || generation?.mode === "final" ? (
+                <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 bg-neutral-900 px-2 py-1.5 text-xs text-white" onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
+                    <span>{generation.mode === "draft" ? "样片 · 480p" : "正式片 · 1080p"}</span>
+                    {generation.mode === "draft" && context?.onGenerateFinal && mediaId ? (
+                        <button
+                            type="button"
+                            disabled={finalBusy}
+                            className="cursor-pointer rounded border border-white/25 px-2 py-1 disabled:opacity-50"
+                            onClick={async () => {
+                                setFinalBusy(true);
+                                setFinalError("");
+                                try {
+                                    await context.onGenerateFinal!(nodeId, generation, mediaId);
+                                } catch (e) {
+                                    setFinalError(e instanceof Error ? e.message : "无法生成正式片");
+                                } finally {
+                                    setFinalBusy(false);
+                                }
+                            }}
+                        >
+                            {finalBusy ? "处理中…" : context.finalActionLabel || "生成正式片 · 1080p"}
+                        </button>
+                    ) : null}
+                    {generation.mode === "draft" ? <span className="w-full text-[11px] text-neutral-400">{new Date(generation.createdAt).toLocaleDateString()} · 建议 3 天内转正式片</span> : null}
+                    {finalError ? (
+                        <span role="alert" className="w-full text-red-300">
+                            {finalError}
+                        </span>
+                    ) : null}
+                </div>
+            ) : null}
         </div>
     );
 }

@@ -51,7 +51,7 @@ func TestVideoReferencesUseSavedDurationWithoutDownloading(t *testing.T) {
 				}
 				input.VideoMediaIDs = append(input.VideoMediaIDs, item.ID)
 			}
-			result, err := resolveVideoTaskInputs(context.Background(), user, input)
+			result, err := resolveVideoTaskInputs(context.Background(), user, input, nil)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantError) {
 					t.Fatalf("expected %q, got %v", test.wantError, err)

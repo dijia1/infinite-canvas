@@ -46,7 +46,7 @@ import { appPath } from "@/lib/app-path";
 import { type ImageAsset, type VideoAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
-import { getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
+import { buildGenerationConfig, getInputSummary, replaceNodeWithUploadedVideo, resetInterruptedGeneration, snapshotConfigNodeProviderSelection, withoutLegacyModel } from "../utils/canvas-generation-utils";
 import { hiddenBatchNodeIds } from "../utils/canvas-graph-utils";
 import { buildConnectionPathData, getConnectionCurve } from "../utils/canvas-connection-geometry";
 import { isCanvasConnectionNearViewport, shouldRenderCanvasConnection } from "../utils/canvas-connection-visibility";
@@ -798,6 +798,30 @@ function InfiniteCanvasPage() {
         screenToCanvas,
         createNode: createInteractionNode,
         createConnectionId: nanoid,
+        validateConnections: (nextNodes, nextConnections) => {
+            const added = nextConnections.filter((c) => !connectionsRef.current.some((old) => old.id === c.id));
+            for (const targetId of new Set(added.map((c) => c.toNodeId))) {
+                const target = nextNodes.find((n) => n.id === targetId);
+                if (target?.type !== CanvasNodeType.Config) continue;
+                const config = buildGenerationConfig(effectiveConfig, target, defaultConfig);
+                const video = target.metadata?.generationMode === "video";
+                const model = resolveSelectedModel(video ? aiStatus?.videoModels : aiStatus?.imageModels, video ? config.videoProviderId : config.imageProviderId, video ? aiStatus?.defaultVideoModelId : aiStatus?.defaultImageModelId);
+                const count = nextConnections.filter((c) => c.toNodeId === targetId && nextNodes.find((n) => n.id === c.fromNodeId)?.type === CanvasNodeType.Image).length;
+                const limit = video ? model?.videoRequestSchema?.maxReferenceImages : model?.imageRequestSchema?.maxReferenceImages;
+                if (typeof limit === "number" && count > limit) throw new Error(`当前模型最多支持 ${limit} 张参考图，所选图片未连接`);
+                for (const edge of added.filter((c) => c.toNodeId === targetId)) {
+                    const seen = new Set<string>();
+                    const stack = [targetId];
+                    while (stack.length) {
+                        const id = stack.pop()!;
+                        if (id === edge.fromNodeId) throw new Error("连接不能形成循环");
+                        if (seen.has(id)) continue;
+                        seen.add(id);
+                        nextConnections.filter((c) => c.fromNodeId === id).forEach((c) => stack.push(c.toNodeId));
+                    }
+                }
+            }
+        },
         onWarning: message.warning,
     });
 
@@ -815,6 +839,7 @@ function InfiniteCanvasPage() {
         getImageResultState,
         getTaskConnectionError,
         generateNode: handleGenerateNode,
+        generateFinalVideo,
         retryNode: handleRetryNode,
         generateImageFromTextNode,
         generateAngleNode,
@@ -2193,7 +2218,7 @@ function InfiniteCanvasPage() {
     if (projectDetail.loading || !projectLoaded || loadedProjectId !== projectId || loadedSyncScope !== syncScope || loadedCanonicalGeneration !== canonicalGeneration) return <CanvasRefreshShell />;
 
     return (
-        <VideoResourceProvider projectId={projectId} nodeIds={nodes.map(node => node.id)}>
+        <VideoResourceProvider projectId={projectId} nodeIds={nodes.map(node => node.id)} onGenerateFinal={isProjectReadonly ? undefined : (nodeId,source)=>generateFinalVideo(nodeId,source)}>
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
@@ -2260,7 +2285,7 @@ function InfiniteCanvasPage() {
                                 opacity={0.9}
                             />
                         ) : null}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} /> : null}
+                        {connectingParams ? (connectingParams.sourceNodeIds || [connectingParams.nodeId]).map(nodeId => <ActiveConnectionPath key={nodeId} node={nodeById.get(nodeId)} handle={{...connectingParams,nodeId}} mouseWorld={mouseWorld} />) : null}
                     </svg>
 
                     {visibleNodes.map((node) => {
@@ -2340,7 +2365,7 @@ function InfiniteCanvasPage() {
                     ) : null}
                     {pendingConnectionCreate ? (
                         <CanvasConnectionCreateMenu
-                            title="引用该节点生成"
+                            title={pendingConnectionCreate.connection.sourceNodeIds ? `连接所选 ${pendingConnectionCreate.connection.sourceNodeIds.length} 张图片` : "引用该节点生成"}
                             position={pendingConnectionCreate.position}
                             containerRef={containerRef}
                             getViewport={getLiveViewport}

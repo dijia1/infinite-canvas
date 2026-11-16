@@ -2,8 +2,10 @@ import { GenerationTaskQueryError, type GenerationTaskIssue, type GenerationTask
 import axios from "axios";
 import { nanoid } from "nanoid";
 import { aiApiPath, apiRequestError, type ApiResponse } from "@/services/api/request";
-import type { AiConfig } from "@/stores/use-config-store";
+import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+
+export type VideoGenerationSource = { taskId: string; providerId: string; mode: "" | "draft" | "final"; createdAt: string; seconds: number; size: string; generateAudio: boolean };
 
 export type VideoGenerationTask = {
     id: string;
@@ -12,7 +14,7 @@ export type VideoGenerationTask = {
     error?: string;
     issue?: GenerationTaskIssue;
     resultMediaIds: string[];
-    videos: { mediaId: string; url: string; width?: number; height?: number; bytes?: number; contentType?: string; duration?: number }[];
+    videos: { mediaId: string; url: string; width?: number; height?: number; bytes?: number; contentType?: string; duration?: number; videoGeneration?: VideoGenerationSource }[];
 };
 export class VideoRequestRejectedError extends Error {}
 export class VideoQueryTransientError extends GenerationTaskQueryError {}
@@ -33,16 +35,20 @@ function unwrap(payload: unknown): VideoGenerationTask {
     if (!task.id || !["queued", "submitting", "running", "saving", "succeeded", "failed", "uncertain", "paused"].includes(task.status)) throw new Error("接口返回无效视频任务");
     return { ...task, resultMediaIds: task.resultMediaIds || [], videos: task.videos || [] };
 }
-export function validateVideoGeneration(config: AiConfig, references: ReferenceImage[] = [], videoMediaIds: string[] = []) {
+export function validateVideoGeneration(config: AiConfig, references: ReferenceImage[] = [], videoMediaIds: string[] = [], schema?: import("@/lib/model-selection").VideoRequestSchema) {
+    if (config.videoMode === "final") {
+        if (!config.sourceDraftTaskId) throw new Error("请选择来源样片");
+        return Number(config.videoSeconds);
+    }
     const seconds = Number(config.videoSeconds);
-    if (!Number.isInteger(seconds) || seconds < 4 || seconds > 15) throw new Error("视频时长必须为 4 至 15 秒整数");
+    if (!Number.isInteger(seconds) || seconds < (schema?.minDuration ?? 4) || seconds > (schema?.maxDuration ?? 15)) throw new Error(`视频时长必须为 ${schema?.minDuration ?? 4} 至 ${schema?.maxDuration ?? 15} 秒整数`);
     if (!config.videoSize || !config.vquality) throw new Error("请选择视频分辨率和比例");
-    if (references.length > 9 || videoMediaIds.length > 3) throw new Error("最多支持 9 张参考图和 3 个参考视频");
+    if (references.length > (schema?.maxReferenceImages ?? 9) || videoMediaIds.length > (schema?.maxReferenceVideos ?? 3)) throw new Error(`最多支持 ${schema?.maxReferenceImages ?? 9} 张参考图和 ${schema?.maxReferenceVideos ?? 3} 个参考视频`);
     if (references.some((r) => !r.mediaId)) throw new Error("参考图片尚未上传完成，请等待上传完成后重试");
     return seconds;
 }
 export async function requestVideoGeneration(config: AiConfig, prompt: string, references: ReferenceImage[] = [], clientRequestId = nanoid(), videoMediaIds: string[] = [], replacement?: GenerationTaskReplacement): Promise<VideoGenerationTask> {
-    const seconds = validateVideoGeneration(config, references, videoMediaIds);
+    const seconds = validateVideoGeneration(config, references, videoMediaIds, useConfigStore.getState().status?.videoModels?.find((m) => m.id === config.videoProviderId)?.videoRequestSchema);
     try {
         return unwrap(
             (
@@ -52,13 +58,18 @@ export async function requestVideoGeneration(config: AiConfig, prompt: string, r
                         clientRequestId,
                         ...replacement,
                         providerId: config.videoProviderId,
-                        prompt,
-                        seconds,
-                        size: config.videoSize,
-                        resolution: config.vquality,
-                        generateAudio: config.generateAudio === "true",
-                        imageMediaIds: references.map((r) => r.mediaId),
-                        videoMediaIds,
+                        ...(config.videoMode === "final"
+                            ? { mode: "final", sourceDraftTaskId: config.sourceDraftTaskId }
+                            : {
+                                  ...(config.videoMode ? { mode: config.videoMode } : {}),
+                                  prompt,
+                                  seconds,
+                                  size: config.videoSize,
+                                  resolution: config.vquality,
+                                  generateAudio: config.generateAudio === "true",
+                                  imageMediaIds: references.map((r) => r.mediaId),
+                                  videoMediaIds,
+                              }),
                     },
                     { timeout: 60_000 },
                 )

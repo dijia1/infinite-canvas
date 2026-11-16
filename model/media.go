@@ -19,6 +19,7 @@ const (
 
 // Media is a private image object owned by one Portal user.
 type Media struct {
+	GenerationTaskID  string             `json:"generationTaskId,omitempty" gorm:"index"`
 	ID                string             `json:"id" gorm:"primaryKey"`
 	OwnerUID          string             `json:"-" gorm:"index"`
 	Source            MediaSource        `json:"source" gorm:"index;index:idx_media_source_expires"`

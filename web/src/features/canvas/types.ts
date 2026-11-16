@@ -34,18 +34,20 @@ export type CanvasNodeMetadata = {
     size?: string;
     resolution?: string;
     outputFormat?: string;
-	background?: string;
-	imageProviderId?: string;
-	imageProviderName?: string;
-	videoProviderId?: string;
-	videoProviderName?: string;
-	imageProviderType?: string;
-	imageRequestSchemaVersion?: string;
-	providerOptions?: Record<string, unknown>;
+    background?: string;
+    imageProviderId?: string;
+    imageProviderName?: string;
+    videoProviderId?: string;
+    videoProviderName?: string;
+    imageProviderType?: string;
+    imageRequestSchemaVersion?: string;
+    providerOptions?: Record<string, unknown>;
     quality?: string;
     count?: number;
     seconds?: string;
     vquality?: string | null;
+    videoMode?: "draft" | "final";
+    sourceDraftTaskId?: string;
     videoTaskId?: string;
     videoTaskClientRequestId?: string;
     videoTaskStatus?: string;
@@ -103,6 +105,7 @@ export type CanvasConnection = {
 };
 
 export type ConnectionHandle = {
+    sourceNodeIds?: string[];
     nodeId: string;
     handleType: "source" | "target";
 };

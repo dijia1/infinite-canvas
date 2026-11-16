@@ -97,9 +97,11 @@ func TestWorkflowTenImagesAndPromptBoundary(t *testing.T) {
 	if _, err := normalizeWorkflowGraph(graph); err != nil {
 		t.Fatal(err)
 	}
-	graph.Nodes[2].InputPorts = append(graph.Nodes[2].InputPorts, model.WorkflowInputPort{ID: "too-many", Type: model.WorkflowPortImage})
+	for i := 11; i < 42; i++ {
+		graph.Nodes[2].InputPorts = append(graph.Nodes[2].InputPorts, model.WorkflowInputPort{ID: fmt.Sprintf("too-many-%d", i), Type: model.WorkflowPortImage})
+	}
 	if _, err := normalizeWorkflowGraph(graph); err == nil {
-		t.Fatal("accepted 12 inputs")
+		t.Fatal("accepted 42 inputs")
 	}
 }
 

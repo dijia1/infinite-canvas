@@ -476,6 +476,19 @@ func workflowImageRequest(node model.WorkflowNode, inputs workflowResolvedInputs
 }
 
 func workflowVideoRequest(node model.WorkflowNode, inputs workflowResolvedInputs, requestID string) (CreateVideoTaskRequest, error) {
+	if node.Config != nil && node.Config.VideoMode == "final" {
+		if len(inputs.VideoMediaIDs) != 1 || len(inputs.ImageMediaIDs) != 0 || inputs.Prompt != "" {
+			return CreateVideoTaskRequest{}, workflowValidationError{message: "正式片必须且只能连接一个样片视频"}
+		}
+		media, found, err := repository.GetMedia(inputs.VideoMediaIDs[0])
+		if err != nil {
+			return CreateVideoTaskRequest{}, err
+		}
+		if !found || media.GenerationTaskID == "" {
+			return CreateVideoTaskRequest{}, workflowValidationError{message: "来源视频没有样片任务记录"}
+		}
+		return CreateVideoTaskRequest{ClientRequestID: requestID, ProviderID: node.Config.ProviderID, Mode: "final", SourceDraftTaskID: media.GenerationTaskID}, nil
+	}
 	if node.Config == nil || node.Config.Seconds == nil {
 		return CreateVideoTaskRequest{}, workflowValidationError{message: "视频节点配置无效"}
 	}
@@ -484,7 +497,7 @@ func workflowVideoRequest(node model.WorkflowNode, inputs workflowResolvedInputs
 		generateAudio = *node.Config.GenerateAudio
 	}
 	return CreateVideoTaskRequest{
-		ClientRequestID: requestID, ProviderID: node.Config.ProviderID, Prompt: inputs.Prompt,
+		ClientRequestID: requestID, ProviderID: node.Config.ProviderID, Mode: node.Config.VideoMode, Prompt: inputs.Prompt,
 		Seconds: *node.Config.Seconds, Size: node.Config.Size, Resolution: node.Config.Resolution, GenerateAudio: generateAudio,
 		ImageMediaIDs: append([]string{}, inputs.ImageMediaIDs...), VideoMediaIDs: append([]string{}, inputs.VideoMediaIDs...),
 	}, nil

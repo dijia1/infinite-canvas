@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -546,7 +547,7 @@ func validateWorkflowRunInputs(ctx context.Context, user PortalUser, graph model
 			return workflowValidationError{message: "生成节点尚未选择模型"}
 		}
 		resolved, err := resolveWorkflowInputs(graph, node.ID, validationOutputs)
-		if err != nil || resolved.State != "ready" || strings.TrimSpace(resolved.Prompt) == "" {
+		if err != nil || resolved.State != "ready" || (strings.TrimSpace(resolved.Prompt) == "" && node.Config.VideoMode != "final") {
 			return workflowValidationError{message: "生成节点输入不完整"}
 		}
 		switch node.Type {
@@ -595,6 +596,12 @@ func validateWorkflowRunInputs(ctx context.Context, user PortalUser, graph model
 			if !providerAvailable(settings.AI, node.Config.ProviderID, ai.CapabilityVideoGenerate) {
 				return workflowValidationError{message: "视频模型不可用"}
 			}
+			if node.Config.VideoMode == "final" {
+				if err := validateWorkflowDraftSource(ctx, graph, node); err != nil {
+					return err
+				}
+				continue
+			}
 			request, err := workflowVideoRequest(node, resolved, "workflow-validation-request")
 			if err != nil {
 				return err
@@ -639,6 +646,23 @@ func workflowRunValidationError(err error, fallback string) error {
 }
 
 func validateWorkflowVideoReferenceDuration(_ context.Context, graph model.WorkflowGraph, targetNodeID string) error {
+	maxDuration := 15
+	for _, n := range graph.Nodes {
+		if n.ID == targetNodeID && n.Config != nil {
+			settings, err := AdminSettings()
+			if err != nil {
+				return err
+			}
+			if p, ok := findProvider(settings.AI, n.Config.ProviderID); ok {
+				if info, ok := ai.Type(p.Type); ok {
+					maxDuration = configuredVideoRequestSchema(p, info).MaxReferenceVideoDuration
+				}
+			}
+		}
+	}
+	if maxDuration == 0 {
+		return nil
+	}
 	nodes := map[string]model.WorkflowNode{}
 	for _, node := range graph.Nodes {
 		nodes[node.ID] = node
@@ -666,8 +690,8 @@ func validateWorkflowVideoReferenceDuration(_ context.Context, graph model.Workf
 			total += float64(*source.Config.Seconds)
 		}
 	}
-	if total > 15.000001 {
-		return workflowValidationError{message: "视频参考总时长不能超过 15 秒"}
+	if total > float64(maxDuration)+0.000001 {
+		return workflowValidationError{message: fmt.Sprintf("视频参考总时长不能超过 %d 秒", maxDuration)}
 	}
 	return nil
 }

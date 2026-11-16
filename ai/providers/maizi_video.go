@@ -18,8 +18,9 @@ import (
 const maiziVideoBaseURL = "https://www.maizitech.ai/v1"
 
 type maiziVideoProvider struct {
-	config maiziConfig
-	client *http.Client
+	config     maiziConfig
+	client     *http.Client
+	seedance25 bool
 }
 
 var maiziSeedanceVideoRequestSchema = ai.VideoRequestSchema{
@@ -28,7 +29,26 @@ var maiziSeedanceVideoRequestSchema = ai.VideoRequestSchema{
 	SupportsAudio: true,
 }
 
+var maiziSeedance25VideoRequestSchema = ai.VideoRequestSchema{
+	MinDuration: 4, MaxDuration: 30, DefaultDuration: 5, MaxReferenceImages: 30, MaxReferenceVideos: 10, SupportsAudio: true, SupportsDraft: true,
+}
+
 func init() {
+	_ = ai.Register(ai.ProviderType{ID: "maizi-video-seedance-2-5", Name: "MaiziAI Seedance 2.5", Capabilities: []ai.Capability{ai.CapabilityVideoGenerate}, ConfigFields: []ai.ConfigField{
+		{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
+		{Key: "model", Label: "模型名称", Type: "text", Placeholder: "doubao-seedance-2.5", Required: true},
+	}, VideoRequestSchema: &maiziSeedance25VideoRequestSchema, New: func(raw json.RawMessage) (ai.Provider, error) {
+		p, err := newMaiziVideoProvider(raw)
+		if err != nil {
+			return nil, err
+		}
+		v := p.(*maiziVideoProvider)
+		if v.config.Model != "doubao-seedance-2.5" {
+			return nil, maiziError{"Seedance 2.5 模型名称必须为 doubao-seedance-2.5"}
+		}
+		v.seedance25 = true
+		return v, nil
+	}})
 	_ = ai.Register(ai.ProviderType{ID: "maizi-video-seedance", Name: "MaiziAiVideo Seedance", Capabilities: []ai.Capability{ai.CapabilityVideoGenerate}, ConfigFields: []ai.ConfigField{
 		{Key: "apiKey", Label: "API Key", Type: "password", Required: true},
 		{Key: "model", Label: "模型名称", Type: "text", Placeholder: "doubao-seedance-2.0", Required: true},
@@ -53,15 +73,29 @@ func newMaiziVideoHTTPClient() *http.Client {
 }
 
 func (p *maiziVideoProvider) CreateVideo(ctx context.Context, r ai.VideoRequest) (ai.VideoTask, error) {
+	schema := maiziSeedanceVideoRequestSchema
+	if p.seedance25 {
+		schema = maiziSeedance25VideoRequestSchema
+	}
+	if r.Mode != "" && r.Mode != "draft" && r.Mode != "final" || (r.Mode != "" && !p.seedance25) {
+		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "当前模型不支持该视频生成模式"}
+	}
+	if r.Mode == "final" {
+		if r.DraftTaskID == "" {
+			return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "请选择已完成的样片"}
+		}
+		body, _ := json.Marshal(map[string]any{"model": p.config.Model, "draft_task_id": r.DraftTaskID, "resolution": "1080p", "output_format": "mp4"})
+		return p.request(ctx, http.MethodPost, "/videos/generations", body, true)
+	}
 	duration, err := strconv.Atoi(r.Seconds)
-	if err != nil || duration < maiziSeedanceVideoRequestSchema.MinDuration || duration > maiziSeedanceVideoRequestSchema.MaxDuration {
-		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频时长必须为 4 至 15 秒整数"}
+	if err != nil || duration < schema.MinDuration || duration > schema.MaxDuration {
+		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: fmt.Sprintf("视频时长必须为 %d 至 %d 秒整数", schema.MinDuration, schema.MaxDuration)}
 	}
 	if strings.TrimSpace(r.Prompt) == "" || strings.TrimSpace(r.Size) == "" || strings.TrimSpace(r.Resolution) == "" {
 		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频提示词、比例和分辨率不能为空"}
 	}
-	if len(r.ImageURLs) > maiziSeedanceVideoRequestSchema.MaxReferenceImages || len(r.VideoURLs) > maiziSeedanceVideoRequestSchema.MaxReferenceVideos || len(r.References) > 0 {
-		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "视频最多支持 9 张图片和 3 个视频，参考素材必须使用远端地址"}
+	if len(r.ImageURLs) > schema.MaxReferenceImages || len(r.VideoURLs) > schema.MaxReferenceVideos || len(r.References) > 0 {
+		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: fmt.Sprintf("视频最多支持 %d 张图片和 %d 个视频，参考素材必须使用远端地址", schema.MaxReferenceImages, schema.MaxReferenceVideos)}
 	}
 	for _, refs := range [][]string{r.ImageURLs, r.VideoURLs} {
 		for _, ref := range refs {
@@ -80,7 +114,16 @@ func (p *maiziVideoProvider) CreateVideo(ctx context.Context, r ai.VideoRequest)
 		GenerateAudio bool     `json:"generate_audio"`
 		ImageURLs     []string `json:"image_urls,omitempty"`
 		VideoURLs     []string `json:"video_urls,omitempty"`
-	}{p.config.Model, r.Prompt, duration, r.Size, r.Resolution, r.GenerateAudio, r.ImageURLs, r.VideoURLs}
+		Draft         bool     `json:"draft,omitempty"`
+		OutputFormat  string   `json:"output_format,omitempty"`
+	}{Model: p.config.Model, Prompt: r.Prompt, Duration: duration, Size: r.Size, Resolution: r.Resolution, GenerateAudio: r.GenerateAudio, ImageURLs: r.ImageURLs, VideoURLs: r.VideoURLs}
+	if r.Mode == "draft" && r.Resolution != "480p" {
+		return ai.VideoTask{}, &ai.VideoSubmissionError{Message: "样片分辨率必须为 480p"}
+	}
+	if p.seedance25 {
+		payload.OutputFormat = "mp4"
+		payload.Draft = r.Mode == "draft"
+	}
 	body, _ := json.Marshal(payload)
 	return p.request(ctx, http.MethodPost, "/videos/generations", body, true)
 }
@@ -178,6 +221,9 @@ func (p *maiziVideoProvider) request(ctx context.Context, method, path string, b
 	safeError := ""
 	if wire.Error != "" {
 		safeError = "视频供应商生成失败"
+		if p.seedance25 && (strings.Contains(strings.ToLower(wire.Error), "expired") || strings.Contains(wire.Error, "过期")) {
+			safeError = "样片已过期，请重新生成样片后再生成正式片"
+		}
 	}
 	return ai.VideoTask{ID: wire.ID, Status: wire.Status, Progress: wire.Progress, ResultURLs: wire.ResultURLs, Cost: cost, Currency: wire.Currency, Error: safeError}, nil
 }

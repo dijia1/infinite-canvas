@@ -354,3 +354,42 @@ test("pointer release clears an active selection box without requiring another p
 
     assert.equal(controller.selectionBox, null);
 });
+
+test("selected images connect as one ordered batch, preserve duplicate materials and snapshot the selection", () => {
+    const config = { ...imageNode("config", 800, 0), type: CanvasNodeType.Config };
+    const first = imageNode("top", 0, 0, { mediaId: "same-material" });
+    const second = imageNode("bottom", 0, 200, { mediaId: "same-material" });
+    const third = imageNode("middle", 120, 0);
+    const { controller, selectedNodeIdsRef, connectionsRef } = setup([second, third, first, config], [{ id: "existing", fromNodeId: "top", toNodeId: "config" }]);
+    selectedNodeIdsRef.current = new Set(["bottom", "top", "middle", "config"]);
+    controller.handleConnectStart({ clientX: 100, clientY: 50 }, "bottom", "source");
+    assert.deepEqual(controller.connectingParams?.sourceNodeIds, ["top", "middle", "bottom"]);
+    selectedNodeIdsRef.current.clear();
+    controller.handleGlobalMouseUp({ clientX: 850, clientY: 50 });
+    assert.deepEqual(
+        connectionsRef.current.map((c) => c.fromNodeId),
+        ["top", "middle", "bottom"],
+    );
+    assert.equal(connectionsRef.current[0]!.id, "existing");
+});
+
+test("batch creation uses all sources while cancellation and unselected starts keep existing semantics", () => {
+    const { controller, selectedNodeIdsRef, connectionsRef, nodesRef } = setup([imageNode("a", 0, 0), imageNode("b", 0, 200), imageNode("c", 0, 400)]);
+    selectedNodeIdsRef.current = new Set(["a", "b"]);
+    controller.handleConnectStart({ clientX: 0, clientY: 0 }, "a", "source");
+    controller.handleGlobalMouseUp({ clientX: 900, clientY: 500 });
+    controller.cancelPendingConnectionCreate();
+    assert.equal(connectionsRef.current.length, 0);
+    assert.equal(nodesRef.current.length, 3);
+    controller.handleConnectStart({ clientX: 0, clientY: 0 }, "c", "source");
+    assert.equal(controller.connectingParams?.sourceNodeIds, undefined);
+    controller.resetInteractionState();
+    controller.handleConnectStart({ clientX: 0, clientY: 0 }, "b", "source");
+    controller.handleGlobalMouseUp({ clientX: 900, clientY: 500 });
+    controller.createConnectedNode(CanvasNodeType.Config, controller.pendingConnectionCreate!);
+    assert.equal(nodesRef.current.length, 4);
+    assert.deepEqual(
+        connectionsRef.current.map((c) => c.fromNodeId),
+        ["a", "b"],
+    );
+});

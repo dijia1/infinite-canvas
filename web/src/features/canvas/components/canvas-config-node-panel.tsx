@@ -161,7 +161,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
     const modelSelect = (
         <>
             {mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
-            {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio }); }} /> : null}
+            {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio, videoMode:next.videoMode }); }} /> : null}
         </>
     );
     const renderSettings = (buttonClassName: string, triggerProps?: CanvasSettingsTriggerProps) =>
@@ -172,7 +172,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 config={config}
                 placement="topRight"
                 buttonClassName={buttonClassName}
-                onConfigChange={(key, value) => onConfigChange(node.id, key === "videoSeconds" ? { seconds: value } : { [key]: value })}
+                onConfigChange={(key, value) => onConfigChange(node.id, key === "videoSeconds" ? { seconds: value } : key === "videoMode" ? {videoMode:value === "draft" ? "draft" : undefined, ...(value === "draft" ? {vquality:"480p"} : {})} : { [key]: value })}
             />
         ) : mode === "image" ? (
             <CanvasImageSettingsPopover
@@ -193,7 +193,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
                 onPreview={() => setPreviewOpen(true)}
                 modeSwitch={modeSwitch}
                 modelSelect={modelSelect}
-                action={{ label: "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
+                action={{ label: config.videoMode === "draft" && mode === "video" ? "生成样片" : "开始生成", icon: <Play className="size-3.5" />, disabled: generateDisabled, onClick: () => onGenerate(node.id) }}
                 settings={renderSettings("canvas-config-compact-settings", {
                     buttonIcon: (
                         <ModeIcon className="size-3.5" />
@@ -298,7 +298,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
             <Button type="primary" className="!h-9 !w-full shrink-0 !cursor-pointer !rounded-lg" disabled={generateDisabled} onMouseDown={(event) => event.stopPropagation()} onClick={() => onGenerate(node.id)}>
                 <span className="inline-flex items-center gap-1.5">
                     <Play className="size-4" />
-                    <span>开始生成</span>
+                    <span>{config.videoMode === "draft" && mode === "video" ? "生成样片" : "开始生成"}</span>
                 </span>
             </Button>
         </CanvasConfigFullFrame>}

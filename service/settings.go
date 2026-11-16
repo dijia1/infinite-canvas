@@ -387,6 +387,9 @@ func validateProviderVideoSettings(provider model.AIProvider, info ai.ProviderTy
 	}
 	seen := map[string]bool{}
 	for _, price := range provider.VideoPrices {
+		if info.VideoRequestSchema != nil && info.VideoRequestSchema.SupportsDraft && price.Resolution != "480p" && price.Resolution != "720p" && price.Resolution != "1080p" {
+			return errors.New("Seedance 2.5 仅支持 480p、720p、1080p")
+		}
 		if err := validateImageResolutionParameter(price.Resolution); err != nil {
 			return errors.New("视频分辨率参数必须为 1 至 64 个非控制字符")
 		}

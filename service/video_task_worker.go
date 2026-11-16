@@ -109,7 +109,7 @@ func processVideoTaskStep(ctx context.Context, item model.VideoGenerationTask, c
 		if json.Unmarshal([]byte(item.RequestJSON), &request) != nil {
 			return failVideoTask(item, "视频任务参数损坏")
 		}
-		upstream, err := resolveVideoTaskInputs(ctx, PortalUser{UID: item.OwnerUID}, request)
+		upstream, err := resolveVideoTaskInputs(ctx, PortalUser{UID: item.OwnerUID}, request, providerType.VideoRequestSchema)
 		if err != nil {
 			return failVideoTask(item, AuditErrorSummary(err, "参考素材不可用"))
 		}
@@ -316,6 +316,6 @@ func videoResultMedia(item model.VideoGenerationTask, output videoOutputReservat
 	// Generated results enter the private library like generated images.
 	// Duration follows the generation request. Actual pixel dimensions remain
 	// unknown; the canvas already retains the selected generation aspect ratio.
-	media := model.Media{ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: "video/mp4", Bytes: metadata.Bytes, Duration: float64(seconds), Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), CleanupStatus: model.MediaCleanupActive}
+	media := model.Media{GenerationTaskID: item.ID, ID: output.ID, OwnerUID: item.OwnerUID, Source: model.MediaSourceGenerated, ObjectKey: output.ObjectKey, ObjectVersionID: metadata.VersionID, ObjectETag: metadata.ETag, ContentType: "video/mp4", Bytes: metadata.Bytes, Duration: float64(seconds), Filename: "generated-video.mp4", Title: "生成视频", CreatedAt: current.Format(time.RFC3339), CleanupStatus: model.MediaCleanupActive}
 	return media, nil
 }

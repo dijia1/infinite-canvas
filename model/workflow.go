@@ -41,6 +41,7 @@ type WorkflowOutputSlot struct {
 // WorkflowNodeConfig contains browser-safe generation choices. Provider
 // credentials and provider configuration never belong in a saved graph.
 type WorkflowNodeConfig struct {
+	VideoMode     string         `json:"videoMode,omitempty"`
 	ProviderID    string         `json:"providerId,omitempty"`
 	Size          string         `json:"size,omitempty"`
 	Resolution    string         `json:"resolution,omitempty"`

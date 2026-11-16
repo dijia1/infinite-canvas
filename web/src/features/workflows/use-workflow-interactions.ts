@@ -68,11 +68,22 @@ export function useWorkflowInteractions(options: Options) {
         catch (error) { warn(error); }
     };
     const interactions = useCanvasInteractions({
-        nodesRef, connectionsRef, selectedNodeIdsRef, viewportRef,
-        setNodes, setConnections, setSelectedNodeIds, setSelectedConnectionId,
-        pause: options.pause, resume: options.resume, screenToCanvas: options.screenToCanvas,
+        nodesRef,
+        connectionsRef,
+        selectedNodeIdsRef,
+        viewportRef,
+        setNodes,
+        setConnections,
+        setSelectedNodeIds,
+        setSelectedConnectionId,
+        pause: options.pause,
+        resume: options.resume,
+        screenToCanvas: options.screenToCanvas,
         createConnectionId: nanoid,
-        normalizeConnection: (first, second, _nodes, handle) => optionsRef.current.readOnly ? null : normalizeWorkflowCanvasConnection(graphRef.current, first, second, handle, optionsRef.current.validateConnection),
+        validateConnections: (_nodes, connections) => {
+            applyWorkflowVisualConnections(graphRef.current, connections, optionsRef.current.validateConnection);
+        },
+        normalizeConnection: (first, second, _nodes, handle) => (optionsRef.current.readOnly ? null : normalizeWorkflowCanvasConnection(graphRef.current, first, second, handle)),
         onWarning: options.onWarning,
         onNodeDragStart: ({ nodeIds, altKey }) => {
             const before = graphRef.current;
@@ -156,14 +167,22 @@ export function useWorkflowInteractions(options: Options) {
         const node = (optionsRef.current.makeNode || createWorkflowNode)(type, pending.position);
         const graph = { ...graphRef.current, nodes: [...graphRef.current.nodes, node] };
         const visualId = workflowVisualNodeId(node.id);
-        const connection = normalizeWorkflowCanvasConnection(graph, pending.connection.nodeId, visualId, pending.connection.handleType, optionsRef.current.validateConnection);
-        const input = connection && workflowConnectionInput(connection.fromNodeId, connection.toNodeId);
-        if (!input) { optionsRef.current.onWarning("该节点类型无法连接到当前端口"); return; }
         try {
-            updateGraph(autoAssignWorkflowFrameMembers(addWorkflowConnection(graph, input), new Set([visualId])));
-            setSelectedNodeIds(new Set([visualId])); setSelectedConnectionId(null);
+            let next = graph;
+            const ids = type.endsWith("_generation") ? pending.connection.sourceNodeIds || [pending.connection.nodeId] : [pending.connection.nodeId];
+            for (const id of ids) {
+                const connection = normalizeWorkflowCanvasConnection(next, id, visualId, pending.connection.handleType, optionsRef.current.validateConnection);
+                const input = connection && workflowConnectionInput(connection.fromNodeId, connection.toNodeId);
+                if (!input) throw new Error("所选图片无法全部连接到此配置");
+                next = addWorkflowConnection(next, input);
+            }
+            updateGraph(autoAssignWorkflowFrameMembers(next, new Set([visualId])));
+            setSelectedNodeIds(new Set([visualId]));
+            setSelectedConnectionId(null);
             interactions.cancelPendingConnectionCreate();
-        } catch (error) { warn(error); }
+        } catch (error) {
+            warn(error);
+        }
     };
     return { nodes, connections, nodesRef, selectedNodeIds, setSelectedNodeIds, selectedConnectionId, setSelectedConnectionId, interactions, handleNodeMouseDown, deleteSelection, copySelection, pasteSelection, createConnectedNode, setVisualNodes: setNodes };
 }

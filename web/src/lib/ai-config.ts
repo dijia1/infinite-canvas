@@ -1,4 +1,6 @@
 export type AiConfig = {
+    videoMode?: "draft" | "final";
+    sourceDraftTaskId?: string;
     videoSeconds: string;
     videoSize?: string;
     generateAudio?: string;
@@ -35,6 +37,7 @@ export function normalizePersistedAiConfig(input: unknown): AiConfig {
     const stringValue = (key: keyof AiConfig, fallback: string) => (typeof persisted[key] === "string" ? persisted[key] : fallback);
     const resolution = stringValue("resolution", defaultAiConfig.resolution);
     const normalized: AiConfig = {
+        ...(persisted.videoMode === "draft" ? { videoMode: "draft" as const } : {}),
         videoSize: stringValue("videoSize", ""),
         generateAudio: stringValue("generateAudio", "false"),
         videoSeconds: stringValue("videoSeconds", defaultAiConfig.videoSeconds),

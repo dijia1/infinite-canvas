@@ -191,6 +191,8 @@ type ImageTaskRequestSummarizer interface {
 }
 
 type VideoRequest struct {
+	Mode          string
+	DraftTaskID   string
 	Prompt        string
 	Seconds       string
 	Size          string
@@ -210,6 +212,7 @@ func (e *VideoSubmissionError) Error() string       { return e.Message }
 func (e *VideoSubmissionError) SafeMessage() string { return e.Message }
 
 type VideoRequestSchema struct {
+	SupportsDraft             bool                      `json:"supportsDraft,omitempty"`
 	Resolutions               []ImageRequestFieldOption `json:"resolutions"`
 	AspectRatios              []string                  `json:"aspectRatios"`
 	MinDuration               int                       `json:"minDuration"`

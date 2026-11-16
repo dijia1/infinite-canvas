@@ -12,6 +12,7 @@ export function resolveSelectedModel<T extends AIModelChoice>(models: T[] | unde
 }
 
 export type VideoRequestSchema = {
+    supportsDraft?: boolean;
     resolutions: { value: string; label: string; price: string }[];
     aspectRatios: string[];
     minDuration: number;

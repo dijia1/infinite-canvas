@@ -21,7 +21,8 @@ export function reconcileVideoConfig(config: AiConfig, status: VideoModelStatus 
     if (!status) return config;
     const model = resolveSelectedModel(status.videoModels, config.videoProviderId, status.defaultVideoModelId);
     const schema = model?.videoRequestSchema;
-    const options = schema?.resolutions || [];
+    const videoMode = schema?.supportsDraft ? config.videoMode : undefined;
+    const options = (schema?.resolutions || []).filter((r) => (videoMode === "draft" ? r.value === "480p" : videoMode === "final" ? r.value === "1080p" : true));
     const aspectRatios = schema?.aspectRatios || [];
     const changedModel = Boolean(model && config.videoProviderId && model.id !== config.videoProviderId);
     const vquality = !reset && !changedModel && options.some((option) => option.value === config.vquality) ? config.vquality : (options[0]?.value ?? null);
@@ -31,7 +32,7 @@ export function reconcileVideoConfig(config: AiConfig, status: VideoModelStatus 
     const videoSeconds = !reset && !changedModel && validSeconds ? config.videoSeconds : String(schema?.defaultDuration || 5);
     const generateAudio = schema?.supportsAudio === false ? "false" : config.generateAudio;
     const videoProviderId = model?.id || config.videoProviderId;
-    return vquality === config.vquality && videoProviderId === config.videoProviderId && videoSize === (config.videoSize || "") && videoSeconds === config.videoSeconds && generateAudio === config.generateAudio
+    return videoMode === config.videoMode && vquality === config.vquality && videoProviderId === config.videoProviderId && videoSize === (config.videoSize || "") && videoSeconds === config.videoSeconds && generateAudio === config.generateAudio
         ? config
-        : { ...config, videoProviderId, vquality, videoSize, videoSeconds, generateAudio };
+        : { ...config, videoMode, sourceDraftTaskId: videoMode === "final" ? config.sourceDraftTaskId : undefined, videoProviderId, vquality, videoSize, videoSeconds, generateAudio };
 }

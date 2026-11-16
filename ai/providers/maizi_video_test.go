@@ -171,3 +171,70 @@ func TestMaiziQueryErrorsPreserveClassification(t *testing.T) {
 		}
 	}
 }
+
+func TestSeedance25DraftAndFinalContracts(t *testing.T) {
+	for _, mode := range []string{"", "draft", "final"} {
+		t.Run(mode, func(t *testing.T) {
+			p := videoTestProvider(func(r *http.Request) (*http.Response, error) {
+				var body map[string]any
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				if body["model"] != "doubao-seedance-2.5" || body["output_format"] != "mp4" {
+					t.Fatal(body)
+				}
+				if mode == "final" {
+					if len(body) != 4 || body["draft_task_id"] != "sample-uuid" || body["resolution"] != "1080p" {
+						t.Fatalf("final leaked sample inputs: %#v", body)
+					}
+				} else {
+					if body["duration"] != float64(30) || len(body["image_urls"].([]any)) != 30 || len(body["video_urls"].([]any)) != 10 {
+						t.Fatal(body)
+					}
+					if mode == "draft" && body["draft"] != true {
+						t.Fatal(body)
+					}
+				}
+				return videoResponse(200, `{"id":"new-task","status":"processing"}`), nil
+			})
+			p.seedance25 = true
+			p.config.Model = "doubao-seedance-2.5"
+			r := validVideoRequest()
+			r.Mode = mode
+			r.Seconds = "30"
+			r.Resolution = "480p"
+			r.GenerateAudio = true
+			r.DraftTaskID = "sample-uuid"
+			r.ImageURLs = nil
+			for i := 0; i < 30; i++ {
+				r.ImageURLs = append(r.ImageURLs, "https://example.com/image.png")
+			}
+			r.VideoURLs = nil
+			for i := 0; i < 10; i++ {
+				r.VideoURLs = append(r.VideoURLs, "https://example.com/video.mp4")
+			}
+			if _, err := p.CreateVideo(context.Background(), r); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	p := videoTestProvider(func(*http.Request) (*http.Response, error) {
+		t.Fatal("invalid request reached supplier")
+		return nil, nil
+	})
+	p.seedance25 = true
+	r := validVideoRequest()
+	r.Mode = "draft"
+	if _, err := p.CreateVideo(context.Background(), r); err == nil {
+		t.Fatal("accepted 720p draft")
+	}
+	r.Mode = "final"
+	if _, err := p.CreateVideo(context.Background(), r); err == nil {
+		t.Fatal("accepted missing sample")
+	}
+	p.seedance25 = false
+	r.Mode = "draft"
+	if _, err := p.CreateVideo(context.Background(), r); err == nil {
+		t.Fatal("old provider accepted draft")
+	}
+}

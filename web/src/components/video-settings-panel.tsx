@@ -1,5 +1,6 @@
 "use client";
 
+import { VideoGenerationModeSelect } from "./video-generation-mode-select";
 import { Switch } from "antd";
 import { CanvasSettingsSelect } from "@/components/canvas-settings-select";
 import { ImageSettingsTheme } from "@/components/image-settings-panel";
@@ -8,7 +9,7 @@ import { resolveSelectedModel } from "@/lib/model-selection";
 import { videoDurationOptions, videoSupportsAudio } from "@/lib/video-config";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 
-type Props = { config: AiConfig; onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "generateAudio", value: string) => void; theme: CanvasTheme; showTitle?: boolean; className?: string };
+type Props = { config: AiConfig; onConfigChange: (key: "vquality" | "videoSize" | "videoSeconds" | "generateAudio" | "videoMode", value: string) => void; theme: CanvasTheme; showTitle?: boolean; className?: string };
 export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = true, className = "w-[320px] space-y-4" }: Props) {
     const status = useConfigStore((state) => state.status);
     const schema = resolveSelectedModel(status?.videoModels, config.videoProviderId, status?.defaultVideoModelId)?.videoRequestSchema;
@@ -18,11 +19,13 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
         <ImageSettingsTheme theme={theme}>
             <div className={className} style={{ color: theme.node.text }} onMouseDown={(e) => e.stopPropagation()}>
                 {showTitle && <div className="text-sm font-medium">视频设置</div>}
+                <VideoGenerationModeSelect config={config} onChange={(mode) => onConfigChange("videoMode", mode || "normal")} />
                 <label className="block space-y-1 text-xs">
                     <span>分辨率</span>
                     <CanvasSettingsSelect
                         className="w-full"
-                        value={config.vquality || undefined}
+                        disabled={Boolean(config.videoMode)}
+                        value={config.videoMode === "draft" ? "480p" : config.videoMode === "final" ? "1080p" : config.vquality || undefined}
                         placeholder="请选择分辨率"
                         options={schema?.resolutions.map((r) => ({ value: r.value, label: `${r.label} · ¥${r.price}/秒` }))}
                         onChange={(v) => onConfigChange("vquality", v)}
@@ -30,16 +33,23 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                 </label>
                 <label className="block space-y-1 text-xs">
                     <span>比例</span>
-                    <CanvasSettingsSelect className="w-full" value={config.videoSize || undefined} placeholder="请选择比例" options={schema?.aspectRatios.map((value) => ({ value, label: value }))} onChange={(v) => onConfigChange("videoSize", v)} />
+                    <CanvasSettingsSelect
+                        disabled={config.videoMode === "final"}
+                        className="w-full"
+                        value={config.videoSize || undefined}
+                        placeholder="请选择比例"
+                        options={schema?.aspectRatios.map((value) => ({ value, label: value }))}
+                        onChange={(v) => onConfigChange("videoSize", v)}
+                    />
                 </label>
                 <label className="block space-y-1 text-xs">
                     <span>时长</span>
-                    <CanvasSettingsSelect className="w-full" value={config.videoSeconds || String(schema?.defaultDuration || 5)} options={durationOptions} onChange={(v) => onConfigChange("videoSeconds", v)} />
+                    <CanvasSettingsSelect disabled={config.videoMode === "final"} className="w-full" value={config.videoSeconds || String(schema?.defaultDuration || 5)} options={durationOptions} onChange={(v) => onConfigChange("videoSeconds", v)} />
                 </label>
                 {videoSupportsAudio(schema) ? (
                     <label className="flex items-center justify-between text-xs">
                         <span>生成音频</span>
-                        <Switch checkedChildren="开" unCheckedChildren="关" size="small" checked={config.generateAudio === "true"} onChange={(v) => onConfigChange("generateAudio", String(v))} />
+                        <Switch disabled={config.videoMode === "final"} checkedChildren="开" unCheckedChildren="关" size="small" checked={config.generateAudio === "true"} onChange={(v) => onConfigChange("generateAudio", String(v))} />
                     </label>
                 ) : null}
                 {!schema && (

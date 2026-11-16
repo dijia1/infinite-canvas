@@ -71,6 +71,7 @@ export type CanvasInteractionControllerOptions = {
     screenToCanvas: (clientX: number, clientY: number) => Position;
     createNode?: (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, position: Position) => CanvasNodeData;
     normalizeConnection?: typeof normalizeConnection;
+    validateConnections?: (nodes: CanvasNodeData[], connections: CanvasConnection[]) => void;
     createConnectionId?: () => string;
     onWarning?: (message: string) => void;
     requestAnimationFrame?: (callback: FrameRequestCallback) => number;
@@ -207,7 +208,10 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
                 .reverse()
                 .find((node) => {
                     if (node.id === current.nodeId) return false;
-                    const connection = (options.normalizeConnection || normalizeConnection)(current.nodeId, node.id, options.nodesRef.current, current.handleType);
+                    const connection =
+                        current.sourceNodeIds?.length && node.type === CanvasNodeType.Config
+                            ? { fromNodeId: current.nodeId, toNodeId: node.id }
+                            : (options.normalizeConnection || normalizeConnection)(current.nodeId, node.id, options.nodesRef.current, current.handleType);
                     if (!connection) return false;
                     if (world.x >= node.position.x && world.x <= node.position.x + node.width && world.y >= node.position.y && world.y <= node.position.y + node.height) return true;
                     const handleX = node.position.x + (connection.fromNodeId === node.id ? node.width : 0);
@@ -218,30 +222,44 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
         );
     };
 
+    const connectionsForTarget = (current: ConnectionHandle, targetNodeId: string, nodes = options.nodesRef.current) => {
+        const target = nodes.find((node) => node.id === targetNodeId);
+        const ids = target?.type === CanvasNodeType.Config && current.sourceNodeIds?.length ? current.sourceNodeIds : [current.nodeId];
+        const next = [...options.connectionsRef.current];
+        for (const id of ids) {
+            if (next.some((c) => c.fromNodeId === id && c.toNodeId === targetNodeId)) continue;
+            const connection = (options.normalizeConnection || normalizeConnection)(id, targetNodeId, nodes, current.handleType);
+            if (!connection) throw new Error("所选图片无法全部连接到此配置");
+            if (next.some((c) => c.fromNodeId === connection.fromNodeId && c.toNodeId === connection.toNodeId)) continue;
+            next.push({ id: options.createConnectionId?.() || `conn-${Date.now()}-${id}`, ...connection });
+        }
+        options.validateConnections?.(nodes, next);
+        return next;
+    };
     const connectNodes = (current: ConnectionHandle, targetNodeId: string) => {
         if (current.nodeId === targetNodeId) return;
-        const connection = (options.normalizeConnection || normalizeConnection)(current.nodeId, targetNodeId, options.nodesRef.current, current.handleType);
-        if (!connection) {
-            options.onWarning?.("配置节点之间不能连接");
-            return;
+        try {
+            const next = connectionsForTarget(current, targetNodeId);
+            if (next.length !== options.connectionsRef.current.length) options.setConnections(next);
+            options.setContextMenu?.(null);
+        } catch (error) {
+            options.onWarning?.(error instanceof Error ? error.message : "无法连接图片");
         }
-        const exists = options.connectionsRef.current.some((item) => item.fromNodeId === connection.fromNodeId && item.toNodeId === connection.toNodeId);
-        if (!exists) {
-            options.setConnections((previous) => [...previous, { id: options.createConnectionId?.() || `conn-${Date.now()}`, ...connection }]);
-        }
-        options.setContextMenu?.(null);
     };
 
     const createConnectedNode = (type: CanvasNodeType.Image | CanvasNodeType.Text | CanvasNodeType.Config | CanvasNodeType.Video, pending: PendingConnectionCreate) => {
         if (!options.createNode) return;
         const newNode = options.createNode(type, pending.position);
-        const connection = (options.normalizeConnection || normalizeConnection)(pending.connection.nodeId, newNode.id, [...options.nodesRef.current, newNode], pending.connection.handleType);
-        if (!connection) {
-            options.onWarning?.("配置节点之间不能连接");
+        const nodes = [...options.nodesRef.current, newNode];
+        let connections: CanvasConnection[];
+        try {
+            connections = connectionsForTarget(pending.connection, newNode.id, nodes);
+        } catch (error) {
+            options.onWarning?.(error instanceof Error ? error.message : "无法创建连接");
             return;
         }
-        options.setNodes((previous) => [...previous, newNode]);
-        options.setConnections((previous) => [...previous, { id: options.createConnectionId?.() || `conn-${Date.now()}`, ...connection }]);
+        options.setNodes(nodes);
+        options.setConnections(connections);
         options.setSelectedNodeIds(new Set([newNode.id]));
         options.setSelectedConnectionId(null);
         if (type !== CanvasNodeType.Text) options.setDialogNodeId?.(newNode.id);
@@ -498,7 +516,15 @@ export function createCanvasInteractionController(initialOptions: CanvasInteract
     const handleConnectStart = (event: CanvasPointerEvent, nodeId: string, handleType: ConnectionHandle["handleType"]) => {
         event.stopPropagation?.();
         setMouse(options.screenToCanvas(event.clientX, event.clientY));
-        setConnecting({ nodeId, handleType });
+        const { hiddenNodeIds } = hiddenBatchNodeIds(options.nodesRef.current);
+        const sourceNodeIds =
+            handleType === "source" && options.selectedNodeIdsRef.current.has(nodeId) && options.nodesRef.current.find((n) => n.id === nodeId)?.type === CanvasNodeType.Image
+                ? options.nodesRef.current
+                      .filter((n) => n.type === CanvasNodeType.Image && options.selectedNodeIdsRef.current.has(n.id) && !hiddenNodeIds.has(n.id))
+                      .sort((a, b) => a.position.y - b.position.y || a.position.x - b.position.x || a.id.localeCompare(b.id))
+                      .map((n) => n.id)
+                : undefined;
+        setConnecting({ nodeId, handleType, ...(sourceNodeIds && sourceNodeIds.length > 1 ? { sourceNodeIds } : {}) });
         setConnectionTarget(null);
         options.setSelectedConnectionId(null);
     };

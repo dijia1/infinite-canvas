@@ -71,7 +71,6 @@ test("video HTTP requests carry bounded timeouts and query cancellation", async 
     }
 });
 
-
 test("video regeneration carries old task consent and query issues", async () => {
     const previous = axios.defaults.adapter;
     let input: { replaceTaskId?: string; confirmUncertain?: boolean } | undefined;
@@ -86,4 +85,19 @@ test("video regeneration carries old task consent and query issues", async () =>
         assert.equal(input?.confirmUncertain, true);
         assert.deepEqual(task.issue, issue);
     } finally { axios.defaults.adapter = previous; }
+});
+
+test("formal requests only carry local sample identity, never prompts or reference URLs", async () => {
+    const adapter = axios.defaults.adapter;
+    let body: any;
+    axios.defaults.adapter = async (c) => {
+        body = JSON.parse(c.data);
+        return { config: c, data: { code: 0, data: { id: "formal", status: "queued", videos: [] } }, status: 200, statusText: "OK", headers: {} } as AxiosResponse;
+    };
+    try {
+        await requestVideoGeneration({ ...config, videoMode: "final", sourceDraftTaskId: "local-sample" }, "do not send", [], "formal-client", ["do-not-send"]);
+        assert.deepEqual(body, { clientRequestId: "formal-client", providerId: "seedance", mode: "final", sourceDraftTaskId: "local-sample" });
+    } finally {
+        axios.defaults.adapter = adapter;
+    }
 });

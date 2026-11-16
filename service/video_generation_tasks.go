@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/basketikun/infinite-canvas/ai"
 	"github.com/basketikun/infinite-canvas/model"
 	"github.com/basketikun/infinite-canvas/repository"
@@ -13,17 +14,19 @@ import (
 )
 
 type CreateVideoTaskRequest struct {
-	ReplaceTaskID    string   `json:"replaceTaskId,omitempty"`
-	ConfirmUncertain bool     `json:"confirmUncertain,omitempty"`
-	ClientRequestID  string   `json:"clientRequestId"`
-	ProviderID       string   `json:"providerId"`
-	Prompt           string   `json:"prompt"`
-	Seconds          int      `json:"seconds"`
-	Size             string   `json:"size"`
-	Resolution       string   `json:"resolution"`
-	GenerateAudio    bool     `json:"generateAudio"`
-	ImageMediaIDs    []string `json:"imageMediaIds"`
-	VideoMediaIDs    []string `json:"videoMediaIds"`
+	Mode              string   `json:"mode,omitempty"`
+	SourceDraftTaskID string   `json:"sourceDraftTaskId,omitempty"`
+	ReplaceTaskID     string   `json:"replaceTaskId,omitempty"`
+	ConfirmUncertain  bool     `json:"confirmUncertain,omitempty"`
+	ClientRequestID   string   `json:"clientRequestId"`
+	ProviderID        string   `json:"providerId"`
+	Prompt            string   `json:"prompt"`
+	Seconds           int      `json:"seconds"`
+	Size              string   `json:"size"`
+	Resolution        string   `json:"resolution"`
+	GenerateAudio     bool     `json:"generateAudio"`
+	ImageMediaIDs     []string `json:"imageMediaIds"`
+	VideoMediaIDs     []string `json:"videoMediaIds"`
 }
 type VideoTaskView struct {
 	ID              string                     `json:"id"`
@@ -45,6 +48,17 @@ func normalizeVideoTaskRequest(request CreateVideoTaskRequest) (CreateVideoTaskR
 	request.ClientRequestID = strings.TrimSpace(request.ClientRequestID)
 	request.ProviderID = strings.TrimSpace(request.ProviderID)
 	request.Prompt = strings.TrimSpace(request.Prompt)
+	request.Mode = strings.TrimSpace(request.Mode)
+	if request.Mode == "normal" {
+		request.Mode = ""
+	}
+	request.SourceDraftTaskID = strings.TrimSpace(request.SourceDraftTaskID)
+	if request.Mode != "" && request.Mode != "draft" && request.Mode != "final" {
+		return CreateVideoTaskRequest{}, safeMessageError{message: "视频生成模式无效"}
+	}
+	if request.Mode == "final" && (request.SourceDraftTaskID == "" || len(request.SourceDraftTaskID) > 128) || request.Mode != "final" && request.SourceDraftTaskID != "" {
+		return CreateVideoTaskRequest{}, safeMessageError{message: "请选择有效的来源样片"}
+	}
 	request.Size = strings.TrimSpace(request.Size)
 	request.Resolution = strings.TrimSpace(request.Resolution)
 	request.ImageMediaIDs = append([]string{}, request.ImageMediaIDs...)
@@ -52,10 +66,10 @@ func normalizeVideoTaskRequest(request CreateVideoTaskRequest) (CreateVideoTaskR
 	if request.ClientRequestID == "" || len(request.ClientRequestID) > 128 {
 		return CreateVideoTaskRequest{}, safeMessageError{message: "视频请求 ID 无效"}
 	}
-	if request.Prompt == "" || len(request.Prompt) > 20000 {
+	if request.Mode != "final" && request.Prompt == "" || len(request.Prompt) > 20000 {
 		return CreateVideoTaskRequest{}, safeMessageError{message: "请填写有效的视频提示词"}
 	}
-	if request.Seconds < 1 {
+	if request.Mode != "final" && request.Seconds < 1 {
 		return CreateVideoTaskRequest{}, safeMessageError{message: "生成视频时长必须为正整数"}
 	}
 	for _, ids := range [][]string{request.ImageMediaIDs, request.VideoMediaIDs} {
@@ -114,6 +128,12 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 		}
 		return videoGenerationTaskView(ctx, user, previous)
 	}
+	if request.Mode == "final" {
+		request, _, err = resolveDraftVideoRequest(user, request)
+		if err != nil {
+			return VideoTaskView{}, err
+		}
+	}
 	settings, err := AdminSettings()
 	if err != nil {
 		return VideoTaskView{}, err
@@ -141,7 +161,7 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 	if err != nil {
 		return VideoTaskView{}, err
 	}
-	if _, err := resolveVideoTaskInputs(ctx, user, request); err != nil {
+	if _, err := resolveVideoTaskInputs(ctx, user, request, providerType.VideoRequestSchema); err != nil {
 		return VideoTaskView{}, err
 	}
 	timeout, err := videoTaskTimeout()
@@ -167,6 +187,15 @@ func CreateVideoGenerationTask(ctx context.Context, request CreateVideoTaskReque
 
 func validateVideoRequestCapabilities(request CreateVideoTaskRequest, provider model.AIProvider, info ai.ProviderType) error {
 	schema := configuredVideoRequestSchema(provider, info)
+	if request.Mode != "" && !schema.SupportsDraft {
+		return safeMessageError{message: "当前模型不支持样片或正式片"}
+	}
+	if request.Mode == "draft" && request.Resolution != "480p" {
+		return safeMessageError{message: "样片必须使用 480p"}
+	}
+	if request.Mode == "final" && request.Resolution != "1080p" {
+		return safeMessageError{message: "正式片必须使用 1080p"}
+	}
 	if request.Seconds < schema.MinDuration || request.Seconds > schema.MaxDuration {
 		return safeMessageError{message: "请选择当前模型支持的视频时长"}
 	}
@@ -238,14 +267,25 @@ func videoGenerationTaskView(ctx context.Context, user PortalUser, item model.Vi
 	}
 	return view, nil
 }
-func resolveVideoTaskInputs(ctx context.Context, user PortalUser, request CreateVideoTaskRequest) (ai.VideoRequest, error) {
+func resolveVideoTaskInputs(ctx context.Context, user PortalUser, request CreateVideoTaskRequest, schema *ai.VideoRequestSchema) (ai.VideoRequest, error) {
+	if request.Mode == "final" {
+		resolved, source, err := resolveDraftVideoRequest(user, request)
+		if err != nil {
+			return ai.VideoRequest{}, err
+		}
+		return ai.VideoRequest{Mode: "final", DraftTaskID: source.ProviderTaskID, Seconds: strconv.Itoa(resolved.Seconds), Size: resolved.Size, Resolution: "1080p"}, nil
+	}
 	store, err := newImageStore()
 	if err != nil {
 		return ai.VideoRequest{}, err
 	}
-	result := ai.VideoRequest{Prompt: request.Prompt, Seconds: strconv.Itoa(request.Seconds), Size: request.Size, Resolution: request.Resolution, GenerateAudio: request.GenerateAudio}
+	result := ai.VideoRequest{Mode: request.Mode, Prompt: request.Prompt, Seconds: strconv.Itoa(request.Seconds), Size: request.Size, Resolution: request.Resolution, GenerateAudio: request.GenerateAudio}
 	if _, ok := store.(*ossImageStore); !ok {
 		return result, safeMessageError{message: "视频生成需要 OSS 存储"}
+	}
+	maxVideoDuration := 15
+	if schema != nil {
+		maxVideoDuration = schema.MaxReferenceVideoDuration
 	}
 	duration := 0.0
 	for group, ids := range [][]string{request.ImageMediaIDs, request.VideoMediaIDs} {
@@ -274,8 +314,8 @@ func resolveVideoTaskInputs(ctx context.Context, user PortalUser, request Create
 					return result, safeMessageError{message: "参考视频缺少时长信息，请重新上传"}
 				}
 				duration += item.Duration
-				if duration > 15.000001 {
-					return result, safeMessageError{message: "参考视频总时长不能超过 15 秒"}
+				if maxVideoDuration > 0 && duration > float64(maxVideoDuration)+0.000001 {
+					return result, safeMessageError{message: fmt.Sprintf("参考视频总时长不能超过 %d 秒", maxVideoDuration)}
 				}
 			}
 			url, err := videoReferenceURL(ctx, store, item.ObjectKey)

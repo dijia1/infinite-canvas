@@ -34,6 +34,7 @@ export function aiConfigForWorkflowNode(node: WorkflowNode, fallback: AiConfig):
     if (node.type === "video_generation") {
         return {
             ...common,
+            videoMode: config.videoMode,
             videoProviderId: config.providerId,
             videoSize: config.size || fallback.videoSize,
             vquality: config.resolution || fallback.vquality,
@@ -47,6 +48,7 @@ export function aiConfigForWorkflowNode(node: WorkflowNode, fallback: AiConfig):
 export function workflowConfigFromAiConfig(type: Extract<WorkflowNodeType, "image_generation" | "video_generation">, config: AiConfig): WorkflowGenerationConfig {
     if (type === "video_generation") {
         return {
+            ...(config.videoMode ? { videoMode: config.videoMode } : {}),
             ...(config.videoProviderId ? { providerId: config.videoProviderId } : {}),
             ...(config.videoSize ? { size: config.videoSize } : {}),
             ...(config.vquality ? { resolution: config.vquality } : {}),

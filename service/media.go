@@ -35,6 +35,7 @@ const mediaVideoPreviewProcess = "video/snapshot,t_0,f_jpg,w_480"
 const mediaUploadIntentTTL = 15 * time.Minute
 
 type MediaAccess struct {
+	VideoGeneration *VideoGenerationSource `json:"videoGeneration,omitempty"`
 	Duration       float64    `json:"duration"`
 	MediaID        string     `json:"mediaId"`
 	URL            string     `json:"url"`
@@ -547,7 +548,9 @@ func mediaAccess(ctx context.Context, store imageStore, item model.Media) (Media
 			previewURL = ""
 		}
 	}
-	return MediaAccess{Duration: item.Duration, MediaID: item.ID, URL: url, PreviewURL: previewURL, ExpiresAt: expiresAt, MediaExpiresAt: item.ExpiresAt, ContentType: item.ContentType, Bytes: item.Bytes, Width: item.Width, Height: item.Height}, nil
+	generation,err:=mediaVideoGenerationSource(item)
+ if err!=nil{return MediaAccess{},err}
+ return MediaAccess{VideoGeneration:generation,Duration: item.Duration, MediaID: item.ID, URL: url, PreviewURL: previewURL, ExpiresAt: expiresAt, MediaExpiresAt: item.ExpiresAt, ContentType: item.ContentType, Bytes: item.Bytes, Width: item.Width, Height: item.Height}, nil
 }
 
 func OpenLocalMedia(ctx context.Context, user PortalUser, id string) (result io.ReadCloser, contentType string, resultErr error) {

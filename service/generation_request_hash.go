@@ -41,16 +41,18 @@ type imageTaskRequestIdentity struct {
 }
 
 type videoTaskRequestIdentity struct {
-	Version       int      `json:"version"`
-	Kind          string   `json:"kind"`
-	ProviderID    string   `json:"providerId"`
-	Prompt        string   `json:"prompt"`
-	Seconds       int      `json:"seconds"`
-	Size          string   `json:"size"`
-	Resolution    string   `json:"resolution"`
-	GenerateAudio bool     `json:"generateAudio"`
-	ImageMediaIDs []string `json:"imageMediaIds"`
-	VideoMediaIDs []string `json:"videoMediaIds"`
+	Mode              string   `json:"mode,omitempty"`
+	SourceDraftTaskID string   `json:"sourceDraftTaskId,omitempty"`
+	Version           int      `json:"version"`
+	Kind              string   `json:"kind"`
+	ProviderID        string   `json:"providerId"`
+	Prompt            string   `json:"prompt"`
+	Seconds           int      `json:"seconds"`
+	Size              string   `json:"size"`
+	Resolution        string   `json:"resolution"`
+	GenerateAudio     bool     `json:"generateAudio"`
+	ImageMediaIDs     []string `json:"imageMediaIds"`
+	VideoMediaIDs     []string `json:"videoMediaIds"`
 }
 
 func imageTaskRequestHash(request CreateImageTaskRequest) (string, error) {
@@ -105,6 +107,19 @@ func imageTaskReferenceIdentity(reference ai.ImageReference) (imageTaskInputIden
 }
 
 func videoTaskRequestHash(request CreateVideoTaskRequest) (string, error) {
+	version := 1
+	if request.Mode != "" {
+		version = 2
+	}
+	if request.Mode == "final" {
+		return canonicalRequestHash(struct {
+			Version           int    `json:"version"`
+			Kind              string `json:"kind"`
+			ProviderID        string `json:"providerId"`
+			Mode              string `json:"mode"`
+			SourceDraftTaskID string `json:"sourceDraftTaskId"`
+		}{2, "video", request.ProviderID, "final", request.SourceDraftTaskID})
+	}
 	imageMediaIDs := append([]string{}, request.ImageMediaIDs...)
 	videoMediaIDs := append([]string{}, request.VideoMediaIDs...)
 	if imageMediaIDs == nil {
@@ -114,7 +129,7 @@ func videoTaskRequestHash(request CreateVideoTaskRequest) (string, error) {
 		videoMediaIDs = []string{}
 	}
 	return canonicalRequestHash(videoTaskRequestIdentity{
-		Version: 1, Kind: "video", ProviderID: request.ProviderID, Prompt: request.Prompt,
+		Version: version, Mode: request.Mode, Kind: "video", ProviderID: request.ProviderID, Prompt: request.Prompt,
 		Seconds: request.Seconds, Size: request.Size, Resolution: request.Resolution, GenerateAudio: request.GenerateAudio,
 		ImageMediaIDs: imageMediaIDs, VideoMediaIDs: videoMediaIDs,
 	})

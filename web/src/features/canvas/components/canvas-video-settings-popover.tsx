@@ -65,7 +65,9 @@ export function CanvasVideoSettingsPopover({ config, onConfigChange, outputCount
                     onClick={() => setOpen((current) => !current)}
                 >
                     <span className="truncate">
-                        {formatSummary(`${videoResolutionLabel(config.vquality)} · ${videoSizeLabel(config.videoSize || "")} · ${videoSecondsLabel(config.videoSeconds)}${outputCount !== undefined ? ` · ${outputCount} 个` : ""}`)}
+                        {formatSummary(
+                            `${config.videoMode === "draft" ? "样片 · " : config.videoMode === "final" ? "正式片 · " : ""}${videoResolutionLabel(config.vquality)} · ${videoSizeLabel(config.videoSize || "")} · ${videoSecondsLabel(config.videoSeconds)}${outputCount !== undefined ? ` · ${outputCount} 个` : ""}`,
+                        )}
                     </span>
                 </Button>
             </span>

@@ -13,6 +13,7 @@ export type WorkflowInputPort = {
 };
 
 export type WorkflowGenerationConfig = {
+    videoMode?: "draft" | "final";
     providerId?: string;
     size?: string;
     resolution?: string;
