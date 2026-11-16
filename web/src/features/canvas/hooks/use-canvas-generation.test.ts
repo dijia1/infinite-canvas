@@ -6,7 +6,7 @@ import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../t
 import type { AiConfig } from "@/lib/ai-config";
 import type { ImageGenerationTask } from "@/services/api/image";
 import { ImageQueryTransientError, ImageRequestRejectedError } from "@/services/api/image";
-import type { VideoGenerationTask } from "@/services/api/video";
+import type { VideoGenerationSource, VideoGenerationTask } from "@/services/api/video";
 import type { StoredCanvasImage } from "@/services/canvas-image-hydration";
 
 type Ref<T> = { current: T };
@@ -121,6 +121,29 @@ function setup(initialNodes: CanvasNodeData[], initialConnections: CanvasConnect
     });
     return { controller, nodesRef, connectionsRef, calls };
 }
+
+test("formal action preserves its draft, creates an independent result and reuses the existing duplicate-task guard", async () => {
+    const sample = node("draft", CanvasNodeType.Video, { mediaId: "sample-media", generationMode: "video", videoMode: "draft", status: "success" });
+    const source: VideoGenerationSource = { taskId: "sample-task", providerId: "seedance25", mode: "draft", createdAt: "2026-11-16T00:00:00Z", seconds: 5, size: "16:9", generateAudio: true };
+    const pending = deferred<VideoGenerationTask>();
+    const requests: AiConfig[] = [];
+    const s = setup([sample], [], { requestVideoGeneration: (request: AiConfig) => { requests.push(request); return pending.promise; } });
+    const first = s.controller.generateFinalVideo(sample.id, source);
+    await s.controller.generateFinalVideo(sample.id, source);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].videoMode, "final");
+    assert.equal(requests[0].sourceDraftTaskId, "sample-task");
+    assert.equal(requests[0].vquality, "1080p");
+    assert.equal(s.nodesRef.current[0], sample);
+    assert.equal(s.nodesRef.current.length, 2);
+    const result = s.nodesRef.current[1]!;
+    assert.deepEqual(s.connectionsRef.current.map(edge => [edge.fromNodeId, edge.toNodeId]), [[sample.id, result.id]]);
+    assert.equal(s.calls.warnings.length, 1);
+    pending.resolve({ id: "formal-task", status: "succeeded", progress: 100, resultMediaIds: ["formal-media"], videos: [{ mediaId: "formal-media", url: "/formal.mp4", width: 1920, height: 1080 }] });
+    await first;
+    assert.equal(s.nodesRef.current.find(n => n.id === result.id)?.metadata?.mediaId, "formal-media");
+    assert.equal(s.nodesRef.current[0], sample);
+});
 
 test("successful image task keeps its loading placeholder until the result download finishes", async () => {
     const uploaded = deferred<StoredCanvasImage>();

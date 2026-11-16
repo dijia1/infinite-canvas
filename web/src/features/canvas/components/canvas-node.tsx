@@ -653,7 +653,7 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
 }
 
 function VideoNodeContent({ node, videoVisible, onVideoDimensions }: NodeContentRendererProps) {
-    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} onDimensions={onVideoDimensions ? (dimensions) => onVideoDimensions(node.id, node.metadata?.mediaId, dimensions) : undefined} />;
+    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} showGenerationFooter={false} onDimensions={onVideoDimensions ? (dimensions) => onVideoDimensions(node.id, node.metadata?.mediaId, dimensions) : undefined} />;
 }
 
 function ImageContent({

@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, ImageIcon, Video } from "lucide-react";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import type { GeneratedResultDetails } from "../utils/canvas-generated-result";
 
-export function CanvasNodeResultPanel({ details, theme, mediaType = "image" }: { details: GeneratedResultDetails; theme: CanvasTheme; mediaType?: "image" | "video" }) {
+export function CanvasNodeResultPanel({ details, theme, mediaType = "image", actions }: { details: GeneratedResultDetails; theme: CanvasTheme; mediaType?: "image" | "video"; actions?: ReactNode }) {
     const [copyStatus, setCopyStatus] = useState("");
     useEffect(() => setCopyStatus(""), [details.prompt]);
     const copyPrompt = async () => {
@@ -34,9 +34,12 @@ export function CanvasNodeResultPanel({ details, theme, mediaType = "image" }: {
                     {copyStatus === "提示词已复制" ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                 </button>
             </div>
-            <div className="my-2 flex min-w-0 items-center gap-2 text-xs">
-                <span style={{ color: theme.node.muted }}>模型</span>{mediaType === "video" ? <Video className="size-3.5 shrink-0" /> : <ImageIcon className="size-3.5 shrink-0" />}
-                <span className="truncate" title={details.model}>{details.model}</span>
+            <div className="my-2 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+                <div className="flex min-w-0 flex-[1_1_9rem] items-center gap-2">
+                    <span className="shrink-0" style={{ color: theme.node.muted }}>模型</span>{mediaType === "video" ? <Video className="size-3.5 shrink-0" /> : <ImageIcon className="size-3.5 shrink-0" />}
+                    <span className="truncate" title={details.model}>{details.model}</span>
+                </div>
+                {actions ? <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center justify-end gap-1">{actions}</div> : null}
             </div>
             <div aria-label="生成参数" className="thin-scrollbar flex items-center justify-between gap-3 overflow-x-auto border-t pt-2 text-[11px]" style={{ borderColor: theme.node.stroke }}>
                 {details.parameters.map(parameter => <div key={parameter.label} className="flex shrink-0 items-center gap-1.5 whitespace-nowrap"><span style={{ color: theme.node.muted }}>{parameter.label}</span><span>{parameter.value}</span></div>)}

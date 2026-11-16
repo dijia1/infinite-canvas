@@ -74,7 +74,8 @@ import { CanvasNode } from "../components/canvas-node";
 import { VideoResourceProvider, useExternalVideoNodes } from "../components/canvas-video-content";
 import { CanvasNodePromptPanel } from "../components/canvas-node-prompt-panel";
 import { CanvasNodeResultPanel } from "../components/canvas-node-result-panel";
-import { isGeneratedImageResult, generatedImageDetails, generatedVideoDetails, isGeneratedVideoResult, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
+import { CanvasVideoResultPanel } from "../components/canvas-video-result-panel";
+import { isGeneratedImageResult, generatedImageDetails, isGeneratedVideoResult, clearGeneratedImageIdentity } from "../utils/canvas-generated-result";
 import { CanvasToolbar } from "../components/canvas-toolbar";
 import { CanvasZoomControls } from "../components/canvas-zoom-controls";
 import { CanvasBootstrapFeedback, CanvasSyncFeedback } from "../components/canvas-sync-feedback";
@@ -1977,12 +1978,9 @@ function InfiniteCanvasPage() {
     }, []);
 
     const renderNodePromptPanel = useCallback(
-        (panelNode: CanvasNodeData) => isGeneratedImageResult(panelNode) ? (
-            <CanvasNodeResultPanel key={panelNode.id} details={generatedImageDetails(panelNode.metadata, aiStatus?.imageModels)} theme={theme} />
-        ) : isGeneratedVideoResult(panelNode) ? (
-            <CanvasNodeResultPanel key={panelNode.id} details={generatedVideoDetails(panelNode.metadata, aiStatus?.videoModels)} theme={theme} mediaType="video" />
-        ) : (
-            <CanvasNodePromptPanel
+        (panelNode: CanvasNodeData) => {
+            if (isGeneratedImageResult(panelNode)) return <CanvasNodeResultPanel key={panelNode.id} details={generatedImageDetails(panelNode.metadata, aiStatus?.imageModels)} theme={theme} />;
+            const promptPanel = <CanvasNodePromptPanel
                 node={panelNode}
                 isRunning={runningNodeId === panelNode.id}
                 onPromptChange={handleNodePromptChange}
@@ -1992,8 +1990,12 @@ function InfiniteCanvasPage() {
                     setNodeImageSettingsOpen(open);
                     if (open) setToolbarNodeId(null);
                 }}
-            />
-        ),
+            />;
+            if (isGeneratedVideoResult(panelNode) || (panelNode.type === CanvasNodeType.Video && panelNode.metadata?.mediaId && panelNode.metadata.status !== "loading" && panelNode.metadata.status !== "error")) {
+                return <CanvasVideoResultPanel key={panelNode.id} node={panelNode} models={aiStatus?.videoModels} theme={theme} fallback={promptPanel} />;
+            }
+            return promptPanel;
+        },
         [aiStatus?.imageModels, aiStatus?.videoModels, handleConfigNodeChange, handleGenerateNode, handleNodePromptChange, runningNodeId, theme],
     );
 

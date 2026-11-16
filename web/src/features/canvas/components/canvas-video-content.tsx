@@ -4,6 +4,7 @@ import { createVideoResourceManager, type VideoResourceLease, type VideoResource
 import { useCanvasStore } from "../stores/use-canvas-store";
 
 import type { VideoGenerationSource } from "@/services/api/video";
+import type { CanvasTheme } from "@/lib/canvas-theme";
 
 type FinalVideoAction = (nodeId: string, source: VideoGenerationSource, mediaId: string) => void | Promise<void>;
 type Playback = { time: number; volume: number; muted: boolean; rate: number };
@@ -54,15 +55,84 @@ export function ScopedVideoResourceProvider({
     return <Context.Provider value={{ ...resources, onGenerateFinal, finalActionLabel }}>{children}</Context.Provider>;
 }
 
-export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, onDimensions }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean; onDimensions?: (dimensions: { width: number; height: number }) => void }) {
+function VideoFinalActionButton({ nodeId, mediaId, source, onGenerate, label = "生成正式片 · 1080p", theme }: { nodeId: string; mediaId: string; source: VideoGenerationSource; onGenerate: FinalVideoAction; label?: string; theme?: CanvasTheme }) {
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    const pending = useRef(false);
+    const mounted = useRef(true);
+    useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; };
+    }, []);
+    return <>
+        <button
+            type="button"
+            disabled={busy}
+            className="cursor-pointer whitespace-nowrap rounded border border-white/25 px-2 py-1 disabled:opacity-50"
+            style={theme ? { background: theme.node.fill, borderColor: theme.node.stroke, color: theme.node.text } : undefined}
+            onClick={async () => {
+                if (pending.current) return;
+                pending.current = true;
+                setBusy(true);
+                setError("");
+                try {
+                    await onGenerate(nodeId, source, mediaId);
+                } catch (e) {
+                    if (mounted.current) setError(e instanceof Error ? e.message : "无法生成正式片");
+                } finally {
+                    pending.current = false;
+                    if (mounted.current) setBusy(false);
+                }
+            }}
+        >{busy ? "处理中…" : label}</button>
+        {error ? <span role="alert" className={`order-last w-full break-words ${theme ? "text-red-500" : "text-red-300"}`}>{error}</span> : null}
+    </>;
+}
+
+// Result panels share the player's cached metadata without remounting it.
+export function useVideoGenerationSource(mediaId?: string) {
+    const manager = useContext(Context)?.manager;
+    const [result, setResult] = useState<{ mediaId?: string; generation?: VideoGenerationSource; error?: string }>({});
+    const [retry, setRetry] = useState(0);
+    useEffect(() => {
+        if (!manager || !mediaId) return;
+        const lease = manager.acquire(mediaId);
+        let live = true;
+        void lease.getAccess().then(value => {
+            if (live) setResult({ mediaId, generation: value.videoGeneration });
+        }).catch(e => {
+            if (live) setResult({ mediaId, error: e instanceof Error ? e.message : "样片信息加载失败" });
+        });
+        return () => {
+            live = false;
+            lease.release();
+        };
+    }, [manager, mediaId, retry]);
+    return {
+        generation: result.mediaId === mediaId ? result.generation : undefined,
+        error: result.mediaId === mediaId ? result.error : undefined,
+        retry: () => { setResult({}); setRetry(value => value + 1); },
+    };
+}
+
+export function CanvasVideoFinalAction({ nodeId, mediaId, theme }: { nodeId: string; mediaId: string; theme: CanvasTheme }) {
+    const onGenerate = useContext(Context)?.onGenerateFinal;
+    const { generation, error, retry } = useVideoGenerationSource(onGenerate ? mediaId : undefined);
+    if (!onGenerate) return null;
+    if (error) return <span role="alert" className="text-red-500">
+        {error}{" "}<button type="button" className="underline" onClick={retry}>重试</button>
+    </span>;
+    if (generation?.mode !== "draft") return null;
+    return <VideoFinalActionButton key={`${nodeId}:${mediaId}:${generation.taskId}`} nodeId={nodeId} mediaId={mediaId} source={generation} onGenerate={onGenerate} theme={theme} />;
+}
+
+export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, showGenerationFooter = true, onDimensions }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean; showGenerationFooter?: boolean; onDimensions?: (dimensions: { width: number; height: number }) => void }) {
     const naturalSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
     const dimensionsRef = useRef(onDimensions);
     dimensionsRef.current = onDimensions;
     const context = useContext(Context);
     const resources = useMemo(() => (context ? { manager: context.manager, playback: context.playback } : null), [context?.manager, context?.playback]);
     const [generation, setGeneration] = useState<VideoGenerationSource>();
-    const [finalBusy, setFinalBusy] = useState(false);
-    const [finalError, setFinalError] = useState("");
     const videoRef = useRef<HTMLVideoElement>(null);
     const leaseRef = useRef<VideoResourceLease | undefined>(undefined);
     const attempt = useRef(0),
@@ -86,7 +156,6 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
     useLayoutEffect(() => {
         setSource(undefined);
         setGeneration(undefined);
-        setFinalError("");
         naturalSizeRef.current = undefined;
         setPoster(undefined);
         setBusy(false);
@@ -173,7 +242,6 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
             save();
             setSource(undefined);
             setGeneration(undefined);
-            setFinalError("");
         }, 10000);
         return () => clearTimeout(timer);
     }, [visible, external, source]);
@@ -343,35 +411,13 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
                 </div>
             )}
             </div>
-            {generation?.mode === "draft" || generation?.mode === "final" ? (
+            {showGenerationFooter && (generation?.mode === "draft" || generation?.mode === "final") ? (
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 bg-neutral-900 px-2 py-1.5 text-xs text-white" onPointerDown={(e) => e.stopPropagation()} onMouseDown={(e) => e.stopPropagation()}>
                     <span>{generation.mode === "draft" ? "样片 · 480p" : "正式片 · 1080p"}</span>
                     {generation.mode === "draft" && context?.onGenerateFinal && mediaId ? (
-                        <button
-                            type="button"
-                            disabled={finalBusy}
-                            className="cursor-pointer rounded border border-white/25 px-2 py-1 disabled:opacity-50"
-                            onClick={async () => {
-                                setFinalBusy(true);
-                                setFinalError("");
-                                try {
-                                    await context.onGenerateFinal!(nodeId, generation, mediaId);
-                                } catch (e) {
-                                    setFinalError(e instanceof Error ? e.message : "无法生成正式片");
-                                } finally {
-                                    setFinalBusy(false);
-                                }
-                            }}
-                        >
-                            {finalBusy ? "处理中…" : context.finalActionLabel || "生成正式片 · 1080p"}
-                        </button>
+                        <VideoFinalActionButton key={`${nodeId}:${mediaId}:${generation.taskId}`} nodeId={nodeId} mediaId={mediaId} source={generation} onGenerate={context.onGenerateFinal} label={context.finalActionLabel} />
                     ) : null}
                     {generation.mode === "draft" ? <span className="w-full text-[11px] text-neutral-400">{new Date(generation.createdAt).toLocaleDateString()} · 建议 3 天内转正式片</span> : null}
-                    {finalError ? (
-                        <span role="alert" className="w-full text-red-300">
-                            {finalError}
-                        </span>
-                    ) : null}
                 </div>
             ) : null}
         </div>

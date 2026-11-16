@@ -77,3 +77,13 @@ test("video details use the submitted video fields, retain missing values and ig
         for (const absent of ["textarea", "格式", "质量", 'aria-label="生成"']) assert.ok(!html.includes(absent));
     }
 });
+
+test("result panel places an optional formal action beside the model and before recorded parameters", () => {
+    const details = generatedVideoDetails({ videoProviderName: "Seedance 2.5", vquality: "480p", videoSize: "16:9", seconds: "5" });
+    for (const theme of [canvasThemes.dark, canvasThemes.light]) {
+        const html = renderToStaticMarkup(<CanvasNodeResultPanel details={details} theme={theme} mediaType="video" actions={<button>生成正式片 · 1080p</button>} />);
+        assert.ok(html.indexOf("Seedance 2.5") < html.indexOf("生成正式片 · 1080p"));
+        assert.ok(html.indexOf("生成正式片 · 1080p") < html.indexOf('aria-label="生成参数"'));
+        assert.doesNotMatch(html, /建议 3 天内|样片 · 480p/);
+    }
+});
