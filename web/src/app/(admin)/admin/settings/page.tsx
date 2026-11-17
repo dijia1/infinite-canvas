@@ -28,6 +28,9 @@ export default function AdminSettingsPage() {
     const selectedType = Form.useWatch("type", form);
     const selectedProviderType = types.find((item) => item.id === selectedType);
     const fixedOptions = (key: string) => {
+        const video = selectedProviderType?.videoRequestSchema;
+        if (key === "resolution" && video?.resolutions?.length) return video.resolutions;
+        if (key === "size" && video?.aspectRatios?.length) return video.aspectRatios.map(value => ({ value, label: value }));
         const field = selectedProviderType?.imageRequestSchema?.fields.find((item) => item.key === key);
         return field?.fixedOptions ? field.options : undefined;
     };
@@ -269,7 +272,7 @@ export default function AdminSettingsPage() {
                                                     ]}
                                                     className="mb-0 flex-1"
                                                 >
-                                                    <Input placeholder="例如：720p" />
+                                                    {fixedOptions("resolution") ? <Select options={fixedOptions("resolution")} placeholder="选择分辨率" /> : <Input placeholder="例如：720p" />}
                                                 </Form.Item>
                                                 <Form.Item
                                                     name={[field.name, "amount"]}

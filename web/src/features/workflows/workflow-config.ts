@@ -1,5 +1,6 @@
 import type { AiConfig } from "@/lib/ai-config";
 import type { AIModelChoice } from "@/lib/model-selection";
+import { videoReferenceTotalError } from "@/lib/video-config";
 import type { WorkflowGenerationConfig, WorkflowNode, WorkflowNodeType } from "./types";
 
 type WorkflowInputCounts = { image: number; video: number; text: number };
@@ -16,7 +17,7 @@ export function workflowModelInputError(type: Extract<WorkflowNodeType, "image_g
     if (typeof imageLimit === "number" && counts.image > imageLimit) return `当前模型最多支持 ${imageLimit} 个图片输入，已连接 ${counts.image} 个`;
     const videoLimit = model.videoRequestSchema?.maxReferenceVideos;
     if (typeof videoLimit === "number" && counts.video > videoLimit) return `当前模型最多支持 ${videoLimit} 个视频输入，已连接 ${counts.video} 个`;
-    return "";
+    return videoReferenceTotalError(model.videoRequestSchema, counts.image, counts.video);
 }
 
 export function aiConfigForWorkflowNode(node: WorkflowNode, fallback: AiConfig): AiConfig {

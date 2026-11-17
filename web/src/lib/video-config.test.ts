@@ -3,6 +3,7 @@ import test from "node:test";
 import { defaultAiConfig, normalizePersistedAiConfig } from "./ai-config";
 import { reconcileVideoConfig, videoDurationOptions, videoSupportsAudio } from "./video-config";
 import type { VideoModelStatus } from "./video-config";
+import { flashVideoModel } from "@/test-utils/flash-video";
 
 const status: VideoModelStatus = {
     videoModels: [
@@ -99,4 +100,24 @@ test("draft selection locks 480p and leaving a capable model clears draft mode",
     assert.equal(next.videoMode, "draft");
     const oldModel = { ...capable, videoRequestSchema: { ...capable.videoRequestSchema, supportsDraft: false } };
     assert.equal(reconcileVideoConfig(next, { videoModels: [oldModel] }).videoMode, undefined);
+});
+
+test("Flash drops draft identity and unsupported resolution, defaults to five seconds and keeps adaptive", () => {
+    for (const videoMode of ["draft", "final", undefined] as const) {
+        const next = reconcileVideoConfig({ ...defaultAiConfig, videoProviderId: "flash", videoMode, sourceDraftTaskId: "stale-sample", vquality: "1080p", videoSeconds: "-1", videoSize: "2:1" }, { videoModels: [flashVideoModel] });
+        assert.equal(next.videoMode, undefined);
+        assert.equal(next.sourceDraftTaskId, undefined);
+        assert.equal(next.vquality, "480p");
+        assert.equal(next.videoSize, "16:9");
+        assert.equal(next.videoSeconds, "5");
+    }
+    const next = reconcileVideoConfig({ ...defaultAiConfig, videoProviderId: "flash", vquality: "720p", videoSize: "adaptive", videoSeconds: "30", generateAudio: "true" }, { videoModels: [flashVideoModel] });
+    assert.equal(next.videoSize, "adaptive");
+    assert.equal(next.videoSeconds, "30");
+    assert.equal(next.vquality, "720p");
+    assert.equal(next.generateAudio, "true");
+    const reversed = { ...flashVideoModel, videoRequestSchema: { ...flashVideoModel.videoRequestSchema!, resolutions: [...flashVideoModel.videoRequestSchema!.resolutions].reverse(), aspectRatios: [...flashVideoModel.videoRequestSchema!.aspectRatios].reverse() } };
+    const defaults = reconcileVideoConfig({ ...defaultAiConfig, videoProviderId: "flash" }, { videoModels: [reversed] }, true);
+    assert.equal(defaults.vquality, "480p");
+    assert.equal(defaults.videoSize, "16:9");
 });

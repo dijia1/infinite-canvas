@@ -199,6 +199,12 @@ func validateVideoRequestCapabilities(request CreateVideoTaskRequest, provider m
 	if request.Seconds < schema.MinDuration || request.Seconds > schema.MaxDuration {
 		return safeMessageError{message: "请选择当前模型支持的视频时长"}
 	}
+	if info.VideoRequestSchema != nil && (!info.VideoRequestSchema.AllowsResolution(request.Resolution) || !info.VideoRequestSchema.AllowsAspectRatio(request.Size)) {
+		return safeMessageError{message: "请选择当前模型支持的分辨率和比例"}
+	}
+	if schema.MaxReferenceMedia > 0 && len(request.ImageMediaIDs)+len(request.VideoMediaIDs) > schema.MaxReferenceMedia {
+		return safeMessageError{message: fmt.Sprintf("参考图片和视频合计最多 %d 个", schema.MaxReferenceMedia)}
+	}
 	if len(request.ImageMediaIDs) > schema.MaxReferenceImages {
 		return safeMessageError{message: "参考图片数量超过当前模型上限"}
 	}

@@ -215,13 +215,42 @@ type VideoRequestSchema struct {
 	SupportsDraft             bool                      `json:"supportsDraft,omitempty"`
 	Resolutions               []ImageRequestFieldOption `json:"resolutions"`
 	AspectRatios              []string                  `json:"aspectRatios"`
+	DefaultResolution         string                    `json:"defaultResolution,omitempty"`
+	DefaultAspectRatio        string                    `json:"defaultAspectRatio,omitempty"`
 	MinDuration               int                       `json:"minDuration"`
 	MaxDuration               int                       `json:"maxDuration"`
 	DefaultDuration           int                       `json:"defaultDuration"`
 	MaxReferenceImages        int                       `json:"maxReferenceImages"`
 	MaxReferenceVideos        int                       `json:"maxReferenceVideos"`
+	MaxReferenceMedia         int                       `json:"maxReferenceMedia,omitempty"`
 	MaxReferenceVideoDuration int                       `json:"maxReferenceVideoDuration"`
 	SupportsAudio             bool                      `json:"supportsAudio"`
+}
+
+// A nonempty definition limits the options administrators can enable. Older
+// models without declared options retain their configurable upstream values.
+func (s VideoRequestSchema) AllowsResolution(value string) bool {
+	if len(s.Resolutions) == 0 {
+		return true
+	}
+	for _, option := range s.Resolutions {
+		if option.Value == value {
+			return true
+		}
+	}
+	return false
+}
+
+func (s VideoRequestSchema) AllowsAspectRatio(value string) bool {
+	if len(s.AspectRatios) == 0 {
+		return true
+	}
+	for _, option := range s.AspectRatios {
+		if option == value {
+			return true
+		}
+	}
+	return false
 }
 
 type VideoTask struct {

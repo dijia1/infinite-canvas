@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import axios, { type AxiosResponse } from "axios";
 import { defaultAiConfig } from "@/lib/ai-config";
-import { requestVideoGeneration, getVideoTask, resumeVideoTask, getVideoTaskByClientRequest, VideoQueryTransientError } from "./video.ts";
+import { requestVideoGeneration, validateVideoGeneration, getVideoTask, resumeVideoTask, getVideoTaskByClientRequest, VideoQueryTransientError } from "./video.ts";
+import { flashVideoModel } from "@/test-utils/flash-video";
+import { useConfigStore } from "@/stores/use-config-store";
 const config = { ...defaultAiConfig, videoProviderId: "seedance", videoSeconds: "5", videoSize: "16:9", vquality: "720p" };
 test("creates a persistent video task using stable references and never polls or downloads during create", async () => {
     const previous = axios.defaults.adapter;
@@ -99,5 +101,37 @@ test("formal requests only carry local sample identity, never prompts or referen
         assert.deepEqual(body, { clientRequestId: "formal-client", providerId: "seedance", mode: "final", sourceDraftTaskId: "local-sample" });
     } finally {
         axios.defaults.adapter = adapter;
+    }
+});
+
+test("Flash allows six mixed references in order and rejects unsupported inputs before submitting", async () => {
+    const previous = axios.defaults.adapter;
+    const previousStatus = useConfigStore.getState().status;
+    const calls: any[] = [];
+    axios.defaults.adapter = async c => {
+        calls.push(JSON.parse(c.data));
+        return { config: c, data: { code: 0, data: { id: "flash-task", status: "queued", videos: [] } }, status: 200, statusText: "OK", headers: {} } as AxiosResponse;
+    };
+    useConfigStore.setState({ status: { imageAvailable: false, imageEditable: false, videoAvailable: true, videoModels: [flashVideoModel] } });
+    const selected = { ...config, videoProviderId: "flash", videoSize: "adaptive", videoSeconds: "30" };
+    const images = ["b", "a", "b"].map(mediaId => ({ id: mediaId, name: mediaId, type: "image/png", dataUrl: "", mediaId }));
+    try {
+        await requestVideoGeneration(selected, "制作视频", images, "flash-client", ["v3", "v1", "v2"]);
+        assert.equal(calls.length, 1);
+        assert.deepEqual(calls[0].imageMediaIds, ["b", "a", "b"]);
+        assert.deepEqual(calls[0].videoMediaIds, ["v3", "v1", "v2"]);
+        assert.equal(calls[0].size, "adaptive");
+        assert.equal(calls[0].seconds, 30);
+        assert.equal(calls[0].mode, undefined);
+        assert.equal(calls[0].sourceDraftTaskId, undefined);
+        await assert.rejects(requestVideoGeneration(selected, "视频", [...images, images[0]], "over", ["v1", "v2", "v3"]), /合计最多 6/);
+        for (const patch of [{ vquality: "1080p" }, { videoSize: "2:1" }, { videoSeconds: "31" }, { videoSeconds: "-1" }, { videoMode: "draft" as const }, { videoMode: "final" as const, sourceDraftTaskId: "old" }]) {
+            await assert.rejects(requestVideoGeneration({ ...selected, ...patch }, "视频"));
+        }
+        assert.throws(() => validateVideoGeneration(selected, [], ["v1", "v2", "v3", "v4"], flashVideoModel.videoRequestSchema), /最多支持/);
+        assert.equal(calls.length, 1, "invalid inputs must never create another task");
+    } finally {
+        axios.defaults.adapter = previous;
+        useConfigStore.setState({ status: previousStatus });
     }
 });

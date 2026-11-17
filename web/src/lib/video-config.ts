@@ -16,23 +16,31 @@ export function videoSupportsAudio(schema: VideoRequestSchema | undefined) {
     return schema?.supportsAudio !== false;
 }
 
+export function videoReferenceTotalError(schema: VideoRequestSchema | undefined, imageCount: number, videoCount: number): string {
+    const limit = schema?.maxReferenceMedia;
+    return limit && imageCount + videoCount > limit ? `参考图片和视频合计最多 ${limit} 个` : "";
+}
+
 export function reconcileVideoConfig(config: AiConfig, status: VideoModelStatus | null | undefined, reset = false): AiConfig {
     // Unknown/loading settings must not erase a saved selection.
     if (!status) return config;
     const model = resolveSelectedModel(status.videoModels, config.videoProviderId, status.defaultVideoModelId);
     const schema = model?.videoRequestSchema;
     const videoMode = schema?.supportsDraft ? config.videoMode : undefined;
+    const sourceDraftTaskId = videoMode === "final" ? config.sourceDraftTaskId : undefined;
     const options = (schema?.resolutions || []).filter((r) => (videoMode === "draft" ? r.value === "480p" : videoMode === "final" ? r.value === "1080p" : true));
     const aspectRatios = schema?.aspectRatios || [];
     const changedModel = Boolean(model && config.videoProviderId && model.id !== config.videoProviderId);
-    const vquality = !reset && !changedModel && options.some((option) => option.value === config.vquality) ? config.vquality : (options[0]?.value ?? null);
-    const videoSize = !reset && !changedModel && aspectRatios.includes(config.videoSize || "") ? config.videoSize : aspectRatios[0] || "";
+    const defaultResolution = options.find(option => option.value === schema?.defaultResolution)?.value ?? options[0]?.value ?? null;
+    const defaultRatio = aspectRatios.find(value => value === schema?.defaultAspectRatio) ?? aspectRatios[0] ?? "";
+    const vquality = !reset && !changedModel && options.some((option) => option.value === config.vquality) ? config.vquality : defaultResolution;
+    const videoSize = !reset && !changedModel && aspectRatios.includes(config.videoSize || "") ? config.videoSize : defaultRatio;
     const seconds = Number(config.videoSeconds);
     const validSeconds = Number.isInteger(seconds) && Boolean(schema) && seconds >= schema!.minDuration && seconds <= schema!.maxDuration;
     const videoSeconds = !reset && !changedModel && validSeconds ? config.videoSeconds : String(schema?.defaultDuration || 5);
     const generateAudio = schema?.supportsAudio === false ? "false" : config.generateAudio;
     const videoProviderId = model?.id || config.videoProviderId;
-    return videoMode === config.videoMode && vquality === config.vquality && videoProviderId === config.videoProviderId && videoSize === (config.videoSize || "") && videoSeconds === config.videoSeconds && generateAudio === config.generateAudio
+    return videoMode === config.videoMode && sourceDraftTaskId === config.sourceDraftTaskId && vquality === config.vquality && videoProviderId === config.videoProviderId && videoSize === (config.videoSize || "") && videoSeconds === config.videoSeconds && generateAudio === config.generateAudio
         ? config
-        : { ...config, videoMode, sourceDraftTaskId: videoMode === "final" ? config.sourceDraftTaskId : undefined, videoProviderId, vquality, videoSize, videoSeconds, generateAudio };
+        : { ...config, videoMode, sourceDraftTaskId, videoProviderId, vquality, videoSize, videoSeconds, generateAudio };
 }

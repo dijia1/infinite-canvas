@@ -8,6 +8,7 @@ import type { ImageGenerationTask } from "@/services/api/image";
 import { ImageQueryTransientError, ImageRequestRejectedError } from "@/services/api/image";
 import type { VideoGenerationSource, VideoGenerationTask } from "@/services/api/video";
 import type { StoredCanvasImage } from "@/services/canvas-image-hydration";
+import { flashVideoModel } from "@/test-utils/flash-video";
 
 type Ref<T> = { current: T };
 
@@ -1292,4 +1293,22 @@ test("unsupported masks are rejected before creating outputs or submitting", asy
     assert.deepEqual(calls.errors, ["当前模型不支持遮罩编辑"]);
     assert.equal(calls.edit, 0);
     assert.equal(nodesRef.current.length, 1);
+});
+
+test("Flash mixed-reference limits run before canvas placeholders or submissions are created", async () => {
+    for (const imageCount of [3, 4]) {
+        const source = node("flash-config", CanvasNodeType.Config, { generationMode: "video", videoProviderId: "flash" });
+        const refs = Array.from({ length: imageCount }, (_, i) => ({ id: `i${i}`, name: `i${i}`, type: "image/png", dataUrl: "", mediaId: `image${i}` }));
+        const s = setup([source], [], {
+            effectiveConfig: { ...config, videoProviderId: "flash", vquality: "480p", videoSeconds: "5" },
+            getVideoModelStatus: () => ({ videoModels: [flashVideoModel] }),
+            hydrateGenerationContext: async () => ({ prompt: "视频", referenceImages: refs, referenceVideos: [0, 1, 2].map(i => ({ mediaId: `video${i}`, duration: 5 })), textCount: 1, imageCount }),
+        });
+        await s.controller.generateNode(source.id, "video", "视频");
+        assert.equal(s.calls.video, imageCount === 3 ? 1 : 0);
+        if (imageCount === 4) {
+            assert.equal(s.nodesRef.current.length, 1);
+            assert.match(s.calls.errors[0], /合计最多 6/);
+        }
+    }
 });

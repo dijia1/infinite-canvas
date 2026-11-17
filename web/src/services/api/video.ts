@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import { aiApiPath, apiRequestError, type ApiResponse } from "@/services/api/request";
 import { useConfigStore, type AiConfig } from "@/stores/use-config-store";
 import type { ReferenceImage } from "@/types/image";
+import { videoReferenceTotalError } from "@/lib/video-config";
 
 export type VideoGenerationSource = { taskId: string; providerId: string; mode: "" | "draft" | "final"; createdAt: string; seconds: number; size: string; generateAudio: boolean };
 
@@ -36,6 +37,7 @@ function unwrap(payload: unknown): VideoGenerationTask {
     return { ...task, resultMediaIds: task.resultMediaIds || [], videos: task.videos || [] };
 }
 export function validateVideoGeneration(config: AiConfig, references: ReferenceImage[] = [], videoMediaIds: string[] = [], schema?: import("@/lib/model-selection").VideoRequestSchema) {
+    if (schema && config.videoMode && !schema.supportsDraft) throw new Error("当前模型不支持样片或正式片");
     if (config.videoMode === "final") {
         if (!config.sourceDraftTaskId) throw new Error("请选择来源样片");
         return Number(config.videoSeconds);
@@ -43,6 +45,9 @@ export function validateVideoGeneration(config: AiConfig, references: ReferenceI
     const seconds = Number(config.videoSeconds);
     if (!Number.isInteger(seconds) || seconds < (schema?.minDuration ?? 4) || seconds > (schema?.maxDuration ?? 15)) throw new Error(`视频时长必须为 ${schema?.minDuration ?? 4} 至 ${schema?.maxDuration ?? 15} 秒整数`);
     if (!config.videoSize || !config.vquality) throw new Error("请选择视频分辨率和比例");
+    if (schema && (!schema.resolutions.some(option => option.value === config.vquality) || !schema.aspectRatios.includes(config.videoSize))) throw new Error("请选择当前模型支持的分辨率和比例");
+    const totalError = videoReferenceTotalError(schema, references.length, videoMediaIds.length);
+    if (totalError) throw new Error(totalError);
     if (references.length > (schema?.maxReferenceImages ?? 9) || videoMediaIds.length > (schema?.maxReferenceVideos ?? 3)) throw new Error(`最多支持 ${schema?.maxReferenceImages ?? 9} 张参考图和 ${schema?.maxReferenceVideos ?? 3} 个参考视频`);
     if (references.some((r) => !r.mediaId)) throw new Error("参考图片尚未上传完成，请等待上传完成后重试");
     return seconds;

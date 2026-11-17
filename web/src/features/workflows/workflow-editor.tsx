@@ -61,7 +61,7 @@ import { useAssetStore } from "@/stores/use-asset-store";
 import { reconcileProviderConfig, useConfigStore } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { reconcileVideoConfig } from "@/lib/video-config";
-import { workflowConfigFromAiConfig } from "./workflow-config";
+import { workflowConfigFromAiConfig, workflowModelInputError } from "./workflow-config";
 import { createWorkflowNode, emptyWorkflowGraph, fitWorkflowImage, workflowViewportCenter, removeWorkflowNode, removeWorkflowOutput, setWorkflowOutputCount, workflowSourceType, reorderWorkflowImageInputs } from "./workflow-graph";
 import { applyWorkflowSaveResult, cacheSavedWorkflow, clearWorkflowDraft, readWorkflowDraft, remoteWorkflowEditorState, workflowDetailQueryKey, workflowEditorSnapshot, writeWorkflowDraft, type WorkflowEditorDocument } from "./workflow-editor-state";
 import { WorkflowNodeCard, WorkflowOutputCard, type WorkflowPreviewInput } from "./workflow-node";
@@ -590,14 +590,17 @@ function WorkflowEditorContent() {
             const type = source ? workflowSourceType(source, sourceSlotId) : undefined;
             if (!type || !target?.config?.providerId) return;
             const model = target.type === "image_generation" ? aiStatus?.imageModels?.find((item) => item.id === target.config?.providerId) : aiStatus?.videoModels?.find((item) => item.id === target.config?.providerId);
-            const currentCount = graph.connections
-                .filter((item) => item.targetNodeId === target.id)
-                .filter((item) => {
-                    const input = graph.nodes.find((node) => node.id === item.sourceNodeId);
-                    return input && workflowSourceType(input, item.sourceSlotId) === type;
-                }).length;
-            const limit = type === "image" ? (model?.imageRequestSchema?.maxReferenceImages ?? model?.videoRequestSchema?.maxReferenceImages) : type === "video" ? model?.videoRequestSchema?.maxReferenceVideos : undefined;
-            if (typeof limit === "number" && currentCount >= limit) throw new Error(`当前模型最多支持 ${limit} 个${type === "image" ? "图片" : "视频"}输入`);
+            if (target.type !== "image_generation" && target.type !== "video_generation") return;
+            const counts = { image: 0, video: 0, text: 0 };
+            for (const connection of graph.connections) {
+                if (connection.targetNodeId !== target.id) continue;
+                const input = graph.nodes.find(node => node.id === connection.sourceNodeId);
+                const inputType = input && workflowSourceType(input, connection.sourceSlotId);
+                if (inputType) counts[inputType]++;
+            }
+            counts[type]++;
+            const error = workflowModelInputError(target.type, counts, model);
+            if (error) throw new Error(error);
         },
         [graph, aiStatus],
     );

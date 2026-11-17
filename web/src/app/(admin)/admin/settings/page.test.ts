@@ -7,6 +7,7 @@ import type { AdminSettings } from "@/services/api/admin";
 import { ApiRequestError } from "@/services/api/request";
 import { sourceBehavior } from "@/test-utils/source-behavior";
 import { deferred, elements, flushAsync, hookHarness, sourceModule } from "@/test-utils/source-component";
+import { flashVideoModel } from "@/test-utils/flash-video";
 
 const pageURL = new URL("./page.tsx", import.meta.url);
 
@@ -125,6 +126,16 @@ test("video ratio validation accepts safe upstream parameter names", async () =>
     );
     for (const value of ["portrait", "landscape", "square", "16:9"]) await validate(undefined, value);
     for (const value of ["", "bad\nratio", "x".repeat(65)]) await assert.rejects(validate(undefined, value));
+});
+
+test("Flash admin options are constrained by the video definition without changing legacy free text", () => {
+    const options = sourceBehavior(pageURL, { selectedProviderType: flashVideoModel }).named("fixedOptions");
+    assert.deepEqual(options("resolution").map((option: { value: string }) => option.value), ["480p", "720p"]);
+    assert.equal(options("size").length, 7);
+    assert.ok(options("size").some((option: { value: string }) => option.value === "adaptive"));
+    const legacy = sourceBehavior(pageURL, { selectedProviderType: { capabilities: ["video_generate"] } }).named("fixedOptions");
+    assert.equal(legacy("resolution"), undefined);
+    assert.equal(legacy("size"), undefined);
 });
 
 function settingsPage() {

@@ -15,11 +15,14 @@ export type VideoRequestSchema = {
     supportsDraft?: boolean;
     resolutions: { value: string; label: string; price: string }[];
     aspectRatios: string[];
+    defaultResolution?: string;
+    defaultAspectRatio?: string;
     minDuration: number;
     maxDuration: number;
     defaultDuration: number;
     maxReferenceImages: number;
     maxReferenceVideos: number;
+    maxReferenceMedia?: number;
     maxReferenceVideoDuration: number;
     supportsAudio?: boolean;
 };

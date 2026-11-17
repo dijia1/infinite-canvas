@@ -12,7 +12,7 @@ import (
 )
 
 func videoTestProvider(fn roundTripperFunc) *maiziVideoProvider {
-	return &maiziVideoProvider{config: maiziConfig{APIKey: "secret", Model: "doubao-seedance-2.0-fast"}, client: &http.Client{Transport: fn}}
+	return &maiziVideoProvider{config: maiziConfig{APIKey: "secret", Model: "doubao-seedance-2.0-fast"}, client: &http.Client{Transport: fn}, definition: maiziSeedanceVideoModel}
 }
 func videoResponse(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Body: io.NopCloser(strings.NewReader(body))}
@@ -197,7 +197,7 @@ func TestSeedance25DraftAndFinalContracts(t *testing.T) {
 				}
 				return videoResponse(200, `{"id":"new-task","status":"processing"}`), nil
 			})
-			p.seedance25 = true
+			p.definition = maiziSeedance25VideoModel
 			p.config.Model = "doubao-seedance-2.5"
 			r := validVideoRequest()
 			r.Mode = mode
@@ -222,7 +222,7 @@ func TestSeedance25DraftAndFinalContracts(t *testing.T) {
 		t.Fatal("invalid request reached supplier")
 		return nil, nil
 	})
-	p.seedance25 = true
+	p.definition = maiziSeedance25VideoModel
 	r := validVideoRequest()
 	r.Mode = "draft"
 	if _, err := p.CreateVideo(context.Background(), r); err == nil {
@@ -232,7 +232,7 @@ func TestSeedance25DraftAndFinalContracts(t *testing.T) {
 	if _, err := p.CreateVideo(context.Background(), r); err == nil {
 		t.Fatal("accepted missing sample")
 	}
-	p.seedance25 = false
+	p.definition = maiziSeedanceVideoModel
 	r.Mode = "draft"
 	if _, err := p.CreateVideo(context.Background(), r); err == nil {
 		t.Fatal("old provider accepted draft")

@@ -161,7 +161,7 @@ export function CanvasConfigNodePanel({ node, inputSummary, inputs, onConfigChan
     const modelSelect = (
         <>
             {mode === "image" ? <CanvasConfigModelSelect value={selectedImageModel?.id} options={aiStatus?.imageModels} onChange={selectImageModel} /> : null}
-            {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio, videoMode:next.videoMode }); }} /> : null}
+            {mode === "video" ? <CanvasConfigModelSelect value={selectedVideoModel?.id} options={aiStatus?.videoModels} onChange={(videoProviderId) => { const next = reconcileVideoConfig({ ...config, videoProviderId }, aiStatus, true); onConfigChange(node.id, { videoProviderId: next.videoProviderId, vquality: next.vquality, videoSize: next.videoSize, seconds: next.videoSeconds, generateAudio: next.generateAudio, videoMode:next.videoMode, sourceDraftTaskId: next.sourceDraftTaskId }); }} /> : null}
         </>
     );
     const renderSettings = (buttonClassName: string, triggerProps?: CanvasSettingsTriggerProps) =>

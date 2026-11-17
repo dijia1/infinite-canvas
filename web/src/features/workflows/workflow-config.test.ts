@@ -10,7 +10,8 @@ import { elements } from "@/test-utils/source-component";
 
 import { defaultAiConfig } from "@/lib/ai-config";
 import { aiConfigForWorkflowNode, workflowConfigFromAiConfig, workflowModelInputError } from "./workflow-config";
-import { createWorkflowNode } from "./workflow-graph";
+import { createWorkflowNode, workflowSourceType } from "./workflow-graph";
+import { flashVideoModel } from "@/test-utils/flash-video";
 
 test("maps saved image workflow settings to the shared settings panel without URLs", () => {
     const node = createWorkflowNode("image_generation", { x: 0, y: 0 }, "image");
@@ -39,6 +40,19 @@ test("rejects switching to a model below the already connected reference counts"
     const model = { id: "limited", name: "Limited", type: "image", imageRequestSchema: { version: "v1", fields: [], maxReferenceImages: 1, supportsMask: false } };
     assert.match(workflowModelInputError("image_generation", { image: 2, video: 0, text: 1 }, model), /最多支持 1 个图片输入/);
     assert.equal(workflowModelInputError("image_generation", { image: 1, video: 0, text: 8 }, model), "");
+});
+
+test("Flash workflow counts mixed media together while preserving independent text inputs", () => {
+    assert.equal(workflowModelInputError("video_generation", { image: 3, video: 3, text: 2 }, flashVideoModel), "");
+    assert.match(workflowModelInputError("video_generation", { image: 4, video: 3, text: 1 }, flashVideoModel), /合计最多 6/);
+    assert.match(workflowModelInputError("video_generation", { image: 2, video: 4, text: 1 }, flashVideoModel), /3 个视频/);
+    const inputs = [...Array.from({ length: 4 }, (_, i) => createWorkflowNode("image_input", { x: 0, y: 0 }, `image-${i}`)), ...Array.from({ length: 3 }, (_, i) => createWorkflowNode("video_input", { x: 0, y: 0 }, `video-${i}`)), createWorkflowNode("text_input", { x: 0, y: 0 }, "text")];
+    const target = createWorkflowNode("video_generation", { x: 300, y: 0 }, "target");
+    target.config = { providerId: flashVideoModel.id };
+    const graph = { version: 1, nodes: [...inputs, target], connections: [...inputs.slice(0, 3), ...inputs.slice(4, 7)].map((n, i) => ({ id: String(i), sourceNodeId: n.id, sourceSlotId: "output", targetNodeId: target.id, targetPortId: "reference", order: i })) };
+    const validate = sourceBehavior(new URL("./workflow-editor.tsx", import.meta.url), { aiStatus: { videoModels: [flashVideoModel] }, workflowSourceType, workflowModelInputError }).select(n => ts.isArrowFunction(n) && n.getText().includes("counts[type]++"));
+    assert.throws(() => validate(graph, { sourceNodeId: "image-3", sourceSlotId: "output", targetNodeId: target.id }), /合计最多 6/);
+    assert.doesNotThrow(() => validate(graph, { sourceNodeId: "text", sourceSlotId: "output", targetNodeId: target.id }));
 });
 
 

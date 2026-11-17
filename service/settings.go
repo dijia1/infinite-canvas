@@ -346,10 +346,30 @@ func configuredVideoRequestSchema(provider model.AIProvider, info ai.ProviderTyp
 	if info.VideoRequestSchema != nil {
 		schema = *info.VideoRequestSchema
 	}
-	schema.AspectRatios = append([]string(nil), provider.AspectRatios...)
+	definition := schema
+	schema.AspectRatios = nil
+	for _, ratio := range provider.AspectRatios {
+		if definition.AllowsAspectRatio(ratio) {
+			schema.AspectRatios = append(schema.AspectRatios, ratio)
+		}
+	}
 	schema.Resolutions = make([]ai.ImageRequestFieldOption, 0, len(provider.VideoPrices))
 	for _, price := range provider.VideoPrices {
-		schema.Resolutions = append(schema.Resolutions, ai.ImageRequestFieldOption{Value: price.Resolution, Label: price.Resolution, Price: price.Amount.String()})
+		if definition.AllowsResolution(price.Resolution) {
+			schema.Resolutions = append(schema.Resolutions, ai.ImageRequestFieldOption{Value: price.Resolution, Label: price.Resolution, Price: price.Amount.String()})
+		}
+	}
+	if schema.DefaultResolution != "" && (len(schema.Resolutions) == 0 || !schema.AllowsResolution(schema.DefaultResolution)) {
+		schema.DefaultResolution = ""
+		if len(schema.Resolutions) > 0 {
+			schema.DefaultResolution = schema.Resolutions[0].Value
+		}
+	}
+	if schema.DefaultAspectRatio != "" && (len(schema.AspectRatios) == 0 || !schema.AllowsAspectRatio(schema.DefaultAspectRatio)) {
+		schema.DefaultAspectRatio = ""
+		if len(schema.AspectRatios) > 0 {
+			schema.DefaultAspectRatio = schema.AspectRatios[0]
+		}
 	}
 	return &schema
 }
@@ -373,6 +393,9 @@ func validateProviderVideoSettings(provider model.AIProvider, info ai.ProviderTy
 	}
 	seenRatios := map[string]bool{}
 	for _, ratio := range provider.AspectRatios {
+		if isVideoProvider && info.VideoRequestSchema != nil && !info.VideoRequestSchema.AllowsAspectRatio(ratio) {
+			return errors.New("请选择当前视频模型支持的比例")
+		}
 		if isVideoProvider {
 			if err := validateImageResolutionParameter(ratio); err != nil {
 				return errors.New("视频比例参数必须为 1 至 64 个非控制字符")
@@ -387,8 +410,8 @@ func validateProviderVideoSettings(provider model.AIProvider, info ai.ProviderTy
 	}
 	seen := map[string]bool{}
 	for _, price := range provider.VideoPrices {
-		if info.VideoRequestSchema != nil && info.VideoRequestSchema.SupportsDraft && price.Resolution != "480p" && price.Resolution != "720p" && price.Resolution != "1080p" {
-			return errors.New("Seedance 2.5 仅支持 480p、720p、1080p")
+		if info.VideoRequestSchema != nil && !info.VideoRequestSchema.AllowsResolution(price.Resolution) {
+			return errors.New("请选择当前视频模型支持的分辨率")
 		}
 		if err := validateImageResolutionParameter(price.Resolution); err != nil {
 			return errors.New("视频分辨率参数必须为 1 至 64 个非控制字符")
