@@ -126,7 +126,16 @@ export function CanvasVideoFinalAction({ nodeId, mediaId, theme }: { nodeId: str
     return <VideoFinalActionButton key={`${nodeId}:${mediaId}:${generation.taskId}`} nodeId={nodeId} mediaId={mediaId} source={generation} onGenerate={onGenerate} theme={theme} />;
 }
 
-export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, showGenerationFooter = true, onDimensions }: { nodeId: string; mediaId?: string; legacyURL?: string; visible?: boolean; showGenerationFooter?: boolean; onDimensions?: (dimensions: { width: number; height: number }) => void }) {
+export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true, draggable = false, preloadMetadata = false, showGenerationFooter = true, onDimensions }: {
+    nodeId: string;
+    mediaId?: string;
+    legacyURL?: string;
+    visible?: boolean;
+    draggable?: boolean;
+    preloadMetadata?: boolean;
+    showGenerationFooter?: boolean;
+    onDimensions?: (dimensions: { width: number; height: number }) => void;
+}) {
     const naturalSizeRef = useRef<{ width: number; height: number } | undefined>(undefined);
     const dimensionsRef = useRef(onDimensions);
     dimensionsRef.current = onDimensions;
@@ -149,6 +158,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         [error, setError] = useState("");
     const [external, setExternal] = useState(false);
     const [playing, setPlaying] = useState(false);
+    const [buffering, setBuffering] = useState(false);
     const save = () => {
         const video = videoRef.current;
         if (video && video.readyState > 0 && resources && Number.isFinite(video.currentTime)) resources.playback.set(nodeId, { time: video.currentTime, volume: video.volume, muted: video.muted, rate: video.playbackRate });
@@ -163,6 +173,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         recovering.current = false;
         failed.current = false;
         setPlaying(false);
+        setBuffering(false);
         attempt.current++;
         snapshot.current = resources?.playback.get(nodeId);
         return () => {
@@ -236,6 +247,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
     useEffect(() => {
         if (visible || external) return;
         wantsPlay.current = false;
+        setBuffering(false);
         videoRef.current?.pause();
         save();
         const timer = setTimeout(() => {
@@ -275,6 +287,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         switching.current = false;
         videoRef.current?.pause();
         setBusy(false);
+        setBuffering(false);
         setError(text);
     };
     const begin = async () => {
@@ -311,6 +324,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         if (wantsPlay.current)
             void video.play().catch(() => {
                 setBusy(false);
+                setBuffering(false);
                 wantsPlay.current = false;
             });
     };
@@ -369,29 +383,45 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
                     src={source}
                     controls
                     poster={poster}
-                    preload={legacyURL?.startsWith("blob:") ? "metadata" : "none"}
+                    preload={visible && preloadMetadata ? "metadata" : "none"}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                     playsInline
                     className="h-full w-full object-contain"
                     onLoadedMetadata={loaded}
-                    onSeeked={resume}
+                    onSeeking={({ currentTarget: video }) => setBuffering(video.readyState < video.HAVE_FUTURE_DATA)}
+                    onSeeked={(event) => {
+                        const video = event.currentTarget;
+                        if (video.paused || video.readyState >= video.HAVE_FUTURE_DATA) setBuffering(false);
+                        resume();
+                    }}
                     onError={() => void playbackError()}
-                    onPlay={() => {
+                    onPlay={({ currentTarget: video }) => {
                         wantsPlay.current = true;
                         setPlaying(true);
-                        if (!switching.current && videoRef.current?.readyState === 0) {
+                        setBuffering(video.readyState < video.HAVE_FUTURE_DATA);
+                        if (!switching.current && video.readyState === video.HAVE_NOTHING) {
                             clearTimeout(recoveryTimer.current);
                             recoveryTimer.current = setTimeout(() => fail("视频加载超时，点击重试"), 20000);
                         }
                     }}
+                    onWaiting={(event) => {
+                        if (!event.currentTarget.paused) setBuffering(true);
+                    }}
+                    onPlaying={() => setBuffering(false)}
                     onPause={() => {
                         setPlaying(false);
-                        if (!switching.current && !videoRef.current?.error) wantsPlay.current = false;
+                        setBuffering(false);
+                        if (!switching.current && !videoRef.current?.error) {
+                            wantsPlay.current = false;
+                            clearTimeout(recoveryTimer.current);
+                        }
                         save();
                     }}
                     onEnded={() => {
                         wantsPlay.current = false;
+                        setPlaying(false);
+                        setBuffering(false);
                         save();
                     }}
                     onTimeUpdate={save}
@@ -401,7 +431,17 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
             ) : (
                 <div className="h-full w-full bg-black" />
             )}
-                {!playing && !external && !error && <div aria-hidden="true" data-video-drag-surface className="absolute inset-x-0 top-0 cursor-move" style={{ bottom: 54 }} onDragStart={(event) => event.preventDefault()} />}
+                {/* Safari places native controls at the center, top and bottom of the video. */}
+                {draggable && !playing && !external && !error && (["left", "right"] as const).map(side => (
+                    <div key={side} aria-hidden="true" data-video-drag-surface={side} className="absolute cursor-move"
+                        style={{ [side]: 0, top: "max(32%, 44px)", bottom: "max(32%, 54px)", width: "min(15%, 48px)" }}
+                        onDragStart={(event) => event.preventDefault()} />
+                ))}
+                {!error && (busy || buffering) && (
+                    <div role="status" className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
+                        <span className="rounded-full bg-black/75 px-3 py-1 text-xs text-white">视频缓冲中…</span>
+                    </div>
+                )}
                 {error && (
                 <div role="alert" className="absolute inset-x-2 top-2 rounded bg-black/80 p-2 text-xs text-white" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     {error}{" "}

@@ -2297,6 +2297,7 @@ function InfiniteCanvasPage() {
                                 key={node.id}
                                 data={node}
                                 videoVisible={onScreenNodeIds.has(node.id)}
+                                preloadVideoMetadata={node.type === CanvasNodeType.Video && selectedNodeIds.size === 1 && selectedNodeIds.has(node.id)}
                                 videoUpload={localVideoUploads.get(node.id)}
                                 onRetryVideoUpload={retryVideoUpload}
                                 onCancelVideoUpload={cancelVideoUpload}

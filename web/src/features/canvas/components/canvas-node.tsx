@@ -29,6 +29,7 @@ import { CanvasReadyImage } from "@/components/canvas-ready-image";
 type CanvasNodeProps = {
     data: CanvasNodeData;
     videoVisible?: boolean;
+    preloadVideoMetadata?: boolean;
     onVideoDimensions?: (nodeId: string, mediaId: string | undefined, dimensions: { width: number; height: number }) => void;
     videoUpload?: LocalVideoUploadView;
     onRetryVideoUpload?: (nodeId: string) => void;
@@ -81,6 +82,7 @@ type CanvasNodeProps = {
 
 type NodeContentRendererProps = {
     videoVisible?: boolean;
+    preloadVideoMetadata?: boolean;
     onVideoDimensions?: (nodeId: string, mediaId: string | undefined, dimensions: { width: number; height: number }) => void;
     videoUpload?: LocalVideoUploadView;
     onRetryVideoUpload?: (nodeId: string) => void;
@@ -115,6 +117,7 @@ type NodeContentRendererProps = {
 export const CanvasNode = React.memo(function CanvasNode({
     data,
     videoVisible,
+    preloadVideoMetadata,
     onVideoDimensions,
     videoUpload,
     onRetryVideoUpload,
@@ -387,6 +390,7 @@ export const CanvasNode = React.memo(function CanvasNode({
                 >
                     <NodeContent
                         videoVisible={videoVisible}
+                        preloadVideoMetadata={preloadVideoMetadata}
                         onVideoDimensions={onVideoDimensions}
                         videoUpload={videoUpload}
                         onRetryVideoUpload={onRetryVideoUpload}
@@ -442,6 +446,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
     return (
         prev.data === next.data &&
         prev.videoVisible === next.videoVisible &&
+        prev.preloadVideoMetadata === next.preloadVideoMetadata &&
         prev.onVideoDimensions === next.onVideoDimensions &&
         prev.videoUpload === next.videoUpload &&
         prev.onRetryVideoUpload === next.onRetryVideoUpload &&
@@ -479,7 +484,7 @@ function areCanvasNodePropsEqual(prev: CanvasNodeProps, next: CanvasNodeProps) {
 }
 
 function NodeContent(props: NodeContentRendererProps) {
-    if (props.videoUpload) return <CanvasVideoUploadContent nodeId={props.node.id} upload={props.videoUpload} visible={props.videoVisible} onRetry={() => props.onRetryVideoUpload?.(props.node.id)} onCancel={() => props.onCancelVideoUpload?.(props.node.id)} />;
+    if (props.videoUpload) return <CanvasVideoUploadContent nodeId={props.node.id} upload={props.videoUpload} visible={props.videoVisible} preloadMetadata={props.preloadVideoMetadata} onRetry={() => props.onRetryVideoUpload?.(props.node.id)} onCancel={() => props.onCancelVideoUpload?.(props.node.id)} />;
     if (props.node.type === CanvasNodeType.Config && props.renderNodeContent) return props.renderNodeContent(props.node);
     if (props.isBatchRoot) return <ImageNodeContent {...props} />;
     if (hasTaskFeedback(props)) return <CanvasTaskFeedback {...props} />;
@@ -652,8 +657,8 @@ function EmptyImageContent({ theme, isBatchRoot, batchCount, batchExpanded, batc
     return content;
 }
 
-function VideoNodeContent({ node, videoVisible, onVideoDimensions }: NodeContentRendererProps) {
-    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} showGenerationFooter={false} onDimensions={onVideoDimensions ? (dimensions) => onVideoDimensions(node.id, node.metadata?.mediaId, dimensions) : undefined} />;
+function VideoNodeContent({ node, videoVisible, preloadVideoMetadata, onVideoDimensions }: NodeContentRendererProps) {
+    return <CanvasVideoContent nodeId={node.id} mediaId={node.metadata?.mediaId} legacyURL={node.metadata?.content} visible={videoVisible} draggable preloadMetadata={preloadVideoMetadata} showGenerationFooter={false} onDimensions={onVideoDimensions ? (dimensions) => onVideoDimensions(node.id, node.metadata?.mediaId, dimensions) : undefined} />;
 }
 
 function ImageContent({

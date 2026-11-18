@@ -11,6 +11,8 @@ export function WorkflowMediaPreview({
     type,
     visible = true,
     readOnly = false,
+    draggable,
+    preloadMetadata,
     imageUrl,
     imageStorageKey,
     imageError,
@@ -24,6 +26,8 @@ export function WorkflowMediaPreview({
     type: "image" | "video";
     visible?: boolean;
     readOnly?: boolean;
+    draggable?: boolean;
+    preloadMetadata?: boolean;
     imageUrl?: string;
     imageStorageKey?: string;
     imageError?: string;
@@ -42,7 +46,7 @@ export function WorkflowMediaPreview({
             </div>
         );
     }
-    if (type === "video") return <CanvasVideoContent nodeId={nodeId} mediaId={mediaId} visible={visible} onDimensions={readOnly ? undefined : onMediaDimensions} />;
+    if (type === "video") return <CanvasVideoContent nodeId={nodeId} mediaId={mediaId} visible={visible} draggable={draggable} preloadMetadata={preloadMetadata} onDimensions={readOnly ? undefined : onMediaDimensions} />;
     return (
         <CanvasReadyImage
             key={mediaId}

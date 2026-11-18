@@ -35,6 +35,7 @@ export function WorkflowNodeCard({
     readOnly = false,
     connecting,
     videoVisible,
+    preloadVideoMetadata,
     inputs,
     imageUrl,
     imageStorageKey,
@@ -69,6 +70,7 @@ export function WorkflowNodeCard({
     readOnly?: boolean;
     connecting: boolean;
     videoVisible?: boolean;
+    preloadVideoMetadata?: boolean;
     inputs: WorkflowPreviewInput[];
     imageUrl?: string;
     imageStorageKey?: string;
@@ -187,7 +189,7 @@ export function WorkflowNodeCard({
                             </div>
                         )
                     ) : videoUpload ? (
-                        <CanvasVideoUploadContent nodeId={node.id} upload={videoUpload} visible={videoVisible} onRetry={() => onRetryVideoUpload?.()} onCancel={() => onCancelVideoUpload?.()} />
+                        <CanvasVideoUploadContent nodeId={node.id} upload={videoUpload} visible={videoVisible} preloadMetadata={preloadVideoMetadata} onRetry={() => onRetryVideoUpload?.()} onCancel={() => onCancelVideoUpload?.()} />
                     ) : mediaType ? (
                         <WorkflowMediaPreview
                             nodeId={node.id}
@@ -195,6 +197,8 @@ export function WorkflowNodeCard({
                             type={mediaType}
                             mediaId={node.mediaId}
                             visible={videoVisible}
+                            draggable={!readOnly}
+                            preloadMetadata={preloadVideoMetadata}
                             imageUrl={imageUrl}
                             imageStorageKey={imageStorageKey}
                             imageError={imageError}
@@ -280,6 +284,7 @@ export function WorkflowOutputCard({
     executionLoadError,
     resourceNodeId,
     videoVisible,
+    preloadVideoMetadata,
     imageUrl,
     imageStorageKey,
     imageError,
@@ -312,6 +317,7 @@ export function WorkflowOutputCard({
     executionLoadError?: string;
     resourceNodeId?: string;
     videoVisible?: boolean;
+    preloadVideoMetadata?: boolean;
     imageUrl?: string;
     imageStorageKey?: string;
     imageError?: string;
@@ -391,6 +397,8 @@ export function WorkflowOutputCard({
                             type={slot.type}
                             mediaId={execution!.mediaId}
                             visible={videoVisible}
+                            draggable={!readOnly}
+                            preloadMetadata={preloadVideoMetadata}
                             imageUrl={imageUrl}
                             imageStorageKey={imageStorageKey}
                             imageError={imageError}

@@ -1182,6 +1182,7 @@ function WorkflowEditorContent() {
                                 onPreviewMedia={() => setMediaPreview({ node })}
                                 connecting={Boolean(interactions.connectingParams)}
                                 videoVisible={isCanvasNodeNearViewport({ id: node.id, type: CanvasNodeType.Video, title: "", position: node.position, width: node.width || 420, height: node.height || 236 } satisfies CanvasNodeData, viewport, viewportSize)}
+                                preloadVideoMetadata={node.type === "video_input" && canvas.selectedNodeIds.size === 1 && canvas.selectedNodeIds.has(workflowVisualNodeId(node.id))}
                                 inputs={previewInputs(node.id)}
                                 imageUrl={localImages.get(node.id)?.state === "completed" ? imageResources.resources.get(node.id)?.url || localImages.get(node.id)?.url : localImages.get(node.id)?.url || imageResources.resources.get(node.id)?.url}
                                 imageStorageKey={localImages.get(node.id)?.state === "completed" ? imageResources.resources.get(node.id)?.storageKey || localImages.get(node.id)?.image.storageKey : localImages.get(node.id)?.image.storageKey || imageResources.resources.get(node.id)?.storageKey}
@@ -1235,6 +1236,7 @@ function WorkflowEditorContent() {
                                         viewport,
                                         viewportSize,
                                     )}
+                                    preloadVideoMetadata={slot.type === "video" && canvas.selectedNodeIds.size === 1 && canvas.selectedNodeIds.has(workflowVisualOutputId(node.id, slot.id))}
                                     imageUrl={resource?.url}
                                     imageStorageKey={resource?.storageKey}
                                     imageError={resourceNodeId ? imageResources.errors.get(resourceNodeId) : undefined}
