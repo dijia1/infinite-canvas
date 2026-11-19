@@ -43,6 +43,7 @@ import { resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/
 import { nanoid } from "nanoid";
 import { canvasThemes, type CanvasBackgroundMode } from "@/lib/canvas-theme";
 import { appPath } from "@/lib/app-path";
+import { clipboardImageFile } from "@/lib/clipboard-image";
 import { type ImageAsset, type VideoAsset, useAssetStore } from "@/stores/use-asset-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { cropDataUrl } from "../utils/canvas-image-data";
@@ -96,15 +97,13 @@ import { getCanvasRenderDetail } from "../media/canvas-media-policy";
 import { buildCanvasMediaTargets, useCanvasImageResources } from "../media/use-canvas-image-resources";
 import { createCanvasLocalImageUploadController, type LocalImageUploadIntent } from "../media/canvas-local-image-upload-controller";
 import { isLocalImageUploadNode } from "../utils/canvas-local-image-upload";
+import { CANVAS_NODE_CLIPBOARD_TYPE, captureCanvasClipboard, decodeCanvasClipboard, encodeCanvasClipboard, placeCanvasClipboard, type CanvasClipboardGraph } from "../utils/canvas-node-clipboard";
 import { logCanvasPerf, useCanvasPerfDebugRegistration, useCanvasPerfRender } from "../utils/canvas-performance-debug";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type CanvasNodeMetadata, type ContextMenuState, type Position, type ViewportTransform } from "../types";
 
-type CanvasClipboard = {
+type CanvasHistoryEntry = {
     nodes: CanvasNodeData[];
     connections: CanvasConnection[];
-};
-
-type CanvasHistoryEntry = Pick<CanvasClipboard, "nodes" | "connections"> & {
     maskResources: CanvasMaskResources;
     backgroundMode: CanvasBackgroundMode;
     showImageInfo: boolean;
@@ -228,7 +227,6 @@ function InfiniteCanvasPage() {
     const canvasRef = useRef<InfiniteCanvasHandle>(null);
     const imageInputRef = useRef<HTMLInputElement>(null);
     const uploadTargetRef = useRef<{ nodeId?: string; position?: Position } | null>(null);
-    const clipboardRef = useRef<CanvasClipboard | null>(null);
     const didInitialCenterRef = useRef(false);
     const toolbarHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const pendingCanvasImageHydrationIdsRef = useRef<Set<string>>(new Set());
@@ -1356,80 +1354,56 @@ function InfiniteCanvasPage() {
         [message],
     );
 
-    const copySelectedNodes = useCallback(() => {
-        const selectedIds = selectedNodeIdsRef.current;
-        if (!selectedIds.size) return;
-
-        const copiedNodes = nodesRef.current
-            .filter((node) => selectedIds.has(node.id) && !isLocalImageUploadNode(node))
-            .map((node) => ({
-                ...node,
-                position: { ...node.position },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
-            }));
-
-        if (!copiedNodes.length) return;
-
-        clipboardRef.current = {
-            nodes: copiedNodes,
-            connections: connectionsRef.current.filter((connection) => selectedIds.has(connection.fromNodeId) && selectedIds.has(connection.toNodeId)).map((connection) => ({ ...connection })),
-        };
-    }, []);
-
-    const pasteCopiedNodes = useCallback(() => {
-        const clipboard = clipboardRef.current;
-        if (!clipboard?.nodes.length) return false;
-
-        const center = getCanvasCenter();
-        const bounds = clipboard.nodes.reduce(
-            (acc, node) => ({
-                left: Math.min(acc.left, node.position.x),
-                top: Math.min(acc.top, node.position.y),
-                right: Math.max(acc.right, node.position.x + node.width),
-                bottom: Math.max(acc.bottom, node.position.y + node.height),
-            }),
-            { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
-        );
-        const dx = center.x - (bounds.left + bounds.right) / 2;
-        const dy = center.y - (bounds.top + bounds.bottom) / 2;
-        const idMap = new Map<string, string>();
-        const nextNodes = clipboard.nodes.map((node, index) => {
-            const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-            idMap.set(node.id, id);
-            return {
-                ...node,
-                id,
-                title: node.title.endsWith(" Copy") ? node.title : `${node.title} Copy`,
-                position: {
-                    x: node.position.x + dx,
-                    y: node.position.y + dy,
-                },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
-            };
-        });
-
-        const nextConnections = clipboard.connections.flatMap((connection, index) => {
-            const fromNodeId = idMap.get(connection.fromNodeId);
-            const toNodeId = idMap.get(connection.toNodeId);
-            if (!fromNodeId || !toNodeId) return [];
-            return [
-                {
-                    ...connection,
-                    id: `conn-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
-                    fromNodeId,
-                    toNodeId,
-                },
-            ];
-        });
-
-        setNodes((prev) => [...prev, ...nextNodes]);
-        setConnections((prev) => [...prev, ...nextConnections]);
-        setSelectedNodeIds(new Set(nextNodes.map((node) => node.id)));
-        setSelectedConnectionId(null);
-        setContextMenu(null);
-        setDialogNodeId(nextNodes[0]?.id || null);
+    const copySelectedNodes = useCallback((clipboard: DataTransfer) => {
+        if (!syncScope || !selectedNodeIdsRef.current.size || isNodeDragging) return false;
+        const { graph, skipped } = captureCanvasClipboard({
+            nodes: nodesRef.current, connections: connectionsRef.current, maskResources: maskResourcesRef.current,
+        }, selectedNodeIdsRef.current, localVideoUploadController.isPending);
+        if (!graph.nodes.length) {
+            if (skipped) message.warning("请等图片或视频保存后再复制");
+            return false;
+        }
+        try {
+            clipboard.setData(CANVAS_NODE_CLIPBOARD_TYPE, encodeCanvasClipboard(graph, syncScope));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "无法复制画布节点");
+            return false;
+        }
+        if (skipped) message.warning(`已复制 ${graph.nodes.length} 个节点，跳过 ${skipped} 个未保存的素材`);
+        else message.success(`已复制 ${graph.nodes.length} 个节点`);
         return true;
-    }, [getCanvasCenter]);
+    }, [isNodeDragging, localVideoUploadController, message, syncScope]);
+
+    const pasteCopiedNodes = useCallback((value: string) => {
+        if (!syncScope) return;
+        let pasted: CanvasClipboardGraph;
+        try {
+            pasted = placeCanvasClipboard(decodeCanvasClipboard(value, syncScope), getCanvasCenter());
+        } catch (error) {
+            message.warning(error instanceof Error ? error.message : "无法粘贴画布节点");
+            return;
+        }
+        for (const node of pasted.nodes) {
+            if (!node.metadata?.mediaId && (node.metadata?.storageKey || node.metadata?.publicImageId)) pendingCanvasImageHydrationIdsRef.current.add(node.id);
+        }
+        // Commit prior pending edits before observing the nodes, lines and masks
+        // together as one undoable change.
+        pause();
+        try {
+            flushSync(() => {
+                setNodes((prev) => [...prev, ...pasted.nodes]);
+                setConnections((prev) => [...prev, ...pasted.connections]);
+                if (Object.keys(pasted.maskResources).length) setMaskResources((prev) => ({ ...prev, ...pasted.maskResources }));
+                setSelectedNodeIds(new Set(pasted.nodes.map((node) => node.id)));
+                setSelectedConnectionId(null);
+                setContextMenu(null);
+                setDialogNodeId(pasted.nodes[0].id);
+            });
+        } finally {
+            resume();
+        }
+        message.success(`已粘贴 ${pasted.nodes.length} 个节点`);
+    }, [getCanvasCenter, message, pause, resume, syncScope]);
 
     const resetViewport = useCallback(() => {
         setViewport({ x: size.width / 2, y: size.height / 2, k: 1 });
@@ -1664,30 +1638,27 @@ function InfiniteCanvasPage() {
         [getCanvasCenter],
     );
 
-    const pasteSystemClipboard = useCallback(async () => {
-        if (!navigator.clipboard) return;
-
-        const items = await navigator.clipboard.read();
-        const imageItem = items.find((item) => item.types.some((type) => type.startsWith("image/")));
-        if (imageItem) {
-            const imageType = imageItem.types.find((type) => type.startsWith("image/"));
-            if (!imageType) return;
-            const blob = await imageItem.getType(imageType);
-            const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter()).catch(() => undefined);
-            message.success("已从剪切板添加图片");
-            return;
+    const pasteSystemClipboard = useCallback((clipboard: DataTransfer) => {
+        if (isNodeDragging) return false;
+        if (clipboard.types.includes(CANVAS_NODE_CLIPBOARD_TYPE)) {
+            pasteCopiedNodes(clipboard.getData(CANVAS_NODE_CLIPBOARD_TYPE));
+            return true;
         }
-
-        const text = await navigator.clipboard.readText();
-        if (createTextNodeFromClipboard(text)) message.success("已从剪切板添加文本");
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message]);
+        const image = clipboardImageFile(clipboard.items) || Array.from(clipboard.files).find(file => file.type.startsWith("image/"));
+        if (image) {
+            void createImageFileNode(image, getCanvasCenter()).then(() => message.success("已从剪贴板添加图片"), () => undefined);
+            return true;
+        }
+        if (!createTextNodeFromClipboard(clipboard.getData("text/plain"))) return false;
+        message.success("已从剪贴板添加文本");
+        return true;
+    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, isNodeDragging, message, pasteCopiedNodes]);
 
     useCanvasKeyboard({
-        readOnly: isProjectReadonly,
+        readOnly: !documentReady || isProjectReadonly,
         undo, redo,
         copy: copySelectedNodes,
-        paste: () => { if (!pasteCopiedNodes()) void pasteSystemClipboard(); },
+        paste: pasteSystemClipboard,
         selectAll: () => {
             setSelectedNodeIds(new Set(nodesRef.current.map((node) => node.id)));
             setSelectedConnectionId(null);
