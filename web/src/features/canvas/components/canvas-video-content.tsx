@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createVideoResourceManager, type VideoResourceLease, type VideoResourceManager } from "../media/video-resource-manager";
 import { useCanvasStore } from "../stores/use-canvas-store";
+import { CanvasVideoControls, type CanvasVideoElement } from "./canvas-video-controls";
 
 import type { VideoGenerationSource } from "@/services/api/video";
 import type { CanvasTheme } from "@/lib/canvas-theme";
@@ -142,7 +143,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
     const context = useContext(Context);
     const resources = useMemo(() => (context ? { manager: context.manager, playback: context.playback } : null), [context?.manager, context?.playback]);
     const [generation, setGeneration] = useState<VideoGenerationSource>();
-    const videoRef = useRef<HTMLVideoElement>(null);
+    const videoRef = useRef<CanvasVideoElement>(null);
     const leaseRef = useRef<VideoResourceLease | undefined>(undefined);
     const attempt = useRef(0),
         recovering = useRef(false),
@@ -268,15 +269,20 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
         [resources, nodeId, mediaId],
     );
     useEffect(() => {
-        const update = () => setExternal(Boolean(videoRef.current && (document.fullscreenElement === videoRef.current || document.pictureInPictureElement === videoRef.current)));
         const video = videoRef.current;
+        const update = () => setExternal(Boolean(video && (document.fullscreenElement === video || document.pictureInPictureElement === video || video.webkitDisplayingFullscreen)));
         document.addEventListener("fullscreenchange", update);
         video?.addEventListener("enterpictureinpicture", update);
         video?.addEventListener("leavepictureinpicture", update);
+        video?.addEventListener("webkitbeginfullscreen", update);
+        video?.addEventListener("webkitendfullscreen", update);
+        update();
         return () => {
             document.removeEventListener("fullscreenchange", update);
             video?.removeEventListener("enterpictureinpicture", update);
             video?.removeEventListener("leavepictureinpicture", update);
+            video?.removeEventListener("webkitbeginfullscreen", update);
+            video?.removeEventListener("webkitendfullscreen", update);
         };
     }, [source]);
     const fail = (text: string) => {
@@ -373,21 +379,34 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
             if (generation === attempt.current) fail(e instanceof Error ? e.message : "视频恢复失败，点击重试");
         }
     };
+    const togglePlayback = () => {
+        const video = videoRef.current;
+        if (!video) return;
+        if (!video.paused) {
+            video.pause();
+            return;
+        }
+        void video.play().catch(error => {
+            if (error?.name !== "AbortError" && !video.error) fail("视频无法播放，点击重试");
+        });
+    };
+    // The frame receives drags from the picture. Only explicit controls capture input.
+    const inlineCanvas = draggable && !external;
     return (
         <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[18px] bg-black">
-            <div className="group/video relative min-h-0 flex-1">
+            <div className={`relative min-h-0 flex-1 ${inlineCanvas ? "@container/video cursor-move" : ""}`}>
                 {visible || source ? (
                 <video
                     ref={videoRef}
                     data-video-node-id={nodeId}
                     src={source}
-                    controls
+                    controls={!inlineCanvas}
                     poster={poster}
                     preload={visible && preloadMetadata ? "metadata" : "none"}
                     onMouseDown={(event) => event.stopPropagation()}
                     onPointerDown={(event) => event.stopPropagation()}
                     playsInline
-                    className="h-full w-full object-contain"
+                    className={`h-full w-full object-contain ${inlineCanvas ? "pointer-events-none" : ""}`}
                     onLoadedMetadata={loaded}
                     onSeeking={({ currentTarget: video }) => setBuffering(video.readyState < video.HAVE_FUTURE_DATA)}
                     onSeeked={(event) => {
@@ -425,27 +444,14 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
                         save();
                     }}
                     onTimeUpdate={save}
+                    onVolumeChange={save}
                 />
             ) : poster ? (
-                <img src={poster} alt="视频封面" className="h-full w-full object-contain" onError={() => setPoster(undefined)} />
+                <img src={poster} alt="视频封面" draggable={false} className="h-full w-full object-contain" onError={() => setPoster(undefined)} />
             ) : (
                 <div className="h-full w-full bg-black" />
             )}
-                {/* Keep the native center play button and the bottom transport controls clear. */}
-                {draggable && !playing && !external && !error && (["left", "right"] as const).map(side => (
-                    <div key={side} aria-hidden="true" data-video-drag-surface={side} className="absolute cursor-move"
-                        style={{ [side]: 0, top: 44, bottom: 54, width: "min(28%, max(0px, 50% - 40px))" }}
-                        onDragStart={(event) => event.preventDefault()} />
-                ))}
-                {draggable && !external && !error && (
-                    <div aria-hidden="true" data-video-drag-surface="top" title="拖动视频卡片"
-                        className="absolute top-0 left-1/2 flex h-8 max-h-[22%] w-24 max-w-[40%] -translate-x-1/2 cursor-move items-center justify-center"
-                        onDragStart={(event) => event.preventDefault()}>
-                        <span className="pointer-events-none rounded-full bg-black/70 px-2 py-1.5 opacity-0 group-hover/video:opacity-100">
-                            <span className="block h-1 w-6 rounded-full bg-white/80" />
-                        </span>
-                    </div>
-                )}
+                {inlineCanvas && source && visible && !error ? <CanvasVideoControls videoRef={videoRef} playing={playing} onTogglePlayback={togglePlayback} /> : null}
                 {!error && (busy || buffering) && (
                     <div role="status" className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
                         <span className="rounded-full bg-black/75 px-3 py-1 text-xs text-white">视频缓冲中…</span>
@@ -476,9 +482,12 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
 export function useExternalVideoNodes() {
     const [ids, setIds] = useState<Set<string>>(() => new Set());
     useEffect(() => {
-        const update = () => {
+        let webkitFullscreen: HTMLVideoElement | undefined;
+        const update = (event: Event) => {
+            if (event.type === "webkitbeginfullscreen" && event.target instanceof HTMLVideoElement) webkitFullscreen = event.target;
+            if (event.type === "webkitendfullscreen" && event.target === webkitFullscreen) webkitFullscreen = undefined;
             const next = new Set<string>();
-            for (const element of [document.fullscreenElement, document.pictureInPictureElement]) {
+            for (const element of [document.fullscreenElement, document.pictureInPictureElement, webkitFullscreen]) {
                 const video = element instanceof HTMLVideoElement ? element : element?.querySelector("video");
                 if (video?.dataset.videoNodeId) next.add(video.dataset.videoNodeId);
             }
@@ -487,10 +496,14 @@ export function useExternalVideoNodes() {
         document.addEventListener("fullscreenchange", update);
         document.addEventListener("enterpictureinpicture", update, true);
         document.addEventListener("leavepictureinpicture", update, true);
+        document.addEventListener("webkitbeginfullscreen", update, true);
+        document.addEventListener("webkitendfullscreen", update, true);
         return () => {
             document.removeEventListener("fullscreenchange", update);
             document.removeEventListener("enterpictureinpicture", update, true);
             document.removeEventListener("leavepictureinpicture", update, true);
+            document.removeEventListener("webkitbeginfullscreen", update, true);
+            document.removeEventListener("webkitendfullscreen", update, true);
         };
     }, []);
     return ids;

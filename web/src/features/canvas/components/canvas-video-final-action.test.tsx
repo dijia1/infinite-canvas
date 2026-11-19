@@ -18,6 +18,7 @@ function setup(loadAccess = async (id: string) => access(id), onGenerateFinal?: 
         react,
         "../media/video-resource-manager": { createVideoResourceManager: () => resources.manager },
         "../stores/use-canvas-store": { useCanvasStore: () => undefined },
+        "./canvas-video-controls": {},
     }, { document: { addEventListener() {}, removeEventListener() {} } });
     const render = (mediaId = "draft") => h.render(() => components.CanvasVideoFinalAction({ nodeId: mediaId, mediaId, theme: canvasThemes.dark }));
     const close = () => { h.unmount(); resources.manager.dispose(); };

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { renderToStaticMarkup } from "react-dom/server";
-import { hookHarness, sourceModule } from "@/test-utils/source-component";
+import { elements, hookHarness, oneElement, sourceModule } from "@/test-utils/source-component";
 import { CanvasVideoContent } from "./canvas-video-content";
 test("visible video preview does not preload or overlay native controls", () => {
     const html = renderToStaticMarkup(<CanvasVideoContent nodeId="v" mediaId="m" />);
@@ -11,16 +11,55 @@ test("visible video preview does not preload or overlay native controls", () => 
     assert.doesNotMatch(html, /data-video-drag-surface/);
     assert.doesNotMatch(html, /<button|播放视频/);
 });
-test("selected canvas video enables metadata preload and leaves a dedicated drag grip", () => {
+test("selected canvas video enables metadata preload and lets the frame receive pointer input from the picture", () => {
     const html = renderToStaticMarkup(<CanvasVideoContent nodeId="v" mediaId="m" preloadMetadata draggable />);
     assert.match(html, /preload="metadata"/);
-    assert.match(html, /data-video-drag-surface="left"/);
-    assert.match(html, /data-video-drag-surface="right"/);
-    assert.match(html, /data-video-drag-surface="top" title="拖动视频卡片"/);
+    assert.match(html, /<video[^>]*pointer-events-none/);
+    assert.doesNotMatch(html, /controls=""|data-video-drag-surface/);
 });
 test("offscreen unused video does not initialize a player", () => {
     const html = renderToStaticMarkup(<CanvasVideoContent nodeId="v" mediaId="m" visible={false} preloadMetadata />);
     assert.doesNotMatch(html, /<video/);
+});
+
+test("editable video starts from the play control and restores native controls in fullscreen", () => {
+    const h = hookHarness();
+    const Controls = () => null;
+    let plays = 0;
+    const video = Object.assign(new EventTarget(), {
+        paused: true, readyState: 0, load: () => {}, removeAttribute: () => {},
+        play: async () => { plays++; video.paused = false; },
+        pause: () => { video.paused = true; },
+    });
+    const document = Object.assign(new EventTarget(), { fullscreenElement: null as EventTarget | null });
+    const { CanvasVideoContent: Video } = sourceModule<{ CanvasVideoContent: typeof CanvasVideoContent }>(new URL("./canvas-video-content.tsx", import.meta.url), {
+        react: { ...h.hooks, useLayoutEffect: h.hooks.useEffect, createContext: () => ({}), useContext: () => null },
+        "../media/video-resource-manager": {},
+        "../stores/use-canvas-store": {},
+        "./canvas-video-controls": { CanvasVideoControls: Controls },
+    }, { document });
+    const render = () => h.render(() => Video({ nodeId: "v", legacyURL: "/clip.mp4", draggable: true }), tree => {
+        oneElement(tree, "video").props.ref.current = video;
+    });
+    let tree = render();
+    assert.equal(plays, 0);
+    assert.equal(oneElement(tree, "video").props.onClick, undefined);
+    oneElement(tree, Controls).props.onTogglePlayback();
+    assert.equal(plays, 1);
+
+    document.fullscreenElement = video;
+    document.dispatchEvent(new Event("fullscreenchange"));
+    tree = render();
+    assert.equal(oneElement(tree, "video").props.controls, true);
+    assert.equal(elements(tree, element => element.type === Controls).length, 0);
+
+    document.fullscreenElement = null;
+    document.dispatchEvent(new Event("fullscreenchange"));
+    tree = render();
+    assert.equal(oneElement(tree, "video").props.controls, false);
+    oneElement(tree, Controls).props.onTogglePlayback();
+    assert.equal(video.paused, true);
+    h.unmount();
 });
 
 test("metadata read before editing permission is delivered when layout updates become available", async () => {
@@ -35,6 +74,7 @@ test("metadata read before editing permission is delivered when layout updates b
         react: { ...h.hooks, useLayoutEffect: h.hooks.useEffect, createContext: () => ({}), useContext: () => resources },
         "../media/video-resource-manager": { createVideoResourceManager: () => resources.manager },
         "../stores/use-canvas-store": { useCanvasStore: () => undefined },
+        "./canvas-video-controls": {},
     }, { document: { addEventListener() {}, removeEventListener() {} } });
     const render = (enabled: boolean) => h.render(() => Video({ nodeId: "v", mediaId: "media", onDimensions: enabled ? value => sizes.push(value) : undefined }));
     render(false); await new Promise(resolve => setTimeout(resolve, 0)); render(false);
@@ -70,6 +110,7 @@ test("missing generated-video dimensions are read from the cached poster without
         react: { ...h.hooks, useLayoutEffect: h.hooks.useEffect, createContext: () => ({}), useContext: () => resources },
         "../media/video-resource-manager": { createVideoResourceManager: () => resources.manager },
         "../stores/use-canvas-store": { useCanvasStore: () => undefined },
+        "./canvas-video-controls": {},
     }, { Image: PosterImage, document: { addEventListener() {}, removeEventListener() {} } });
     const render = () => h.render(() => Video({ nodeId: "v", mediaId: "generated", onDimensions: value => sizes.push(value) }));
     for (let pass = 0; pass < 5; pass++) {
