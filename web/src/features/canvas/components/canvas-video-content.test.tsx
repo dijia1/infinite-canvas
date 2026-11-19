@@ -11,11 +11,12 @@ test("visible video preview does not preload or overlay native controls", () => 
     assert.doesNotMatch(html, /data-video-drag-surface/);
     assert.doesNotMatch(html, /<button|播放视频/);
 });
-test("selected canvas video enables metadata preload and limits drag to side strips", () => {
+test("selected canvas video enables metadata preload and leaves a dedicated drag grip", () => {
     const html = renderToStaticMarkup(<CanvasVideoContent nodeId="v" mediaId="m" preloadMetadata draggable />);
     assert.match(html, /preload="metadata"/);
     assert.match(html, /data-video-drag-surface="left"/);
     assert.match(html, /data-video-drag-surface="right"/);
+    assert.match(html, /data-video-drag-surface="top" title="拖动视频卡片"/);
 });
 test("offscreen unused video does not initialize a player", () => {
     const html = renderToStaticMarkup(<CanvasVideoContent nodeId="v" mediaId="m" visible={false} preloadMetadata />);

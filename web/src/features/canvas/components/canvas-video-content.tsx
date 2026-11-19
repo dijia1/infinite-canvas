@@ -375,7 +375,7 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
     };
     return (
         <div className="relative flex h-full w-full flex-col overflow-hidden rounded-[18px] bg-black">
-            <div className="relative min-h-0 flex-1">
+            <div className="group/video relative min-h-0 flex-1">
                 {visible || source ? (
                 <video
                     ref={videoRef}
@@ -431,12 +431,21 @@ export function CanvasVideoContent({ nodeId, mediaId, legacyURL, visible = true,
             ) : (
                 <div className="h-full w-full bg-black" />
             )}
-                {/* Safari places native controls at the center, top and bottom of the video. */}
+                {/* Keep the native center play button and the bottom transport controls clear. */}
                 {draggable && !playing && !external && !error && (["left", "right"] as const).map(side => (
                     <div key={side} aria-hidden="true" data-video-drag-surface={side} className="absolute cursor-move"
-                        style={{ [side]: 0, top: "max(32%, 44px)", bottom: "max(32%, 54px)", width: "min(15%, 48px)" }}
+                        style={{ [side]: 0, top: 44, bottom: 54, width: "min(28%, max(0px, 50% - 40px))" }}
                         onDragStart={(event) => event.preventDefault()} />
                 ))}
+                {draggable && !external && !error && (
+                    <div aria-hidden="true" data-video-drag-surface="top" title="拖动视频卡片"
+                        className="absolute top-0 left-1/2 flex h-8 max-h-[22%] w-24 max-w-[40%] -translate-x-1/2 cursor-move items-center justify-center"
+                        onDragStart={(event) => event.preventDefault()}>
+                        <span className="pointer-events-none rounded-full bg-black/70 px-2 py-1.5 opacity-0 group-hover/video:opacity-100">
+                            <span className="block h-1 w-6 rounded-full bg-white/80" />
+                        </span>
+                    </div>
+                )}
                 {!error && (busy || buffering) && (
                     <div role="status" className="pointer-events-none absolute inset-x-0 top-3 flex justify-center">
                         <span className="rounded-full bg-black/75 px-3 py-1 text-xs text-white">视频缓冲中…</span>
