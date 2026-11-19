@@ -79,7 +79,7 @@ export function fetchCanvasProjects() {
 }
 
 export function fetchCanvasProject(id: string) {
-    return apiGet<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`);
+    return apiGet<CanvasProjectDetail>(`/api/v1/canvas/projects/${encodeURIComponent(id)}`, undefined, { timeout: 10_000 });
 }
 
 export function importCanvasPublicImages(id: string, revision: number) {

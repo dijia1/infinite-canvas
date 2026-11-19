@@ -16,8 +16,8 @@ export type CanvasSyncDescription = {
 
 const canvasDocumentTooLargeMessage = "画板数据超过保存上限（4MB）";
 
-export function describeCanvasSync(sync: CanvasProjectSync, blocked = false, pendingDocument = false): CanvasSyncDescription {
-    if (blocked) return { label: sync.error?.startsWith("本地备份失败") ? "本地备份失败" : "另一标签页正在编辑", kind: "blocked", presentation: "tag", refreshable: false };
+export function describeCanvasSync(sync: CanvasProjectSync, blocked = false, pendingDocument = false, occupied = false): CanvasSyncDescription {
+    if (blocked) return { label: sync.error?.startsWith("本地备份失败") ? "本地备份失败" : occupied ? "另一标签页正在编辑" : "暂不可编辑", kind: "blocked", presentation: "tag", refreshable: false };
     if (sync.conflict) return { label: "版本冲突", kind: "conflict", presentation: "tag", refreshable: true };
     if (sync.error) return { label: sync.error.includes(canvasDocumentTooLargeMessage) ? canvasDocumentTooLargeMessage : "保存失败", kind: "error", presentation: "tag", refreshable: false };
     if (sync.offline && (sync.dirty || sync.pending || pendingDocument)) return { label: "离线待同步", kind: "offline", presentation: "tag", refreshable: false };
@@ -81,7 +81,7 @@ export function CanvasBootstrapFeedback() {
     );
 }
 
-export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { projectId: string; pendingDocument?: boolean }) {
+export function CanvasSyncFeedback({ projectId, pendingDocument = false, occupied = false }: { projectId: string; pendingDocument?: boolean; occupied?: boolean }) {
     const { modal, message } = App.useApp();
     const withProjectMutation = useCanvasStore((state) => state.withProjectMutation);
     const syncEnabled = useCanvasStore((state) => state.syncEnabled);
@@ -91,8 +91,8 @@ export function CanvasSyncFeedback({ projectId, pendingDocument = false }: { pro
     const retryPendingSaves = useCanvasStore((state) => state.retryPendingSaves);
     const [refreshing, setRefreshing] = useState(false);
 
-    if (!syncEnabled || !sync) return null;
-    const description = describeCanvasSync(sync, blocked, pendingDocument);
+    if (!syncEnabled || !sync) return occupied ? <EditorSyncStatus kind="blocked" label="另一标签页正在编辑" /> : null;
+    const description = describeCanvasSync(sync, blocked, pendingDocument, occupied);
     const refresh = async () => {
         setRefreshing(true);
         try {

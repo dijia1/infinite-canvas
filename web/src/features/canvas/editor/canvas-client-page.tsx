@@ -86,8 +86,7 @@ import { resolveCanvasNodeMask, type CanvasMaskResources } from "../image-mask/m
 import { videoAssetDimensions } from "../components/material-video-asset";
 import { PRIVATE_IMAGE_DRAG_TYPE, PRIVATE_VIDEO_DRAG_TYPE, PUBLIC_IMAGE_DRAG_TYPE, readImageDropPayload, type PrivateImageDropPayload, type PublicImageDropPayload } from "../components/material-image-drag";
 import { useCanvasStore, selectCanvasProjectSummaries } from "../stores/use-canvas-store";
-import { useCanvasProjectDetail } from "../hooks/use-canvas-project-detail";
-import { useCanvasProjectEditorLease } from "../sync/use-canvas-project-editor-lease";
+import { useCanvasProjectOpen } from "../sync/use-canvas-project-open";
 import { useCanvasDocumentSync, type CanvasEditorDocument } from "../hooks/use-canvas-document-sync";
 import { useCanvasKeyboard } from "../hooks/use-canvas-keyboard";
 import { useCanvasHistory } from "../hooks/use-canvas-history";
@@ -245,7 +244,6 @@ function InfiniteCanvasPage() {
     const syncScope = useCanvasStore((state) => state.syncScope);
     const imageDownloads = useImageDownloads(JSON.stringify([syncScope, projectId]));
     const createProject = useCanvasStore((state) => state.createProject);
-    const projectDetail = useCanvasProjectDetail(projectId, hydrated && readyForCanvasMutations, syncScope, canonicalGeneration);
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
@@ -529,7 +527,9 @@ function InfiniteCanvasPage() {
         projectId, syncScope, canonicalGeneration, isReady: documentReady && !isProjectReadonly,
         document: editorDocument, baseline: documentBaseline, getViewport: getLiveViewport,
     });
-    useCanvasProjectEditorLease(projectId, readPendingDocument, projectDetail.loadAttempt);
+    const { state: projectOpen, retry: retryProjectOpen } = useCanvasProjectOpen(projectId, syncScope, hydrated && readyForCanvasMutations, readPendingDocument);
+    const projectOccupied = projectOpen.status === "occupied";
+    const canRestoreDocument = projectOpen.status === "editable" || (projectOccupied && projectOpen.preview);
 
     const restoreProject = useCallback(
         (project: NonNullable<typeof currentProject>) =>
@@ -580,7 +580,7 @@ function InfiniteCanvasPage() {
         const sync = state.projectSync[projectId];
         if (!state.syncEnabled || !sync?.serverRevision || sync.dirty || sync.pending || sync.saving || sync.conflict || sync.offline) return;
         const initialMediaScan = publicMigrationScannedRef.current !== JSON.stringify([syncScope, projectId, canonicalGeneration]);
-        if (!hasPublicImageMigrationCandidates(nodes, projectDetail.project?.nodes || [], initialMediaScan)) return;
+        if (!hasPublicImageMigrationCandidates(nodes, documentBaseline?.nodes || [], initialMediaScan)) return;
         const key = JSON.stringify([syncScope, projectId, canonicalGeneration, sync.serverRevision, publicMigrationRetry]);
         if (publicMigrationAttemptsRef.current.has(key)) return;
         publicMigrationAttemptsRef.current.add(key);
@@ -639,7 +639,7 @@ function InfiniteCanvasPage() {
             setPublicMigrationRunning(false);
             if (scope !== getVideoSessionScope()) message.destroy(feedbackKey);
         });
-    }, [acceptDocumentBaseline, canonicalGeneration, documentReady, editorDocument, getVideoSessionScope, historySnapshot, isProjectBlocked, message, nodes, pendingDocument, projectId, publicMigrationRetry, rebase, readPendingDocument, syncScope, projectSync, projectDetail.project]);
+    }, [acceptDocumentBaseline, canonicalGeneration, documentBaseline, documentReady, editorDocument, getVideoSessionScope, historySnapshot, isProjectBlocked, message, nodes, pendingDocument, projectId, publicMigrationRetry, rebase, readPendingDocument, syncScope, projectSync]);
 
     const cleanupCanvasFiles = useCallback(
         (extra?: unknown) => {
@@ -651,10 +651,12 @@ function InfiniteCanvasPage() {
 
     useEffect(() => {
         setProjectLoaded(false);
-        if (!projectDetail.project) return;
-        void restoreProject(projectDetail.project);
+        if (!canRestoreDocument) return;
+        const project = useCanvasStore.getState().openProject(projectId);
+        if (!project) return;
+        void restoreProject(project);
         return () => canonicalRestore.invalidate();
-    }, [canonicalRestore, projectDetail.project, restoreProject]);
+    }, [canRestoreDocument, canonicalRestore, projectId, projectOpen.status, restoreProject]);
 
     useEffect(() => {
         if (!documentReady || isProjectReadonly) return;
@@ -2179,16 +2181,18 @@ function InfiniteCanvasPage() {
         setContextMenu(null);
     }, []);
 
-    if (projectDetail.error) return (
+    if (projectOpen.status === "error" || (projectOccupied && !projectOpen.preview)) return (
         <main className="flex h-full flex-col items-center justify-center gap-3 bg-background text-foreground">
-            <p role="alert" className="text-sm text-muted-foreground">{projectDetail.error}</p>
+            <p role={projectOccupied ? "status" : "alert"} className="text-sm text-muted-foreground">
+                {projectOpen.status === "error" ? projectOpen.message : "另一标签页正在编辑"}
+            </p>
             <div className="flex gap-2">
-                <Button onClick={projectDetail.retry}>重新加载</Button>
+                <Button onClick={retryProjectOpen}>重新加载</Button>
                 <Button onClick={() => router.push(appPath("/canvas"))}>返回主页</Button>
             </div>
         </main>
     );
-    if (projectDetail.loading || !projectLoaded || loadedProjectId !== projectId || loadedSyncScope !== syncScope || loadedCanonicalGeneration !== canonicalGeneration) return <CanvasRefreshShell />;
+    if (!canRestoreDocument || !documentReady) return <CanvasRefreshShell />;
 
     return (
         <VideoResourceProvider projectId={projectId} nodeIds={nodes.map(node => node.id)} onGenerateFinal={isProjectReadonly ? undefined : (nodeId,source)=>generateFinalVideo(nodeId,source)}>
@@ -2198,6 +2202,7 @@ function InfiniteCanvasPage() {
                     title={currentProject?.title || "未命名画布"}
                     projectId={projectId}
                     pendingDocument={pendingDocument}
+                    occupied={projectOccupied}
                     titleDraft={titleDraft}
                     isTitleEditing={titleEditing}
                     onTitleDraftChange={setTitleDraft}
@@ -2353,7 +2358,7 @@ function InfiniteCanvasPage() {
                             ]}
                         />
                     ) : null}
-                    {isProjectReadonly ? <div className="absolute inset-0 z-[200] cursor-not-allowed" aria-label="当前画布由另一标签页编辑" onContextMenu={(event) => event.preventDefault()} /> : null}
+                    {isProjectReadonly ? <div className="absolute inset-0 z-[200] cursor-not-allowed" aria-label={projectOccupied ? "当前画布由另一标签页编辑" : "画布暂不可编辑"} onContextMenu={(event) => event.preventDefault()} /> : null}
                 </InfiniteCanvas>
 
                 {!isProjectReadonly ? (
@@ -2487,6 +2492,7 @@ function CanvasTopBar({
     title,
     projectId,
     pendingDocument,
+    occupied,
     titleDraft,
     isTitleEditing,
     onTitleDraftChange,
@@ -2505,6 +2511,7 @@ function CanvasTopBar({
     title: string;
     projectId: string;
     pendingDocument: boolean;
+    occupied: boolean;
     titleDraft: string;
     isTitleEditing: boolean;
     onTitleDraftChange: (value: string) => void;
@@ -2524,7 +2531,7 @@ function CanvasTopBar({
         title={title} titleDraft={titleDraft} editing={isTitleEditing}
         onDraftChange={onTitleDraftChange} onStartEditing={onStartTitleEditing}
         onFinishEditing={onFinishTitleEditing} onCancelEditing={onCancelTitleEditing}
-        status={<><CanvasBootstrapFeedback /><CanvasSyncFeedback projectId={projectId} pendingDocument={pendingDocument} /></>}
+        status={<><CanvasBootstrapFeedback /><CanvasSyncFeedback projectId={projectId} pendingDocument={pendingDocument} occupied={occupied} /></>}
         menu={{ items: [
                                 { key: "projects", icon: <Images className="size-4" />, label: "我的画布", onClick: onProjects },
                                 { type: "divider" },

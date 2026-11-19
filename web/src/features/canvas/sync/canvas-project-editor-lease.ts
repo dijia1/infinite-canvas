@@ -23,15 +23,21 @@ export function readCanvasProjectEditorLease(storage: CanvasProjectEditorLeaseSt
 // localStorage cannot provide the same crash-safe exclusivity as Web Locks, so
 // this is only the fallback. The caller verifies the stored winner on every
 // heartbeat and BroadcastChannel makes ownership changes visible immediately.
-export function claimCanvasProjectEditorLease(storage: CanvasProjectEditorLeaseStorage, key: string, tabId: string, now: number, durationMs: number) {
+export function tryClaimCanvasProjectEditorLease(storage: CanvasProjectEditorLeaseStorage, key: string, tabId: string, now: number, durationMs: number) {
     const current = readCanvasProjectEditorLease(storage, key);
-    if (current && current.expiresAt > now && current.tabId !== tabId) return false;
+    if (current && current.expiresAt > now && current.tabId !== tabId) return "occupied";
     try {
         storage.setItem(key, JSON.stringify({ tabId, expiresAt: now + durationMs } satisfies CanvasProjectEditorLeaseRecord));
     } catch {
-        return false;
+        return "unavailable";
     }
-    return readCanvasProjectEditorLease(storage, key)?.tabId === tabId;
+    const winner = readCanvasProjectEditorLease(storage, key);
+    if (!winner || winner.expiresAt <= now) return "unavailable";
+    return winner.tabId === tabId ? "owned" : "occupied";
+}
+
+export function claimCanvasProjectEditorLease(storage: CanvasProjectEditorLeaseStorage, key: string, tabId: string, now: number, durationMs: number) {
+    return tryClaimCanvasProjectEditorLease(storage, key, tabId, now, durationMs) === "owned";
 }
 
 // Use the existing editor lock name so pages from the previous release also
@@ -50,7 +56,8 @@ export async function withCanvasProjectLocks<T>(ids: string[], tabId: string, ac
         if (typeof window === "undefined") return acquire(index + 1);
         const key = canvasProjectEditorLeaseKey(id),
             duration = 60_000;
-        if (!claimCanvasProjectEditorLease(window.localStorage, key, tabId, Date.now(), duration)) throw new Error("另一标签页正在编辑这张画布，请稍后重试");
+        const claim = tryClaimCanvasProjectEditorLease(window.localStorage, key, tabId, Date.now(), duration);
+        if (claim !== "owned") throw new Error(claim === "occupied" ? "另一标签页正在编辑这张画布，请稍后重试" : "浏览器无法保存画布编辑锁");
         let lost = false;
         const heartbeat = setInterval(() => {
             if (!claimCanvasProjectEditorLease(window.localStorage, key, tabId, Date.now(), duration)) lost = true;

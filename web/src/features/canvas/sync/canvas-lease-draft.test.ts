@@ -15,40 +15,33 @@ for (const conflict of [false, true]) {
         const publisher = createCanvasDocumentPublisher({ publish: () => assert.fail("lease recovery must never force a Store or server write"), isCurrent: () => !blocked && !hasConflict });
         publisher.capture(latest, baseline);
         hasConflict = conflict;
-        const url = new URL("./use-canvas-project-editor-lease.ts", import.meta.url);
-        const preserveLocalDraft = sourceBehavior(url, {
-            useCanvasStore: {
-                getState: () => ({
-                    projects: [stored],
-                    projectSync: { P: { conflict: hasConflict } },
-                    preserveProjectDraft: async (_id: string, document: unknown) => {
-                        recovery = document;
-                    },
-                }),
-            },
-            projectId: "P",
-            tabId: "T",
-            readPendingDocumentRef: { current: publisher.getPendingDocument },
-        }).named("preserveLocalDraft");
-        const loseLease = sourceBehavior(url, {
-            disposed: false,
-            ownsEditor: true,
-            projectId: "P",
-            setProjectSyncBlocked: () => {
-                blocked = true;
-            },
-            preserveLocalDraft,
-            refreshProjectFromServer: async () => {
-                assert.ok(recovery, "refreshed before copy became durable");
-            },
-            setProjectEditorOwned: () => {},
-            useCanvasStore: { getState: () => ({ reportProjectRecoveryError: () => assert.fail("backup failed") }) },
-        }).named("becomeReadonly");
-        loseLease();
-        publisher.cancel();
-        await Promise.resolve();
-        assert.deepEqual(recovery, { ...stored, ...latest });
-        assert.equal(blocked, true);
-        assert.deepEqual(stored.nodes, []);
+        const url = new URL("./use-canvas-project-open.ts", import.meta.url);
+        try {
+            const loseLease = sourceBehavior(url, {
+                useCanvasStore: { getState: () => ({ projectSync: { P: { conflict: hasConflict } } }) },
+                store: {
+                    openProject: () => stored,
+                    preserveProjectDraft: async (_id: string, document: unknown) => { recovery = document; },
+                    reportProjectRecoveryError: () => assert.fail("backup failed"),
+                },
+                projectId: "P",
+                owner: () => {},
+                active: () => true,
+                claimFallback: () => "occupied",
+                readDraft: publisher.getPendingDocument,
+                release: (saveDraft: boolean, keepBlocked: boolean) => {
+                    assert.equal(saveDraft, false);
+                    blocked = keepBlocked;
+                },
+                waitForEditor: () => assert.equal(blocked, true),
+            }).named("checkFallback");
+            loseLease();
+            await Promise.resolve();
+            assert.deepEqual(recovery, { ...stored, ...latest });
+            assert.equal(blocked, true);
+            assert.deepEqual(stored.nodes, []);
+        } finally {
+            publisher.cancel();
+        }
     });
 }

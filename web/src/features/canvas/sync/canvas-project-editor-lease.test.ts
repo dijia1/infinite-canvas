@@ -2,7 +2,7 @@ import { withCanvasProjectLocks } from "./canvas-project-editor-lease";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { canvasProjectEditorLeaseKey, claimCanvasProjectEditorLease, readCanvasProjectEditorLease, type CanvasProjectEditorLeaseStorage } from "./canvas-project-editor-lease.ts";
+import { canvasProjectEditorLeaseKey, readCanvasProjectEditorLease, tryClaimCanvasProjectEditorLease, type CanvasProjectEditorLeaseStorage } from "./canvas-project-editor-lease.ts";
 
 class MemoryLeaseStorage implements CanvasProjectEditorLeaseStorage {
     private readonly values = new Map<string, string>();
@@ -24,11 +24,17 @@ test("fallback lease keeps a follower readonly until the owner lease expires", (
     const storage = new MemoryLeaseStorage();
     const key = canvasProjectEditorLeaseKey("project-1");
 
-    assert.equal(claimCanvasProjectEditorLease(storage, key, "tab-1", 1_000, 60_000), true);
-    assert.equal(claimCanvasProjectEditorLease(storage, key, "tab-2", 2_000, 60_000), false);
+    assert.equal(tryClaimCanvasProjectEditorLease(storage, key, "tab-1", 1_000, 60_000), "owned");
+    assert.equal(tryClaimCanvasProjectEditorLease(storage, key, "tab-2", 2_000, 60_000), "occupied");
     assert.deepEqual(readCanvasProjectEditorLease(storage, key), { tabId: "tab-1", expiresAt: 61_000 });
-    assert.equal(claimCanvasProjectEditorLease(storage, key, "tab-2", 61_001, 60_000), true);
+    assert.equal(tryClaimCanvasProjectEditorLease(storage, key, "tab-2", 61_001, 60_000), "owned");
     assert.deepEqual(readCanvasProjectEditorLease(storage, key), { tabId: "tab-2", expiresAt: 121_001 });
+});
+
+test("an unavailable fallback storage is reported separately from an occupied lease", () => {
+    const storage = new MemoryLeaseStorage();
+    storage.setItem = () => { throw new Error("storage unavailable"); };
+    assert.equal(tryClaimCanvasProjectEditorLease(storage, "project", "tab", 1_000, 60_000), "unavailable");
 });
 
 test("library mutations wait for the same editor lock and multi-canvas locks use a fixed order", async () => {

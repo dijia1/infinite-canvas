@@ -76,7 +76,7 @@ export type CanvasStore = {
     startSync: (scope: string) => void;
     setProjectSyncBlocked: (id: string, blocked: boolean) => void;
     releaseProjectEditor: (id: string) => void;
-    reloadProjectFromStorage: (id: string) => Promise<void>;
+    reloadProjectFromStorage: (id: string, isCurrent?: () => boolean) => Promise<void>;
     waitForLocalPersistence: () => Promise<void>;
     readPersistedProjects: () => Promise<CanvasProject[]>;
     setProjectEditorOwned: (id: string, owned: boolean) => void;
@@ -865,11 +865,13 @@ export function createCanvasStore(options: CanvasStoreOptions = {}): UseBoundSto
                         const name = store.persist.getOptions().name!;
                         return localStorage.readProjects ? localStorage.readProjects(name) : get().projects;
                     },
-                    reloadProjectFromStorage: async (id) => {
+                    reloadProjectFromStorage: async (id, isCurrent) => {
                         const scope = get().syncScope;
                         await persistence.waitForLatestWrite();
+                        if (isCurrent && !isCurrent()) return;
                         const name = store.persist.getOptions().name!;
                         const record = localStorage.readProject ? await localStorage.readProject(name, id) : null;
+                        if (isCurrent && !isCurrent()) return;
                         if (get().syncScope !== scope) throw new Error("画布账号已变更，请重新进入");
                         if (!record) return;
                         set((state) => {
